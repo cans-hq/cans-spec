@@ -1,0 +1,9 @@
+- API
+  - POST /users
+    - Returns 201 on success
+    - Returns 409 for duplicate email
+    - Returns 422 for validation error
+    - Returns 429 for rate limit
+    - Returns 500 for server error
+    - Returns 502 for upstream timeout
+    - Returns 503 for maintenance

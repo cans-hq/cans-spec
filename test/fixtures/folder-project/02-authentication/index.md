@@ -1,0 +1,13 @@
+- Authentication <!-- ref-by: 04-api.md, 05-frontend.md -->
+  - Sign up
+    - Email
+      - Requires verification
+      - Creates user account
+    - Google
+      - Uses provider verification
+  - Sessions
+    - Expire after 24 hours
+    - Refresh allowed for 30 days
+  - Passwords
+    - Never stored in plaintext
+    - Minimum 12 characters

@@ -1,0 +1,14 @@
+- API
+  - Authentication
+    - Session rules: see 02-authentication.md#Sessions
+    - Requires Bearer token
+  - POST /users
+    - Returns 201 on success
+    - Returns 409 for duplicate email
+    - Returns 422 for validation error
+  - GET /users/:id
+    - Returns 200 with user object
+    - Returns 404 if not found
+  - Rate limiting
+    - 100 requests per minute per IP
+    - 429 when exceeded

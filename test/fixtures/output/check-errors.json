@@ -1,0 +1,14 @@
+{
+  "ok": false, "command": "check", "exitCode": 1,
+  "files": 6, "nodes": 84, "maxDepth": 4,
+  "refs": { "total": 12, "broken": 0, "deepHops": 1 },
+  "backPointers": { "total": 12, "current": 10, "stale": 2 },
+  "issues": [
+    { "file": "03-data.md", "line": 12, "level": "error", "category": "structure", "message": "node too long (140 > 120)" },
+    { "file": "04-api.md", "line": 8, "level": "error", "category": "structure", "message": "\"Returns\" has exactly 1 child. Collapse." },
+    { "file": "05-frontend.md", "line": 5, "level": "error", "category": "refs", "message": "DEEP HOP: 05-frontend.md → 02-auth.md → 06-ops.md", "suggestion": "add \"see: 06-ops.md\" directly to 05-frontend.md" },
+    { "file": "02-auth.md", "line": 4, "level": "warning", "category": "redundancy", "message": "\"authentication\" × 7 nodes (threshold: 4)" },
+    { "file": "04-api.md", "line": 12, "level": "warning", "category": "redundancy", "message": "85% overlap: 02-auth.md:4 ↔ 04-api.md:12" }
+  ],
+  "errorCount": 3, "warningCount": 2, "backPointersUpdated": 0
+}

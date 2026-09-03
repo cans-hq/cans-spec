@@ -1,0 +1,9 @@
+- Authentication
+  - Sessions
+    - Expire after 24 hours
+    - Refresh allowed for 30 days
+  - Sign up
+    - Email
+    - Google
+  - Passwords
+    - Never stored in plaintext

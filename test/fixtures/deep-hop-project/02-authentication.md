@@ -1,0 +1,3 @@
+- Sessions
+  - Expire after 24 hours
+  - Storage rules: see 06-operations.md#Data-protection

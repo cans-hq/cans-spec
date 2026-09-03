@@ -1,0 +1,5 @@
+- Authentication
+  - Sign up with email
+  - Sign up with Google
+  - Authentication required for dashboard
+  - Authentication tokens expire after 24 hours

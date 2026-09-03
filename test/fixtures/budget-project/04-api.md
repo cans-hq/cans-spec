@@ -1,0 +1,5 @@
+- API
+  - Authentication
+    - Session rules: see 02-authentication.md#Sessions
+  - POST /users
+    - Returns 201
