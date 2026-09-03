@@ -25,7 +25,7 @@ export function globFiles(dir: string, pattern: string): string[] {
   return out.sort();
 }
 
-/** Spec files: root-level *.md (excluding _-prefixed + AGENTS.md) and */index.md folders. */
+/** Spec files: root-level *.md (excluding _-prefixed and AGENTS.md) plus per-folder index.md. */
 export function discoverSpecFiles(root: string): string[] {
   const out: string[] = [];
   if (!dirExists(root)) return out;

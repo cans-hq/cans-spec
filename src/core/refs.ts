@@ -1,7 +1,8 @@
-import { readFileSync, existsSync, statSync } from 'fs';
-import { join, relative } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types';
 import { flattenNodes, parseOutline } from './outline';
+import { resolveSpecFile, toRelative, isFile } from './fs';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -9,33 +10,6 @@ export interface RefGraph {
 }
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
-
-// NOTE: fs.ts currently fails to parse (doc comment at fs.ts:28 contains a bare
-// "*/index.md" that terminates the comment early → TS1005), so importing
-// resolveSpecFile/toRelative from ./fs crashes any loader. These two private
-// mirrors implement the IDENTICAL fs.ts contract (flat file wins, then
-// <name-without-.md>/index.md) — swap back to ./fs imports once fixed.
-function isFile(p: string): boolean {
-  try {
-    return statSync(p).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function resolveSpecFile(root: string, name: string): string | null {
-  const direct = join(root, name);
-  if (existsSync(direct) && isFile(direct)) return direct;
-  if (name.endsWith('.md')) {
-    const folderIdx = join(root, name.slice(0, -3), 'index.md');
-    if (existsSync(folderIdx) && isFile(folderIdx)) return folderIdx;
-  }
-  return null;
-}
-
-function toRelative(root: string, p: string): string {
-  return relative(root, p).split('\\').join('/');
-}
 
 /** Does a raw ref target `name` point at workspace file `key`?
  *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts. */
