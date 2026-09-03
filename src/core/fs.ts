@@ -20,6 +20,7 @@ export function mkdirp(p: string): void {
 }
 
 export function globFiles(dir: string, pattern: string): string[] {
+  if (!dirExists(dir)) return [];
   const g = new Bun.Glob(pattern);
   const out = [...g.scanSync({ cwd: dir, onlyFiles: true })] as string[];
   return out.sort();
