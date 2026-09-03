@@ -174,24 +174,28 @@ export function resolveWorkspaceOrCreate(): string {
 
 /** Directory in which `cans init` creates the `cans/` workspace.
  *  1. CANS_ROOT env.
- *  2. Newest completely-empty dir under <cwd>/.tmp (scratch/sandbox init).
+ *  2. Newest completely-empty dir under <cwd>/.tmp that is not nested inside
+ *     an existing workspace (scratch/sandbox init — never re-inits into
+ *     `cans/_adr`-style empty subdirs of a workspace).
  *  3. cwd. */
 export function resolveInitTarget(): string {
   const env = process.env.CANS_ROOT;
   if (env) return env;
   const tmp = join(process.cwd(), '.tmp');
   if (dirExists(tmp)) {
-    const dirs = listDirsRecursive(tmp, 3);
-    const empty = dirs.filter(d => {
+    const dirs = listDirsRecursive(tmp, 3).filter(d => {
+      // never target a dir that lives inside an existing workspace
+      const rel = relative(tmp, d.dir).split('\\').join('/');
+      if (rel.split('/').includes('cans')) return false;
       try {
         return readdirSync(d.dir).length === 0;
       } catch {
         return false;
       }
     });
-    if (empty.length > 0) {
-      empty.sort(newestFirst);
-      return empty[0].dir;
+    if (dirs.length > 0) {
+      dirs.sort(newestFirst);
+      return dirs[0].dir;
     }
   }
   return process.cwd();

@@ -1,6 +1,7 @@
+import { basename } from 'path';
 import { join } from 'path';
 import type { InitResult } from '../types';
-import { insideWorkspace, resolveInitTarget, mkdirp, exists, dirExists } from '../core/fs';
+import { resolveWorkspaceRoot, resolveInitTarget, mkdirp, exists, dirExists } from '../core/fs';
 
 export interface InitArgs {
   flat: boolean;
@@ -52,13 +53,15 @@ interface PlanEntry {
 export async function run(args: string[]): Promise<InitResult> {
   const opts = parseInitArgs(args);
 
-  // Refuse when already inside a cans workspace.
-  if (insideWorkspace()) {
+  // Refuse only when literally standing inside a cans/ directory.
+  if (basename(process.cwd()) === 'cans') {
     return { ok: false, command: 'init', exitCode: 1, created: [], skipped: [], root: '' };
   }
 
-  const target = resolveInitTarget();
-  const workspace = join(target, 'cans');
+  // Idempotent: an existing workspace (walk-up `cans/` or scratch) is re-used —
+  // existing files are skipped unless --force. Architecture §21.
+  const existing = resolveWorkspaceRoot();
+  const workspace = existing ?? join(resolveInitTarget(), 'cans');
   mkdirp(workspace);
 
   const rulesContent = await readTemplate('_rules.yaml');
