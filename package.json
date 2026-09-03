@@ -1,0 +1,19 @@
+{
+  "name": "cans",
+  "version": "0.1.0",
+  "description": "Canonical Agent-Native Spec",
+  "bin": { "cans": "./src/cli.ts" },
+  "type": "module",
+  "engines": { "bun": ">=1.0.0" },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "prepublishOnly": "bun test"
+  },
+  "files": ["src/", "templates/", "README.md", "LICENSE"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/bun": "^1.1.0"
+  }
+}
