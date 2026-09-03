@@ -1,0 +1,4 @@
+- Operations
+  - Data protection
+    - Session storage: see 02-authentication.md#Sessions
+    - Encrypted at rest

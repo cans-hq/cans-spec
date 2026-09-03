@@ -1,0 +1,5 @@
+- API
+  - POST /users
+    - Returns 201 on success
+    - Request schema: see 04-api/request-schema.md
+    - Error handling: see 04-api/error-handling.md

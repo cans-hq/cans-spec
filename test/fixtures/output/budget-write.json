@@ -1,0 +1,15 @@
+{
+  "ok": true, "command": "budget-write", "exitCode": 0, "concept": "sessions",
+  "canEdit": [
+    { "file": "02-authentication.md", "anchor": "Sessions", "reason": "canonical home" },
+    { "file": "_tasks/add-dark-mode.md", "anchor": null, "reason": "active task" }
+  ],
+  "mustNotEdit": [
+    { "file": "04-api.md", "reason": "only has see: reference" },
+    { "file": "06-operations.md", "reason": "only has see: reference" }
+  ],
+  "backPointersToUpdate": [
+    { "fromFile": "04-api.md", "fromLine": 12, "toFile": "02-authentication.md" },
+    { "fromFile": "06-operations.md", "fromLine": 5, "toFile": "02-authentication.md" }
+  ]
+}

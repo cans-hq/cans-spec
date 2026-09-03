@@ -1,0 +1,15 @@
+{
+  "ok": true, "command": "status", "exitCode": 0,
+  "specFiles": 6, "activeTasks": 2, "archivedTasks": 4, "adrCount": 3,
+  "tasks": { "total": 12, "done": 5, "unclaimed": 3, "blocked": 1 },
+  "owners": {
+    "agent-1": { "tasks": 4, "done": 3 },
+    "agent-2": { "tasks": 2, "done": 1 },
+    "agent-3": { "tasks": 2, "done": 1 }
+  },
+  "taskFiles": [
+    { "name": "add-dark-mode", "tasksDone": 3, "tasksTotal": 5, "gatesDone": 1, "gatesTotal": 2, "blocked": true },
+    { "name": "fix-auth-bug", "tasksDone": 2, "tasksTotal": 7, "gatesDone": 0, "gatesTotal": 1, "blocked": true }
+  ],
+  "conflicts": 1
+}

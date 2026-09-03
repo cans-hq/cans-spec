@@ -1,0 +1,4 @@
+- API
+  - Authentication header required
+  - Authentication tokens validated per request
+  - Session authentication: see 02-authentication.md

@@ -1,0 +1,3 @@
+- Data protection
+  - Encrypted at rest
+  - Encrypted in transit

@@ -1,0 +1,6 @@
+- TODO Implement auth flow
+- [[02-authentication#Sessions]] expire after 24 hours
+- DONE Add Google OAuth
+  - agent-1:: assigned
+- Token validation
+  - id:: ((block-ref-123))

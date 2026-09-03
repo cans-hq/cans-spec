@@ -1,0 +1,5 @@
+{
+  "ok": true, "command": "init", "exitCode": 0,
+  "created": ["_rules.yaml", "AGENTS.md", "00-overview.md", "01-architecture.md", "02-authentication.md", "03-data.md", "04-api.md", "05-frontend.md", "06-operations.md", "_adr/", "_tasks/", "_collab/handoffs.md", "_collab/conflicts.md", "_collab/decisions.md"],
+  "skipped": [], "root": "./cans"
+}
