@@ -9,6 +9,10 @@ interface NodeRef {
 
 const EDGE_PUNCT_RE = /^[.,;:!?"']+|[.,;:!?"']+$/g;
 
+/** §8/§13: ref syntax tokens (`see:`, `.md`) are structural pointers, not
+ *  content words — excluded from every redundancy layer (QA-02 F3). */
+const REF_SYNTAX_TOKENS = new Set(['see', 'md']);
+
 /** lowercase → strip edge punctuation → synonym group (any member → first member) → bare word. */
 export function normalizeWord(word: string, synonyms: string[][]): string {
   const stripped = word.toLowerCase().replace(EDGE_PUNCT_RE, '');
@@ -30,6 +34,7 @@ function wordSet(text: string, rules?: RedundancyRules): Set<string> {
   for (const raw of tokenize(text)) {
     const w = normalizeWord(raw, synonyms);
     if (w.length === 0) continue;
+    if (REF_SYNTAX_TOKENS.has(w)) continue;
     if (stopwords !== null && stopwords.includes(w)) continue;
     out.add(w);
   }

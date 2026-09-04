@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { basename } from 'path';
+import { basename, relative } from 'path';
 import type {
   OutlineNode, BackPointer, TokenBudgetRules,
   BudgetReadPlanItem, BudgetReadResult, BudgetWriteResult,
@@ -9,6 +9,13 @@ import { targetMatchesKey } from './refs';
 
 export function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil(text.length / charsPerToken);
+}
+
+/** QA-03 F12: file paths in budget output are cwd-relative, never absolute
+ *  (workspace keys are already relative and pass through untouched). */
+function relPath(file: string): string {
+  if (!file.startsWith('/')) return file;
+  return relative(process.cwd(), file) || file;
 }
 
 function serializedNodeText(nodes: OutlineNode[]): string {
@@ -193,7 +200,9 @@ export function buildReadPlan(
     : 0;
   return {
     ok: true, command: 'budget-read', exitCode: 0, concept,
-    plan, skipped, totalTokens, budgetLimit, usagePercent,
+    plan: plan.map(p => ({ ...p, file: relPath(p.file) })),
+    skipped: skipped.map(relPath),
+    totalTokens, budgetLimit, usagePercent,
   };
 }
 
@@ -264,6 +273,12 @@ export function buildWritePlan(
 
   return {
     ok: true, command: 'budget-write', exitCode: 0, concept,
-    canEdit, mustNotEdit, backPointersToUpdate,
+    canEdit: canEdit.map(e => ({ ...e, file: relPath(e.file) })),
+    mustNotEdit: mustNotEdit.map(e => ({ ...e, file: relPath(e.file) })),
+    backPointersToUpdate: backPointersToUpdate.map(b => ({
+      ...b,
+      fromFile: relPath(b.fromFile),
+      toFile: relPath(b.toFile),
+    })),
   };
 }

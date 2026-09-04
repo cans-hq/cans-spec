@@ -40,7 +40,7 @@ async function dispatch(): Promise<CommandResult> {
 
 try {
   const result = await dispatch();
-  emit(result, args.includes('--json'));
+  emit(result, args.includes('--json'), args.includes('--refs-only'));
   process.exit(result.exitCode);
 } catch (e) {
   console.error(`✗ Internal error: ${e instanceof Error ? e.message : e}`);

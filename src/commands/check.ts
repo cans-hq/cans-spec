@@ -353,6 +353,11 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     errorCount,
     warningCount,
     backPointersUpdated,
+    // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
+    rulesSummary:
+      `node_length: ${rules.structure.node_length.min}\u2013${rules.structure.node_length.max}` +
+      ` | siblings: ${rules.structure.siblings.min}\u2013${rules.structure.siblings.max}` +
+      ` | depth: ${rules.structure.depth.min}\u2013${rules.structure.depth.max}`,
   };
 }
 

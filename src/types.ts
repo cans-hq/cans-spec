@@ -132,6 +132,8 @@ export interface CheckResult extends CommandResult {
   errorCount: number;
   warningCount: number;
   backPointersUpdated: number;
+  /** §22/§36: human-facing one-line summary of the active _rules.yaml limits (QA-02 F17). */
+  rulesSummary?: string;
 }
 
 export interface NewResult extends CommandResult {

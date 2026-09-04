@@ -3,21 +3,23 @@ import type {
   BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, VersionResult,
 } from '../types';
 
-/** Single emission point. Commands never console.log or process.exit directly. */
-export function emit(result: CommandResult, json: boolean): void {
+/** Single emission point. Commands never console.log or process.exit directly.
+ *  `refsOnly` (check only, §22/§36): human output is scoped to the References
+ *  section (+ Rules + summary); JSON output is always the full result. */
+export function emit(result: CommandResult, json: boolean, refsOnly?: boolean): void {
   if (json) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
-  printHuman(result);
+  printHuman(result, refsOnly);
 }
 
 const CATEGORY_ORDER: Array<Issue['category']> = ['structure', 'style', 'refs', 'redundancy', 'overflow'];
 
-export function printHuman(result: CommandResult): void {
+export function printHuman(result: CommandResult, refsOnly?: boolean): void {
   switch (result.command) {
     case 'check':
-      printCheckHuman(result as CheckResult);
+      printCheckHuman(result as CheckResult, refsOnly);
       break;
     case 'help':
       printHelp();
@@ -196,7 +198,7 @@ export function printHuman(result: CommandResult): void {
   }
 }
 
-function printCheckHuman(r: CheckResult): void {
+function printCheckHuman(r: CheckResult, refsOnly?: boolean): void {
   // Workspace-level errors (e.g. no cans workspace) print standalone,
   // not nested under a section header with a bogus ":0" location.
   const wsErrors = (r.issues ?? []).filter(i => i.file === '' && i.line === 0);
@@ -216,30 +218,41 @@ function printCheckHuman(r: CheckResult): void {
     list.push(i);
     byCategory.set(i.category, list);
   }
-  console.log('Structure');
-  console.log(`  ${r.files} files, ${r.nodes} nodes, max depth ${r.maxDepth}`);
-  printIssues(byCategory.get('structure'));
+  if (!refsOnly) {
+    console.log('Structure');
+    console.log(`  ${r.files} files, ${r.nodes} nodes, max depth ${r.maxDepth}`);
+    printIssues(byCategory.get('structure'));
 
-  console.log('Style');
-  printIssues(byCategory.get('style'));
+    console.log('Style');
+    printIssues(byCategory.get('style'));
+  }
 
   console.log('References');
   console.log(`  ${r.refs.total} see: refs, ${r.refs.broken} broken, ${r.refs.deepHops} deep hops`);
   console.log(`  back-pointers: ${r.backPointers.current}/${r.backPointers.total} current`);
   printIssues(byCategory.get('refs'));
 
-  console.log('Redundancy');
-  printIssues(byCategory.get('redundancy'));
-  if (!byCategory.get('redundancy')?.length) {
-    const none = r.issues.filter(i => i.category === 'redundancy').length === 0;
-    if (none) console.log('  ✓ no redundancy detected');
+  if (!refsOnly) {
+    console.log('Redundancy');
+    printIssues(byCategory.get('redundancy'));
+    if (!byCategory.get('redundancy')?.length) {
+      const none = r.issues.filter(i => i.category === 'redundancy').length === 0;
+      if (none) console.log('  ✓ no redundancy detected');
+    }
+
+    console.log('Overflow');
+    if (!byCategory.get('overflow')?.length) {
+      console.log('  ✓ no code blocks, tables, or oversized nodes');
+    } else {
+      printIssues(byCategory.get('overflow'));
+    }
   }
 
-  console.log('Overflow');
-  if (!byCategory.get('overflow')?.length) {
-    console.log('  ✓ no code blocks, tables, or oversized nodes');
-  } else {
-    printIssues(byCategory.get('overflow'));
+  // §22: the fixed report order ends Structure → Style → References →
+  // Redundancy → Overflow → Rules → Summary (QA-02 F17).
+  if (r.rulesSummary !== undefined) {
+    console.log('Rules (_rules.yaml)');
+    console.log(`  ✓ ${r.rulesSummary}`);
   }
 
   void CATEGORY_ORDER;
