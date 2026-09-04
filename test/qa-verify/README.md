@@ -5,15 +5,17 @@ Regression tests that **confirm the red** reported by the blackbox QA cycle in
 
 Every non-control test asserts the **documented contract** from
 `docs/cans.architecture.md` (§ reference + QA finding ID in the test comment).
-Because the implementation currently violates that contract, these tests are
-**expected to fail**. They are deliberate regression specs — each one flips to
-green when (and only when) the corresponding finding is fixed. They are not
-band-aid tests: nothing here asserts current behavior, swallows failures, or
-skips.
+Each test was authored red against `impl/full-engines` and **flips to green
+when (and only when) the corresponding finding is fixed**. They are not
+band-aid tests: nothing here asserts workaround behavior, swallows failures,
+or skips.
 
 ## Status
 
-`71 red (expected) / 7 controls pass` — run against `qa/blackbox-findings` @ b3d5b72.
+**78/78 green on `fix/qa-red-tests-green` @ e628ff2 (2026-09-04)** — all 71
+former-red tests plus the 7 controls pass; repo-wide `bun test` is
+192 pass / 0 fail. The original red run (71 red / 7 controls pass) was against
+`qa/blackbox-findings` @ b3d5b72.
 
 The 7 `// control (expected PASS)` tests pin the harness (documented behavior
 that already works), so a red test failing for a setup reason is immediately
@@ -22,14 +24,15 @@ visible.
 ## Run
 
 ```bash
-bun test test/qa-verify            # the red suite alone (71 fail / 7 pass is CORRECT today)
-bun test                           # full suite: 114 baseline pass + 7 controls pass + 71 red
+bun test test/qa-verify            # the verification suite alone (78/78 green today)
+bun test                           # full suite: 192 pass / 0 fail
 bun test test/qa-verify/qa-05-interop.test.ts   # one report's suite
 ```
 
-> CI note: until fixes land, `bun test` will report 71 failures. That is the
-> honest, intended state — it is the machine-checked form of the QA verdict.
-> Fixing a finding turns its tests green.
+> CI note: the suite is fully green since the QA patch series
+> (5737b48..e628ff2) landed. If a qa-verify test goes red again, it means the
+> corresponding documented contract regressed — fix the implementation, not
+> the test.
 
 ## Files → QA reports
 

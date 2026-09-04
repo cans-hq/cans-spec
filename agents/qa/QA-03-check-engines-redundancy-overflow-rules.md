@@ -2,6 +2,8 @@
 
 Task ID: 3-c · Agent: qa-redundancy-overflow-rules · Repo: cans-spec @ impl/full-engines, commit 54b0b52 · Date: 2025-09-03
 
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 16/17 findings RESOLVED, 0 PARTIAL, 1 DOC-GAP, 0 OPEN; mapped suite qa-03-redundancy-overflow-rules-budget 16/16 green.
+
 ## Scope & docs covered
 
 Blackbox manual QA (no source reading, no test runner) of:
@@ -155,23 +157,74 @@ Total: 74 recorded checks — PASS 47 · FAIL 10 · DEVIATION 10 · UNDOCUMENTED
 
 ## Findings
 
-1. **MAJOR — "Delete a key = check turns off" not implemented (§18, §40).** Removing `redundancy.enabled`, the whole `redundancy:` section, or `references.orphan_check` leaves the checks running with defaults. Only explicit `false` disables. This is the documented migration/disabling mechanism. Repro: rules-ws with `_rules.yaml` = full defaults minus redundancy section → ×4 warning still fires.
-2. **MAJOR — Some malformed configs crash with an internal error instead of §18's line-numbered config error.** `structure:` + tab-indented line, or `structure: 42` → `✗ Internal error: undefined is not an object (evaluating 'rules.node_length.max')`, exit 2. §18 says invalid YAML → print line number, exit 1; §37 forbids internal-error leakage for user errors. Unbalanced-bracket YAML is handled correctly (line 6 reported, exit 1), so coverage of the "invalid YAML" path is partial.
-3. **MAJOR — Active-task tier missing from `budget read` (§26 step 3, §35 budget-read.json).** A `_tasks/*.md` mentioning the concept (in §30 format, and variants) never appears in the plan ("active task mentioning", 80/20). The same file IS found by `budget write` ("active task") and by `read --change` — so plain `read` alone diverges from the documented scoring.
-4. **MAJOR — `budget write` exit-code contract broken for unknown concepts.** `budget write xyzzy` → exit 0 with empty CAN/MUST-NOT lists; `budget read xyzzy` → exit 1. §19: 1 = user-correctable failure; agents relying on exit codes will treat an empty write scope as success.
-5. **MAJOR — Unknown `budget` subcommand silently runs as `read`.** `budget frobnicate x` → `Reading plan for: x`, exit 0. Typo'd invocations are accepted and produce plausible-looking output (violates §37 "say what happened").
-6. **MINOR — `overflow.force_file_for` is inert in `cans check`.** `force_file_for: [table]` and even `[]` still flag code fences and tables. The §18 default `[code_block, table, diagram]` implies the list drives detection; it does not (fence/table detection appears hardcoded).
-7. **MINOR — Phrase-overlap metric deviates from §13 normalization and boundary.** Observed metric is Jaccard over tokens *including stopwords* (5/7 = 71% fires where stopword "for" is shared; §13 says stopwords filtered) and threshold is strict `> 0.7` (exactly 7/10 = 70% does not fire; §13 says "≥ 70%"). Consequence: §34's expected "phrase overlap warning" for redundancy-project is unreachable under any reading of §13 — the fixture produces only the ×6 word-frequency warning.
-8. **MINOR — Fuzzy layer fires on synonym-matched pairs.** `postgres` ↔ `postgresql` flagged "possible typo — Levenshtein 2" although both map to the same synonym group; §13 explicitly excludes "already synonym-matched" words, and the suggestion ("map the variant as a synonym") is already satisfied — pure noise.
-9. **MINOR — Budget commands outside a workspace give no explanation.** `budget read sessions` from a non-workspace → `Reading plan for: sessions` + `Budget: 0 / 0 tokens (0%)`, exit 1, no "no cans workspace found" hint (unlike `check`). `budget read <zero-match concept>` similarly exits 1 with an empty plan and no "why/how to fix" (§37).
-10. **MINOR — §16 no-chaining rule not enforced.** Adding a `see:` line to an overflow target (04-api/request-schema.md) produces no error; the ref isn't even counted. (Enforcement point may be intended elsewhere — nowhere documented.)
-11. **MINOR — Dead/invisible config surfaces: `token_budget.warn_threshold` and the §22 "Rules" report section.** No warning is ever emitted at 91.4% usage with warn_threshold 0.8 (nor 0.5); and check output never contains the documented "Rules" section (fixed order Structure → Style → References → Redundancy → Overflow → Rules → Summary).
-12. **MINOR — Absolute local paths leak into budget output for task files** (`/home/z/.../_tasks/add-dark-mode.md` in `budget read --change`, `budget write` human + JSON canEdit) while all other files are repo-relative — breaks portability/diffability of agent-facing output.
-13. **MINOR — Nested block arrays silently ignored by the mini-parser.** `synonyms: [- - postgres, - postgresql, ...]` parses without error but yields no synonym grouping (word-freq count drops 4→below threshold). Undocumented syntax, but silent degradation.
-14. **UX — Workspace-not-found error is misplaced and misleading in `check`.** `✗ :0 — no cans workspace found` renders under the *References* section with empty file/line-0, while Structure/Redundancy/Overflow print reassuring "✓/0 files" sections for a workspace that doesn't exist.
-15. **UX — Bare `budget` (no subcommand) prints `Reading plan for:` with an empty concept** instead of usage/error guidance.
-16. **UX — Concept matching is substring-based and undocumented.** `budget read x` matches "Ex**p**i**r**e…"? — actually matches substring "x" inside "expire" and elects a 0-child leaf as "canonical home". Surprising canonical-home selection for short concepts.
-17. **COSMETIC — "has 1 children"** grammar in style warnings (observed on budget-project check).
+1. **MAJOR — "Delete a key = check turns off" not implemented (§18, §40).**
+   > **Status: RESOLVED** — Green red-tests `F1a`/`F1b`/`F1c` (whole `redundancy:` section deleted, `enabled` deleted, `orphan_check` deleted → check off). CLI re-check: defaults minus the `redundancy:` section prints "Redundancy ✓ no redundancy detected".
+
+   Removing `redundancy.enabled`, the whole `redundancy:` section, or `references.orphan_check` leaves the checks running with defaults. Only explicit `false` disables. This is the documented migration/disabling mechanism. Repro: rules-ws with `_rules.yaml` = full defaults minus redundancy section → ×4 warning still fires.
+2. **MAJOR — Some malformed configs crash with an internal error instead of §18's line-numbered config error.**
+   > **Status: RESOLVED** — Green red-tests `F2a`/`F2b`. Observed: `✗ invalid _rules.yaml: line 1 — "structure" must be a mapping, got number`, exit 1 — no "Internal error", no exit 2.
+
+   `structure:` + tab-indented line, or `structure: 42` → `✗ Internal error: undefined is not an object (evaluating 'rules.node_length.max')`, exit 2. §18 says invalid YAML → print line number, exit 1; §37 forbids internal-error leakage for user errors. Unbalanced-bracket YAML is handled correctly (line 6 reported, exit 1), so coverage of the "invalid YAML" path is partial.
+3. **MAJOR — Active-task tier missing from `budget read` (§26 step 3, §35 budget-read.json).**
+   > **Status: RESOLVED** — Green red-test `F3`. Observed `budget read sessions --json` plan entry `cans/_tasks/add-dark-mode.md — active task mentions concept — score 80` (§26 prose tier).
+
+   A `_tasks/*.md` mentioning the concept (in §30 format, and variants) never appears in the plan ("active task mentioning", 80/20). The same file IS found by `budget write` ("active task") and by `read --change` — so plain `read` alone diverges from the documented scoring.
+4. **MAJOR — `budget write` exit-code contract broken for unknown concepts.**
+   > **Status: RESOLVED** — Green red-test `F4`. Observed: ``✗ no files match concept "xyzzy" — check spelling or run `cans status` ``, exit 1 (JSON `ok:false`).
+
+   `budget write xyzzy` → exit 0 with empty CAN/MUST-NOT lists; `budget read xyzzy` → exit 1. §19: 1 = user-correctable failure; agents relying on exit codes will treat an empty write scope as success.
+5. **MAJOR — Unknown `budget` subcommand silently runs as `read`.**
+   > **Status: RESOLVED** — Green red-test `F5`. Observed: `✗ unknown subcommand "frobnicate" — valid: read, write`, exit 1.
+
+   `budget frobnicate x` → `Reading plan for: x`, exit 0. Typo'd invocations are accepted and produce plausible-looking output (violates §37 "say what happened").
+6. **MINOR — `overflow.force_file_for` is inert in `cans check`.**
+   > **Status: RESOLVED** — Green red-test `F6`. Observed: `[table]` flags only the table, `[]` flags nothing — the list now drives detection. (Docs note: the `diagram` entry still has no matcher — mermaid classifies as code_block; row 29 UNDOCUMENTED persists.)
+
+   `force_file_for: [table]` and even `[]` still flag code fences and tables. The §18 default `[code_block, table, diagram]` implies the list drives detection; it does not (fence/table detection appears hardcoded).
+7. **MINOR — Phrase-overlap metric deviates from §13 normalization and boundary.**
+   > **Status: RESOLVED** — Green red-tests `F7a` (exactly 7/10 = 70% now flags — ≥ boundary) and `F7b` (stopwords filtered before measuring — 66.7% no longer fires). Docs residual: §34's expected phrase-overlap warning for redundancy-project remains unreachable under the corrected metric (row 2) — §34-vs-§13 doc-internal tension.
+
+   Observed metric is Jaccard over tokens *including stopwords* (5/7 = 71% fires where stopword "for" is shared; §13 says stopwords filtered) and threshold is strict `> 0.7` (exactly 7/10 = 70% does not fire; §13 says "≥ 70%"). Consequence: §34's expected "phrase overlap warning" for redundancy-project is unreachable under any reading of §13 — the fixture produces only the ×6 word-frequency warning.
+8. **MINOR — Fuzzy layer fires on synonym-matched pairs.**
+   > **Status: RESOLVED** — Green red-test `F8`: postgres ↔ postgresql (same synonym group) no longer yields a "possible typo" warning.
+
+   `postgres` ↔ `postgresql` flagged "possible typo — Levenshtein 2" although both map to the same synonym group; §13 explicitly excludes "already synonym-matched" words, and the suggestion ("map the variant as a synonym") is already satisfied — pure noise.
+9. **MINOR — Budget commands outside a workspace give no explanation.**
+   > **Status: RESOLVED** — Green red-test `F9` (non-workspace `budget read` explains instead of success-shaped output). Zero-match observed: ``✗ no files match concept "xyzzy" — check spelling or run `cans status` ``, exit 1 (§37 what/why/how, JSON `ok:false`).
+
+   `budget read sessions` from a non-workspace → `Reading plan for: sessions` + `Budget: 0 / 0 tokens (0%)`, exit 1, no "no cans workspace found" hint (unlike `check`). `budget read <zero-match concept>` similarly exits 1 with an empty plan and no "why/how to fix" (§37).
+10. **MINOR — §16 no-chaining rule not enforced.**
+    > **Status: RESOLVED** — Green red-test `F10`: a `see:` line inside overflow target 04-api/request-schema.md is now flagged.
+
+    Adding a `see:` line to an overflow target (04-api/request-schema.md) produces no error; the ref isn't even counted. (Enforcement point may be intended elsewhere — nowhere documented.)
+11. **MINOR — Dead/invisible config surfaces: `token_budget.warn_threshold` and the §22 "Rules" report section.**
+    > **Status: RESOLVED** — Green red-test `F11`; observed `⚠ warning: plan usage 91.4% of 70 tokens exceeds token_budget.warn_threshold (80%)` on stderr, and `check` now prints the §22/§36 `Rules (_rules.yaml)` section before the Summary.
+
+    No warning is ever emitted at 91.4% usage with warn_threshold 0.8 (nor 0.5); and check output never contains the documented "Rules" section (fixed order Structure → Style → References → Redundancy → Overflow → Rules → Summary).
+12. **MINOR — Absolute local paths leak into budget output for task files**
+    > **Status: RESOLVED** — Manual CLI (no dedicated red test): `budget read sessions --change add-dark-mode` and `budget write sessions` (human + `--json` canEdit) now report the task file as workspace-relative `cans/_tasks/add-dark-mode.md`; no absolute paths.
+
+    (`/home/z/.../_tasks/add-dark-mode.md` in `budget read --change`, `budget write` human + JSON canEdit) while all other files are repo-relative — breaks portability/diffability of agent-facing output.
+13. **MINOR — Nested block arrays silently ignored by the mini-parser.**
+    > **Status: RESOLVED** — Manual CLI: nested block-array synonyms now fail loud per §18 — `✗ invalid _rules.yaml: line 9: unexpected indentation`, exit 1 — no silent degradation; documented block-array-of-inline-arrays syntax still merges (×4 fires).
+
+    `synonyms: [- - postgres, - postgresql, ...]` parses without error but yields no synonym grouping (word-freq count drops 4→below threshold). Undocumented syntax, but silent degradation.
+14. **UX — Workspace-not-found error is misplaced and misleading in `check`.**
+    > **Status: RESOLVED** — Manual CLI: `check` outside a workspace prints a single error line ``✗ no cans workspace found — run `cans init` or cd into a project with a cans/ directory`` + `1 errors, 0 warnings.`, exit 1 — no phantom ✓ sections, no `:0`-line under References.
+
+    `✗ :0 — no cans workspace found` renders under the *References* section with empty file/line-0, while Structure/Redundancy/Overflow print reassuring "✓/0 files" sections for a workspace that doesn't exist.
+15. **UX — Bare `budget` (no subcommand) prints `Reading plan for:` with an empty concept**
+    > **Status: RESOLVED** — Manual CLI: bare `budget` → `✗ usage: cans budget <read|write> <concept>`, exit 1.
+
+    instead of usage/error guidance.
+16. **UX — Concept matching is substring-based and undocumented.**
+    > **Status: DOC-GAP** — Behavior unchanged: `budget read x` still substring-matches ("x" inside "Expire after 24 hours" elected canonical home, exit 0), and §26 step 1 ("Normalize concept. Find matching nodes.") still defines no matching semantics — undocumented surface, no documented contract violated; docs need a §26 matching definition.
+
+    `budget read x` matches "Ex**p**i**r**e…"? — actually matches substring "x" inside "expire" and elects a 0-child leaf as "canonical home". Surprising canonical-home selection for short concepts.
+17. **COSMETIC — "has 1 children"**
+    > **Status: RESOLVED** — Manual CLI: single-child warning now reads `"Parent" has exactly 1 child. Collapse.`
+
+    grammar in style warnings (observed on budget-project check).
 
 ## Observations
 
@@ -184,8 +237,17 @@ Total: 74 recorded checks — PASS 47 · FAIL 10 · DEVIATION 10 · UNDOCUMENTED
 
 ## Verdict summary
 
+Pre-fix (historical):
+
 - 74 checks: **47 PASS · 10 FAIL · 10 DEVIATION · 7 UNDOCUMENTED** (consolidated into 17 findings).
 - Core engine behavior (redundancy layers, overflow detection, budget planning JSON, thresholds configurability, --change semantics, exit-code discipline for check) is solid and doc-aligned.
 - The weakest areas are the §18 "delete a key = disable" contract (not implemented, F1), config-error handling (F2), the active-task tier in `budget read` (F3), and budget error-path hygiene (F4, F5, F9).
 - No blockers found; 4–5 major findings, all with clear reproducers in /home/z/my-project/qa-playground/qa-rules/.
 - Repo left untouched (no modifications/commits); all testing done on copies in scratch.
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+
+- 16/17 findings RESOLVED, 0 PARTIAL, 1 DOC-GAP (F16), 0 OPEN. Mapped red suite `test/qa-verify/qa-03-redundancy-overflow-rules-budget.test.ts` 16/16 green (15 finding tests + 1 control); whole-repo `bun test` 192 pass / 0 fail.
+- DOC-GAP F16: concept matching in `budget read`/`budget write` is still undocumented — §26 step 1 says only "Normalize concept. Find matching nodes." Substring matching persists (`budget read x` → "Expire after 24 hours" elected canonical home, exit 0); needs a §26 matching definition, not an undocumented impl tweak.
+- Doc-internal residuals (docs untouched on this branch, no impl change required): §34's "phrase overlap warning" for redundancy-project is still unreachable under the corrected §13 metric (row 2); §18's `force_file_for` `diagram` entry still has no detection category (mermaid fences classify as `code_block`, row 29); §26 prose (active task = 80) vs §35 fixture (score 20) inconsistency stands — impl follows §26 prose (verified: score 80).
+- Spot-checked FAIL/DEVIATION rows via CLI: 27, 33, 34, 36, 38, 54, 61, 66, 67, 68, 69, 70, 71, 73 all behave per documented contracts now; PASS rows 1, 37, 46/47, 51 re-verified without regression (row 51 additionally exercises the new warn_threshold warning).

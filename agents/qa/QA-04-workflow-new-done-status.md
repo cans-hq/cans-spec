@@ -2,6 +2,8 @@
 
 Task ID: 3-d · Blackbox manual QA · Repo: /home/z/my-project/cans-spec @ impl/full-engines, commit 54b0b52 (clean; only this report file added).
 
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 10/10 findings RESOLVED, 0 PARTIAL, 0 DOC-GAP, 0 OPEN; mapped suite qa-04-workflow 12/12 green.
+
 ## Scope & docs covered
 
 - docs/cans.architecture.md: §20 CLI commands & arg parsing, §21 init (workspace resolution), §22 check (shared pipeline), **§23 `new adr`/`new task`**, **§24 `done` gates**, **§25 `status`**, **§29 ADR Format**, **§30 Task File Format**, §34 flat-project fixture, **§35 output/new.json, status.json, done-success.json, done-blocked-human.json**, **§36 human text examples**, §37 error philosophy, §19 exit codes/output contract, §8 workspace structure.
@@ -59,16 +61,35 @@ Task ID: 3-d · Blackbox manual QA · Repo: /home/z/my-project/cans-spec @ impl/
 ## Findings (numbered, severity)
 
 1. **MAJOR — `--json` (and any flag) is swallowed into `new` title/name.**
+   > **Status: RESOLVED** — Red-tests F1a/F1b/F1c green (test/qa-verify/qa-04-workflow.test.ts); CLI re-run: `new adr "Postgres over MySQL" --json` → `_adr/001-postgres-over-mysql.md`, flag-first → `_adr/002-flag-first-title.md`, `new task verify-clean --json` → `_tasks/verify-clean.md` — no flag pollution in slug/file/title.
    Repro: `cans new adr "Postgres over MySQL" --json` → creates `_adr/002-postgres-over-mysql-json.md` headed `# ADR-002: Postgres over MySQL --json`; `cans new adr --json "Flag First Title"` → `003-json-flag-first-title.md`; same for `new task foo --json` → `foo-json.md`. JSON *is* emitted, so agents get `ok:true` while the artifact name is silently corrupted. Expected: flags parsed per §20 ("Commands parse only their own args"), `change`/`file` clean per §35 new.json.
-2. **MAJOR — `new task <name>` silently overwrites an existing task file.** Repro: run `new task add-dark-mode` twice (w2). Second run prints "Created", exit 0, and replaces the file with the blank template — all checkbox/owner state destroyed. Docs don't specify, but §21's precedent (init "skips existing files unless --force") and §37's error philosophy imply a refusal or warning.
-3. **MAJOR — same-day re-archive silently overwrites `_tasks/_archive/YYYY-MM-DD-<name>.md`.** Repro: complete+archive `do-thing`, recreate it, complete+archive again → previous archived record lost, exit 0, no warning. ADRs are "permanent records"; archived tasks are the only history `done` keeps.
-4. **MAJOR — every `done` failure except the three gates is misdiagnosed as "cans check failed".** `done no-such-task`, `done` on an already-archived task, `done` on an ADR name, `done` with no args, and `done` in a workspace-less dir all print `✗ BLOCKED: cans check failed (--skip-check to override)` even when `cans check` exits 0 with 0 errors, and even when `--skip-check` is passed (the flag the message itself suggests does not change the outcome). JSON mode returns `{ok:false, gates:{all 0}, archived:null}` with no reason field — indistinguishable across causes. Expected (§37): name the actual problem (`task not found` / `already archived` / `no workspace`) and what to do.
-5. **MAJOR — `status --unclaimed` / `--blocked` / `--owners` are no-ops.** Documented in §20 command list and §25; help text lists them. Output is byte-identical to default status in every scenario tested (including when only 1 of 3 tasks is blocked, so a filter would be observable). Related ambiguity: task-file `blocked` is true whenever *any* checkbox is open, so a task with gates 1/1 but open tasks still shows `⚠ BLOCKED` — §35's fixture (`tasks.blocked:1` while both taskFiles have `blocked:true`) can't disambiguate; docs never define the flag's filter semantics.
-6. **MINOR — empty error messages from `new`.** `new adr` / `new adr '--- !!!'` / `new task` (missing or slug-less arg) print a bare `✗ ` (exit 1, stdout). Violates §37's `✗ <what> / <where> / <what to do>` pattern.
-7. **MINOR — `new` silently bootstraps a workspace skeleton.** In any dir without `cans/`, `new task x` / `new adr "T"` create `cans/_tasks/` or `cans/_adr/` (+ file) with no `_rules.yaml`/`AGENTS.md`, no warning. Undocumented (§23 says only "No git operations"); surprising side effect when run in an arbitrary directory.
-8. **MINOR — `status` without a workspace prints a zeroed report with exit 1 and no message.** §25's "exits 1 if cans/ missing" is honored, but nothing tells the user why (text and JSON both silent about the cause).
-9. **MINOR — human-text formats deviate from §36 examples.** (a) status per-task: doc shows multi-line block with `Gates: 1/2 ← @human`; actual is one line `name: tasks x/y, gates a/b    ⚠ BLOCKED` (no `← @human` marker). (b) done-blocked: line 1 matches §36 exactly (`✗ BLOCKED: 1 unchecked ← @human gate`), but line 2 is generic advice instead of the documented `file:line — gate text`. Info content is equivalent; format is not.
-10. **MINOR — `done` never updates back-pointers.** Workspace had `see:` refs whose targets lacked `<!-- ref-by -->` comments; `done` on a completable task returned `backPointersUpdated:0` and wrote nothing (§24: "Updates back-pointers if needed"; §35 fixture shows 2). Possibly intentional (back-pointers belong to `check --fix`), but undocumented.
+2. **MAJOR — `new task <name>` silently overwrites an existing task file.**
+   > **Status: RESOLVED** — Red-test F2 green; CLI re-run on the fixture task → `✗ refusing to overwrite existing _tasks/add-dark-mode.md — it already has content; delete it or use a different name`, exit 1, file md5 unchanged; JSON mode returns `ok:false` with an `error` field.
+   Repro: run `new task add-dark-mode` twice (w2). Second run prints "Created", exit 0, and replaces the file with the blank template — all checkbox/owner state destroyed. Docs don't specify, but §21's precedent (init "skips existing files unless --force") and §37's error philosophy imply a refusal or warning.
+3. **MAJOR — same-day re-archive silently overwrites `_tasks/_archive/YYYY-MM-DD-<name>.md`.**
+   > **Status: RESOLVED** — Red-test F3 green; CLI re-run: second same-day `done do-thing` archives to a distinct `_tasks/_archive/2026-09-04-do-thing-2.md` and the first record's content survives intact.
+   Repro: complete+archive `do-thing`, recreate it, complete+archive again → previous archived record lost, exit 0, no warning. ADRs are "permanent records"; archived tasks are the only history `done` keeps.
+4. **MAJOR — every `done` failure except the three gates is misdiagnosed as "cans check failed".**
+   > **Status: RESOLVED** — Red-tests F4a/F4b green; CLI re-run: not-found → `✗ task "no-such-task" not found in _tasks/ — run cans status to list active tasks`, already-archived → `✗ task "do-thing" is already archived (…)`, no args → `✗ usage: cans done <task-name>`, no workspace → `✗ no cans workspace found — run cans init first`; JSON mode now carries an `error` field naming the cause.
+   `done no-such-task`, `done` on an already-archived task, `done` on an ADR name, `done` with no args, and `done` in a workspace-less dir all print `✗ BLOCKED: cans check failed (--skip-check to override)` even when `cans check` exits 0 with 0 errors, and even when `--skip-check` is passed (the flag the message itself suggests does not change the outcome). JSON mode returns `{ok:false, gates:{all 0}, archived:null}` with no reason field — indistinguishable across causes. Expected (§37): name the actual problem (`task not found` / `already archived` / `no workspace`) and what to do.
+5. **MAJOR — `status --unclaimed` / `--blocked` / `--owners` are no-ops.**
+   > **Status: RESOLVED** — Red-tests F5a/F5b green; CLI re-run on a 3-task workspace: `--unclaimed` lists only the task with unclaimed items, `--blocked` only tasks with open work (fully-done task excluded), `--owners` prints a dedicated owners view — every filtered output differs from default status.
+   Documented in §20 command list and §25; help text lists them. Output is byte-identical to default status in every scenario tested (including when only 1 of 3 tasks is blocked, so a filter would be observable). Related ambiguity: task-file `blocked` is true whenever *any* checkbox is open, so a task with gates 1/1 but open tasks still shows `⚠ BLOCKED` — §35's fixture (`tasks.blocked:1` while both taskFiles have `blocked:true`) can't disambiguate; docs never define the flag's filter semantics.
+6. **MINOR — empty error messages from `new`.**
+   > **Status: RESOLVED** — Red-test F6 green; CLI re-run: `new adr` with no args → `✗ empty slug from "" — provide a non-empty title`, exit 1 — message is non-empty and actionable per §37.
+   `new adr` / `new adr '--- !!!'` / `new task` (missing or slug-less arg) print a bare `✗ ` (exit 1, stdout). Violates §37's `✗ <what> / <where> / <what to do>` pattern.
+7. **MINOR — `new` silently bootstraps a workspace skeleton.**
+   > **Status: RESOLVED** — not covered by a red test; verified blackbox: `new task from-parent` / `new adr "Boot Check"` in a dir without cans/ → `✗ no cans workspace found — run cans init first`, exit 1, and nothing is created (no auto-bootstrapped skeleton).
+   In any dir without `cans/`, `new task x` / `new adr "T"` create `cans/_tasks/` or `cans/_adr/` (+ file) with no `_rules.yaml`/`AGENTS.md`, no warning. Undocumented (§23 says only "No git operations"); surprising side effect when run in an arbitrary directory.
+8. **MINOR — `status` without a workspace prints a zeroed report with exit 1 and no message.**
+   > **Status: RESOLVED** — not covered by a red test; verified blackbox: `status` without a workspace now prints `✗ No cans workspace found. / Run cans init or cd into a project with a cans/ directory.`; JSON mode returns zeros with `ok:false` plus an `error` field naming the cause.
+   §25's "exits 1 if cans/ missing" is honored, but nothing tells the user why (text and JSON both silent about the cause).
+9. **MINOR — human-text formats deviate from §36 examples.**
+   > **Status: RESOLVED** — not covered by a red test; verified blackbox: status per-task output is now the §36 multi-line block (`Tasks: x/y` / `Gates: a/b ← @human` / `⚠ BLOCKED`), and done-blocked line 2 is `_tasks/add-dark-mode.md:10 — Spec approved ← @human` (file:line — gate text; line number verified against the file).
+   (a) status per-task: doc shows multi-line block with `Gates: 1/2 ← @human`; actual is one line `name: tasks x/y, gates a/b    ⚠ BLOCKED` (no `← @human` marker). (b) done-blocked: line 1 matches §36 exactly (`✗ BLOCKED: 1 unchecked ← @human gate`), but line 2 is generic advice instead of the documented `file:line — gate text`. Info content is equivalent; format is not.
+10. **MINOR — `done` never updates back-pointers.**
+   > **Status: RESOLVED** — Red-test F10 green: `done` on a workspace whose see: target lacks its ref-by comment now reports `backPointersUpdated ≥ 1` / writes the `ref-by` comment (previously 0 and untouched).
+   Workspace had `see:` refs whose targets lacked `<!-- ref-by -->` comments; `done` on a completable task returned `backPointersUpdated:0` and wrote nothing (§24: "Updates back-pointers if needed"; §35 fixture shows 2). Possibly intentional (back-pointers belong to `check --fix`), but undocumented.
 
 ## Observations
 
@@ -82,8 +103,14 @@ Task ID: 3-d · Blackbox manual QA · Repo: /home/z/my-project/cans-spec @ impl/
 
 ## Verdict summary
 
+Pre-fix (historical):
 - **41 checks executed** across 4 workspaces (37-row matrix above covers 41 command/inspection probes).
 - **PASS: 26 · FAIL: 8 · DEVIATION: 4 · UNDOCUMENTED: 3** (rows with dual verdicts counted by primary severity).
 - Core workflow mechanics (create ADR/task from templates, slug rules, gate order, archive move, status counting/JSON contracts, state-from-files, exit codes) are solid and doc-conformant.
 - The FAIL cluster is concentrated in diagnostics and flag handling: flag-swallowing in `new` (#1), silent destructive behavior (#2, #3), misleading done errors (#4), and dead status filters (#5). All are fixable without touching the engines.
 - No repo files modified; all evidence reproducible under /home/z/my-project/qa-playground/qa-workflow/.
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+- 10/10 findings RESOLVED, 0 PARTIAL, 0 DOC-GAP, 0 OPEN; mapped red-test suite `qa-04-workflow` 12/12 green (11 finding tests + 1 control; full-repo `bun test` 192 pass / 0 fail).
+- Findings 1–6 and 10 proven by green tests F1a/F1b/F1c, F2, F3, F4a/F4b, F5a/F5b, F6, F10; findings 7, 8, 9 (test-uncovered) verified blackbox via CLI from scratch workspaces.
+- No remaining PARTIAL/OPEN/DOC-GAP items: same-day archives get distinct `-2` entries, `done`/`status`/`new` diagnostics name the real cause, `new` no longer auto-vivifies a workspace, and §36 human-text formats match the doc examples.

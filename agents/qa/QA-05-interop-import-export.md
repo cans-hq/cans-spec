@@ -4,6 +4,8 @@
 - Repo: /home/z/my-project/cans-spec @ branch `impl/full-engines`, commit `54b0b52` (repo untouched except this report)
 - Date: session of QA cycle 3
 
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 13/19 findings RESOLVED, 2 PARTIAL, 3 DOC-GAP, 1 OPEN; mapped suite qa-05-interop 14/14 green.
+
 ## Scope & docs covered
 
 - `docs/cans.architecture.md`: §19 (Output System, exit codes), §20 (CLI Commands/arg parsing), §27 (import), §28 (export), §31 (Converter Internals: shared utils, OPML, Logseq, Obsidian), §32 (filesystem discovery), §34 (import fixtures: dynalist-export.opml, logseq-page.md, obsidian-note.md), §35 (output/import.json, output/export.json), §36 (help text), §37 (Error Message Philosophy).
@@ -64,91 +66,110 @@ Verdicts: PASS / FAIL / DEVIATION (works but contradicts a documented contract) 
 ## Findings
 
 ### F1 — BLOCKER (ux/§37): all import/export failures print a false-success line and give no reason
+> **Status: RESOLVED** — Red tests `F1a`/`F1b` green; CLI re-checks on every original error path (nonexistent file, unknown format, directory source, missing args, no-workspace, uppercase format) now print a `✗` reason plus fix hint, exit 1, and `--json` carries an `error` field — no false-success line anywhere.
 - Repro (any of): run `cans import opml nope.opml` (or `import workflowy x`, path=directory, uppercase format, missing args, or import from a cwd without `cans/`) → first output line is always `Imported <format> from <path>` / `Exported <format> →  (0 files)`, then exit 1 with no explanation; `--json` returns `ok:false` with **no error/message field anywhere**.
 - Expected: §37 — `✗ <what> / <where>: <detail> / <what to do>`; e.g. "✗ No CANS workspace found in <cwd>. Run `cans init` first." Unknown format should list valid formats (`opml, dynalist, logseq, obsidian` / + `all` for export); missing args should print usage.
 - Actual: misleading success text + silent failure. Users/agents get zero actionable information; the JSON contract (§35) has no place signaling why.
 
 ### F2 — MAJOR: generated `see:` refs never include `.md` → guaranteed broken refs
+> **Status: PARTIAL** — Red test `F2` green: `[[02-authentication#Sessions]]` imports as `see: 02-authentication.md#Sessions` and `cans check` reports 0 broken refs. Remainder: targets that don't match the `NN-slug` naming convention still get no `.md` — `[[error-codes]]`, `[[error-codes#400 Bad Request]]` and `![[error-codes]]` all import as bare `see: error-codes` and `cans check` reports "broken ref: see error-codes — file not found" even with `cans/error-codes.md` present.
 - Repro: `cans import logseq test/fixtures/import-fixtures/logseq-page.md` (or obsidian fixture) in a fresh workspace, then `cans check`.
 - Expected: §3/§4 canonical ref form `see 02-authentication.md#Sessions`; §45 "roundtrips pass".
 - Actual: `see: 02-authentication#Sessions` → `cans check`: "broken ref: see 02-authentication — file not found" (verified: adding `.md` by hand fixes it). Every wiki-link import produces a broken ref unless the target filename coincidentally has no `.md`.
 
 ### F3 — MAJOR: logseq wiki-link import glues trailing text into the ref target
+> **Status: RESOLVED** — Red test `F3` green: ref target token is exactly `02-authentication.md#Sessions` with `expire after 24 hours` as trailing node content; the generated ref resolves (`cans check` broken = 0).
 - Repro: import `logseq-page.md`; line 2 of output: `see: 02-authentication#Sessions expire after 24 hours`.
 - Expected: `[[02-authentication#Sessions]] expire after 24 hours` → ref target `02-authentication.md#Sessions` + remaining text as node content (ref line unambiguous).
 - Actual: trailing prose becomes part of the `see:` target → ref unresolvable even after adding `.md` (`02-authentication.md#Sessions expire after 24 hours` is not an anchor).
 
 ### F4 — MAJOR (data loss): Obsidian callouts silently dropped on import
+> **Status: RESOLVED** — Red test `F4` green; CLI: the callout now imports as node `Decision` with child `Use token bucket algorithm` instead of vanishing.
 - Repro: import `obsidian-note.md` (contains `> [!note] Decision` / `> Use token bucket algorithm`).
 - Expected: §31 "Handles callout markers (`> [!note]`)" — content preserved (as node(s)), not deleted.
 - Actual: callout content vanishes; no trace in imported file, no warning.
 
 ### F5 — MAJOR (data loss): code blocks dropped instead of extracted to overflow files
+> **Status: RESOLVED** — Red test `F5` green; CLI: a fenced json block under `Request schema` is extracted to overflow file `cans/cb/request-schema.json` and the node becomes `Request schema: see cb/request-schema.json`.
 - Repro: `cans import obsidian codeblock.md` / `cans import logseq cb2.md` where the md contains a fenced `json`/`yaml` block under a bullet.
 - Expected: §27 "Extract code blocks → overflow files" (e.g. `Request schema: see 07-api/request-schema.md` + overflow file).
 - Actual: fenced content deleted; no overflow file; no warning. Silent loss of exactly the content CANS says must live in overflow files.
 
 ### F6 — MINOR: OPML `_note` attribute dropped
+> **Status: RESOLVED** — CLI repro (no red test maps to F6): `<outline text="Auth" _note="details here">` now imports `_note` as a child node (`- details here` under `Auth`) instead of dropping it.
 - Repro: `<outline text="Auth" _note="details here">` → imported as bare `Auth`.
 - Expected: §31 says the OPML converter "handles" `_note`; content should survive (e.g. as child node).
 - Actual: discarded silently.
 
 ### F7 — MINOR (ux): `--dry-run` output indistinguishable from a real run
+> **Status: RESOLVED** — CLI repro (no red test maps to F7): `--dry-run` now prints `[dry-run] Would import/export … No files written.` and `--json` adds `"dryRun": true`; md5sum confirms nothing is written.
 - Repro: `import opml X --dry-run` / `export opml --dry-run`.
 - Expected (good practice, §19/§36 spirit): preview wording ("would import/export…", "DRY RUN") and/or `dryRun: true` in JSON.
 - Actual: byte-identical text and JSON to a real run. Side effects correctly absent (verified via md5sum/ls), but the printed "Imported …" / "Exported → …" claims are literally false under --dry-run.
 
 ### F8 — BLOCKER (data corruption): `cans-wins` merge appends conflicting node under the WRONG parent
+> **Status: RESOLVED** — Red tests `F8a`/`F8b` green; CLI 3-step repro: human edit kept in place, no appended duplicate, and `conflicts[0] = {file:'07-authentication.md', line:6, cansVersion:'Expire after 48 hours', importVersion:'Expire after 24 hours', resolution:'cans-wins'}`.
 - Repro (deterministic, 3 steps): fresh ws → `import opml dynalist-export.opml` → edit `Expire after 24 hours` → `Expire after 48 hours` in `cans/07-authentication.md` → re-import with default strategy.
 - Expected: §27 cans-wins "only adds new nodes" (conflicting node not added) and §35 conflict entry `{file, line, cansVersion, importVersion, resolution:'cans-wins'}`.
 - Actual: import node appended as child of the LAST node of the file (`Dashboard → Requires verified account → Expire after 24 hours`), producing a wrong hierarchy + duplicate concept; `conflicts: []`; exit 0. Re-confirmed with an unrelated edit string.
 
 ### F9 — MAJOR: `conflicts[]` is never populated; `ask` doesn't report
+> **Status: RESOLVED** — Red test `F9` green; CLI: `ask` and `import-wins` both populate `conflicts[]` with the correct `resolution`; `ask` merges nothing (file unchanged after run).
 - Repro: any conflicting re-import under `cans-wins`, `import-wins`, or `ask`.
 - Expected: §27 ("ask: report conflicts") + §35 conflicts shape.
 - Actual: `conflicts: []` in all cases; `ask` merges nothing (correct) but reports nothing — a machine consumer cannot learn a conflict happened.
 
 ### F10 — MINOR: invalid enum values accepted silently
+> **Status: PARTIAL** — Red test `F10` green: `--merge-strategy banana` is rejected with an error naming `banana` plus the valid strategies. Remainder: flags with missing values are still silently ignored — `export obsidian --vault` (no value) falls back to the default output dir with exit 0, and `--merge-strategy` with no value silently uses the default strategy.
 - Repro: `--merge-strategy banana` (behaves as default, exit 0); `export obsidian --vault` (missing value → flag silently ignored, default output dir used, exit 0).
 - Expected: §37-style arg validation ("unknown merge strategy 'banana'; valid: cans-wins, import-wins, ask").
 - Actual: no validation anywhere on the interop flags.
 
 ### F11 — MAJOR: `import --out <path>` is a no-op
+> **Status: RESOLVED** — Red test `F11` green; CLI: `import … --out customout` writes `customout/07-authentication.md` and leaves it out of `cans/`.
 - Repro: `cans import opml ../fixtures/dynalist-export.opml --out ../customout` in fresh ws.
 - Expected: README/§20/§36 all advertise `--out <path>` for import (files created at `<path>` instead of workspace default).
 - Actual: file written to `cans/07-authentication.md`; `../customout` stays empty; flag accepted without error or effect.
 
 ### F12 — MINOR: non-XML "OPML" accepted as success
+> **Status: RESOLVED** — Red test `F12` green; CLI: empty and garbage `.opml` now exit 1 with `invalid OPML … missing <opml> root element`.
 - Repro: file containing `not xml at all {{{ >>>` → `cans import opml garbage.opml` → exit 0, "Imported opml from garbage.opml", 0 files.
 - Expected: reject with §37 message ("not valid OPML/XML …").
 - Actual: silent success-no-op; a real Dynalist export that got truncated/corrupted would import nothing while claiming success.
 
 ### F13 — MINOR: `export --json` `outputDir` formatting inconsistent + deviates from fixture
+> **Status: RESOLVED** — CLI repro (no red test maps to F13): `outputDir` is now consistently cwd-relative — `cans-export/opml` (matches the §35 fixture), `--vault ../myvault` → `../myvault/obsidian`, and an absolute `--vault /tmp/absvault` is relativized to the same scheme.
 - Repro: `export opml --json` → absolute path; `export obsidian --vault ../myvault --json` → literal `../myvault/obsidian`; §35 fixture → relative `cans-export/opml`.
 - Impact: machine consumers can't rely on a stable form.
 
 ### F14 — MAJOR: OPML export drops checkbox state
+> **Status: RESOLVED** — Red test `F14` green; CLI: `add-dark-mode.opml` keeps `[x]`/`[ ]` markers plus `[agent-1]`/`⏳ Human` owner markers.
 - Repro: `cans export opml --include-tasks` on flat-project (`_tasks/add-dark-mode.md` has `- [x]`/`- [ ]` items).
 - Expected: §28 "Preserve indentation, checkboxes, owner arrows" + table row `- [ ] task` → `- [ ] task` (OPML keeps checkboxes).
 - Actual: `<outline text="Add ThemeContext provider [agent-1]"/>` — no `[ ]`/`[x]` marker; done vs open tasks indistinguishable in the OPML export (Logseq and Obsidian exports preserve state correctly).
 
 ### F15 — MINOR/DEVIATION: `export --from` semantics undocumented; no error on missing source; stale outputs
+> **Status: OPEN** — Still reproduces (CLI, 2026-09-04): `export opml --from .` (workspace root) → 0 files while `--from cans` works; `--from /nonexistent` → `ok:true, filesExported:0`, exit 0 (no §37 error); files previously written to `cans-export/opml/` are left untouched (stale mix); `--from` semantics still appear only in usage strings (docs lines 491/1339), never as prose.
 - Repro: `--from <workspace-root>` → 0 files; `--from <cans-dir>` → works; `--from /nonexistent` → `ok:true, filesExported:0`, exit 0; previous files in `cans-export/opml/` left untouched (stale mix possible).
 - Expected: document that `<path>` is the spec dir (or accept workspace root); error on nonexistent source (§37); ideally clean/segment output per run.
 
 ### F16 — DEVIATION: OPML round-trip loses refs (documented as lossy)
+> **Status: DOC-GAP** — Behavior unchanged (CLI round-trip verified 2026-09-04: `→ 02-authentication.md#Sessions` stays literal text; `refs.total: 0` + orphan warning). Import-side `→` recovery was never specified — §27 says "Convert `[[wiki-links]]` → `see:`" and "Do NOT invent refs" — so the defect is the §45 checklist claim "OPML/Logseq/Obsidian roundtrips pass" contradicting §27/§31; a docs decision is needed.
 - Repro: export `04-api.md` → `Session rules: → 02-authentication.md#Sessions`; re-import → text stays literal `→ …`; `cans check` shows 0 refs; orphan/redundancy warnings follow.
 - Expected: §45 "OPML/Logseq/Obsidian roundtrips pass" suggests symmetric conversion; §27/§31 never specify `→` → `see:` on import, so import-side loss is "per docs" but the roundtrip goal fails for refs. Nesting/text round-trip is exact (only `<!-- ref-by -->` comment intentionally stripped).
 
 ### F17 — MINOR: formats are case-sensitive with poor failure mode
+> **Status: RESOLVED** — CLI repro (no red test maps to F17): `export OPML` and `import OPML …` are now case-insensitive (normalized to lowercase, exit 0), so the poor failure mode is unreachable.
 - Repro: `export OPML`, `import OPML …` → exit 1 + false-success messages (see F1). Valid formats are all-lowercase everywhere in docs.
 
 ### F18 — MINOR/DEVIATION: active `_adr/` not exported
+> **Status: DOC-GAP** — Behavior unchanged (CLI: active `_adr/001-test.md` still not exported, `_adr/_archive/` excluded). Implementation follows §32 `discoverSpecFiles()` ("excluding `_` prefixed"), which §28's exclusion list ("Exclude … `_adr/_archive/`") contradicts — the fix belongs in the §28 wording, not the exporter.
 - Repro: workspace with `_adr/001-test.md` + `_adr/_archive/000-old.md` → `export opml` exports neither.
 - Expected: §28 excludes only `_adr/_archive/` (active ADRs implied exported).
 - Actual: all `_`-prefixed dirs excluded (spec discovery per §32 excludes `_`-prefixed). Doc vs implementation mismatch; exported archive loses decision records.
 
 ### F19 — INFO: doc drift on flags
+> **Status: DOC-GAP** — Improved but still drifting: README now lists import `--json`, and `--from`/`--vault` appear in help + README; all flags work when passed. Remaining: help omits import `--json` and export `--include-tasks`/`--json`; README omits import `--out` and export `--include-tasks`; §28 still documents neither `--vault` nor `--from` semantics.
 - §20: import `--json` + export `--include-tasks`/`--json` exist in the doc but are absent from `help` text and (import `--json`, export `--include-tasks`) from README. All three flags do work when passed (verified). §28 never documents `--vault` or `--from` semantics.
 
 ## Observations
@@ -162,8 +183,17 @@ Verdicts: PASS / FAIL / DEVIATION (works but contradicts a documented contract) 
 
 ## Verdict summary
 
+Pre-fix (historical):
+
 - Tests/observations recorded: 37 matrix rows (+8 focused repro/diagnosis runs).
 - PASS: 14 · FAIL: 15 (several rows carry both a passing aspect and a defect) · DEVIATION: 6 · UNDOCUMENTED: 5 (rows may carry secondary verdicts; counted by primary verdict).
 - Findings: 1 blocker (F8 merge corruption; F1 blocker-class UX on every error path), 6 major (F2, F3, F4, F5, F11, F14), 9 minor (F6, F7, F9-counted-major? no — F9 major, F10, F12, F13, F15, F17, F18, F19 info), rest informational.
 - Bottom line: happy-path import (fresh workspace, clean fixtures) and export (all 4 formats + `all`, flags `--include-tasks`, `--vault`, `--dry-run`, `--json`) largely match the documented contracts; the interop edge is undermined by (a) one structural-corruption merge bug under the default strategy, (b) systematically lossy imports (refs, callouts, code blocks, `_note`), (c) OPML checkbox loss, and (d) a uniformly misleading failure/JSON error surface that violates §37.
 - Recommended fix order: F8 → F1 (+JSON error field) → F2/F3 → F5 → F4 → F14 → F11 → F9.
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+
+- 13/19 findings RESOLVED, 2 PARTIAL (F2: refs to non-`NN-` targets still lack `.md`; F10: missing flag values still silently ignored), 3 DOC-GAP (F16 §45-vs-§27/§31 roundtrip tension, F18 §28-vs-§32 `_adr/` exclusion conflict, F19 remaining flag doc drift), 1 OPEN (F15 `--from` semantics, missing-source error, stale outputs).
+- Mapped red suite `test/qa-verify/qa-05-interop.test.ts`: 14/14 green (13 finding tests + 1 control); full repo `bun test` = 192 pass / 0 fail.
+- Both blockers confirmed dead by blackbox repro: cans-wins re-import keeps the human hierarchy intact (no wrong-parent append) and populates §35-shaped `conflicts[]`; `ask`/`import-wins` report conflicts as well.
+- Next actions: extend `.md` ref normalization to non-`NN-` targets (F2), reject or warn on missing flag values (F10), and settle F15/F16/F18/F19 as doc or impl decisions.
