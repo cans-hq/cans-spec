@@ -3,6 +3,9 @@
 import type { CommandResult } from './types';
 import { emit } from './core/output';
 
+/** §44: version line. Keep in sync with package.json. */
+const VERSION = '0.1.0';
+
 const [cmd, ...args] = Bun.argv.slice(2);
 
 async function dispatch(): Promise<CommandResult> {
@@ -16,15 +19,28 @@ async function dispatch(): Promise<CommandResult> {
     case 'import':  return (await import('./commands/import')).run(args);
     case 'export':  return (await import('./commands/export')).run(args);
     case 'help':
+    case '-h':      // §20/§44: conventional help shortcuts
+    case '--help':
       return { ok: true, command: 'help', exitCode: 0 };
+    case 'version':
+    case '--version': // §44: version surface
+      return { ok: true, command: 'version', exitCode: 0, version: VERSION } as CommandResult;
     default:
-      return { ok: false, command: cmd ?? 'unknown', exitCode: 1 };
+      // §37: unknown / missing command must say what happened and how to fix it.
+      return {
+        ok: false,
+        command: cmd ?? 'unknown',
+        exitCode: 1,
+        error: cmd === undefined
+          ? 'no command given — run `cans help`'
+          : `unknown command "${cmd}" — run \`cans help\``,
+      } as CommandResult;
   }
 }
 
 try {
   const result = await dispatch();
-  emit(result, args.includes('--json'));
+  emit(result, args.includes('--json'), args.includes('--refs-only'));
   process.exit(result.exitCode);
 } catch (e) {
   console.error(`✗ Internal error: ${e instanceof Error ? e.message : e}`);
