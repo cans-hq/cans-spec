@@ -1,0 +1,231 @@
+// ── Outline ──
+
+export interface RefTarget {
+  raw: string;
+  file: string;
+  anchor: string | null;
+  line: number;
+}
+
+export interface OutlineNode {
+  text: string;
+  line: number;
+  indent: number;
+  children: OutlineNode[];
+  file: string;
+  isTask: boolean;
+  isDone: boolean;
+  owner: string | null;
+  isHumanGate: boolean;
+  refs: RefTarget[];
+  hasCodeFence: boolean;
+  hasTable: boolean;
+}
+
+export interface BackPointer {
+  fromFile: string;
+  fromLine: number;
+  toFile: string;
+  toAnchor: string | null;
+}
+
+// ── Issues ──
+
+export type IssueLevel = 'error' | 'warning';
+export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow';
+
+export interface Issue {
+  file: string;
+  line: number;
+  level: IssueLevel;
+  category: IssueCategory;
+  message: string;
+  suggestion?: string;
+}
+
+// ── Rules ──
+
+export interface StructureRules {
+  node_length: { min: number; max: number };
+  siblings: { min: number; max: number };
+  depth: { min: number; max: number };
+  single_child_collapse: boolean;
+  empty_nodes: boolean;
+}
+
+export interface StyleRules {
+  prefer: 'sibling' | 'nested';
+  force_nested_above: number;
+  force_sibling_below: number;
+  shared_prefix_detection: boolean;
+}
+
+export interface ContentRules {
+  tbd_allowed: boolean;
+  max_tbd_per_file: number;
+}
+
+export interface ReferenceRules {
+  mode: 'pointer';
+  back_pointers: boolean;
+  max_hops: number;
+  orphan_check: boolean;
+  duplicate_home_check: boolean;
+}
+
+export interface RedundancyRules {
+  enabled: boolean;
+  word_frequency_threshold: number;
+  phrase_overlap_threshold: number;
+  cross_file_threshold: number;
+  stopwords: string[];
+  synonyms: string[][];
+}
+
+export interface TokenBudgetRules {
+  enabled: boolean;
+  default_limit: number;
+  estimate_chars_per_token: number;
+  warn_threshold: number;
+}
+
+export interface OverflowRules {
+  max_node_chars: number;
+  force_file_for: string[];
+}
+
+export interface Rules {
+  structure: StructureRules;
+  style: StyleRules;
+  content: ContentRules;
+  references: ReferenceRules;
+  redundancy: RedundancyRules;
+  token_budget: TokenBudgetRules;
+  overflow: OverflowRules;
+}
+
+// ── Command Results ──
+
+export interface CommandResult {
+  ok: boolean;
+  command: string;
+  exitCode: number;
+}
+
+export interface InitResult extends CommandResult {
+  command: 'init';
+  created: string[];
+  skipped: string[];
+  root: string;
+}
+
+export interface CheckResult extends CommandResult {
+  command: 'check';
+  files: number;
+  nodes: number;
+  maxDepth: number;
+  refs: { total: number; broken: number; deepHops: number };
+  backPointers: { total: number; current: number; stale: number };
+  issues: Issue[];
+  errorCount: number;
+  warningCount: number;
+  backPointersUpdated: number;
+}
+
+export interface NewResult extends CommandResult {
+  command: 'new';
+  change: string;
+  file: string;
+}
+
+export interface DoneResult extends CommandResult {
+  command: 'done';
+  change: string;
+  gates: { human: number; humanOpen: number; tasks: number; tasksOpen: number };
+  archived: string | null;
+  backPointersUpdated: number;
+}
+
+export interface StatusResult extends CommandResult {
+  command: 'status';
+  specFiles: number;
+  activeTasks: number;
+  archivedTasks: number;
+  adrCount: number;
+  tasks: { total: number; done: number; unclaimed: number; blocked: number };
+  owners: Record<string, { tasks: number; done: number }>;
+  taskFiles: Array<{
+    name: string;
+    tasksDone: number;
+    tasksTotal: number;
+    gatesDone: number;
+    gatesTotal: number;
+    blocked: boolean;
+  }>;
+  conflicts: number;
+}
+
+export interface BudgetReadPlanItem {
+  file: string;
+  anchor: string | null;
+  reason: string;
+  score: number;
+  estTokens: number;
+}
+
+export interface BudgetReadResult extends CommandResult {
+  command: 'budget-read';
+  concept: string;
+  plan: BudgetReadPlanItem[];
+  skipped: string[];
+  totalTokens: number;
+  budgetLimit: number;
+  usagePercent: number;
+}
+
+export interface BudgetWriteResult extends CommandResult {
+  command: 'budget-write';
+  concept: string;
+  canEdit: Array<{ file: string; anchor: string | null; reason: string }>;
+  mustNotEdit: Array<{ file: string; reason: string }>;
+  backPointersToUpdate: Array<{ fromFile: string; fromLine: number; toFile: string }>;
+}
+
+export interface ImportConflict {
+  file: string;
+  line: number;
+  cansVersion: string;
+  importVersion: string;
+  resolution: string;
+}
+
+export interface ImportResult extends CommandResult {
+  command: 'import';
+  format: string;
+  source: string;
+  newFiles: string[];
+  merged: string[];
+  conflicts: ImportConflict[];
+}
+
+export interface ExportResult extends CommandResult {
+  command: 'export';
+  format: string;
+  outputDir: string;
+  filesExported: number;
+}
+
+// ── Converters ──
+
+export interface ExternalNode {
+  text: string;
+  indent: number;
+  isTask: boolean;
+  isDone: boolean;
+  children: ExternalNode[];
+  metadata: Record<string, string>;
+}
+
+export type MergeStrategy = 'cans-wins' | 'import-wins' | 'ask';
+export type ImportFormat = 'opml' | 'dynalist' | 'logseq' | 'obsidian';
+export type ExportFormat = ImportFormat | 'all';
