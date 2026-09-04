@@ -147,7 +147,11 @@ export function extractOverflowContent(
       } else {
         // End of fence → extract body to an overflow file, reference via see:
         inFence = false;
-        const ext = fenceLang !== '' ? fenceLang : 'md';
+        // Sanitize the fence language into a safe file extension: plain
+        // alphanumerics only (a crafted fence like ``` ../../../evil must
+        // never escape the workspace overflow directory).
+        const rawExt = fenceLang !== '' ? fenceLang : 'md';
+        const ext = /^[A-Za-z0-9]{1,12}$/.test(rawExt) ? rawExt : 'md';
         const slug = lastBulletText !== '' ? slugFor(lastBulletText) : `block-${extractionIndex}`;
         const overflowFile = `${baseSlug}/${slug}.${ext}`;
         extractions.push({

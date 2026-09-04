@@ -207,6 +207,13 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   const checkable = opts.file !== null
     ? [...specFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
     : [...specFiles.keys()];
+  // §37: a file filter that matches nothing is a user-correctable mistake —
+  // never a silently-empty clean check (missing Part-4 item, QA-02 F13).
+  if (opts.file !== null && checkable.length === 0) {
+    return checkFail(
+      `no spec file matches "${opts.file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`,
+    );
+  }
   const checkableMap = new Map<string, OutlineNode[]>(
     checkable.map(k => [k, specFiles.get(k)!]),
   );
