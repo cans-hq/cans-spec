@@ -114,6 +114,11 @@ export function parseMinimalYaml(source: string): Record<string, unknown> {
   const lines: YLine[] = [];
   const rawLines = source.split('\n');
   for (let i = 0; i < rawLines.length; i++) {
+    // §18: invalid YAML = line-numbered error. YAML forbids tab indentation.
+    const leadWs = rawLines[i].match(/^[\t ]*/);
+    if (leadWs !== null && leadWs[0].includes('\t')) {
+      throw new Error(`line ${i + 1}: tab indentation (use 2 spaces)`);
+    }
     const stripped = stripComment(rawLines[i]);
     if (stripped.trim() === '') continue;
     const indent = stripped.length - stripped.trimStart().length;
@@ -242,12 +247,94 @@ function deepMerge(base: unknown, over: unknown): unknown {
   return over === undefined ? base : over;
 }
 
+/** 1-based line number where a top-level `key:` is defined in the raw source (0 when absent). */
+function topLevelKeyLine(source: string, key: string): number {
+  const rawLines = source.split('\n');
+  for (let i = 0; i < rawLines.length; i++) {
+    const m = rawLines[i].match(/^([A-Za-z0-9_-]+):/);
+    if (m !== null && m[1] === key) return i + 1;
+  }
+  return 0;
+}
+
+/** Validate that the merged rules object has the expected top-level shape.
+ *  Catches values like `structure: 42` or empty sections that parse without
+ *  YAML syntax errors but produce type-inconsistent rules (§18: invalid config
+ *  = line-numbered `_rules.yaml` error, exit 1 — never an internal crash). */
+function validateRulesShape(merged: Record<string, unknown>, source: string): void {
+  const sections: Array<[string, string[]]> = [
+    ['structure', ['node_length', 'siblings', 'depth']],
+    ['style', ['prefer', 'force_nested_above', 'force_sibling_below']],
+    ['content', ['tbd_allowed']],
+    ['references', ['mode', 'max_hops', 'orphan_check']],
+    ['redundancy', ['enabled', 'word_frequency_threshold']],
+    ['token_budget', ['enabled', 'default_limit']],
+    ['overflow', ['max_node_chars']],
+  ];
+
+  for (const [section, requiredKeys] of sections) {
+    const val = merged[section];
+    if (val === undefined) continue; // absent = section delete-key semantics apply instead
+    const line = topLevelKeyLine(source, section);
+    const at = line > 0 ? `line ${line}` : 'line 1';
+    if (typeof val !== 'object' || val === null || Array.isArray(val)) {
+      const got = val === null ? 'empty value (nothing under the key)' : typeof val;
+      throw new Error(`${at} — "${section}" must be a mapping, got ${got}`);
+    }
+    const obj = val as Record<string, unknown>;
+    for (const key of requiredKeys) {
+      if (!(key in obj)) continue;
+      const v = obj[key];
+      if (
+        (key === 'node_length' || key === 'siblings' || key === 'depth') &&
+        (typeof v !== 'object' || v === null || Array.isArray(v))
+      ) {
+        throw new Error(`${at} — "${section}.${key}" must be a mapping like { min: 3, max: 120 }`);
+      }
+    }
+  }
+}
+
 /** Load rules from `<root>/_rules.yaml` deep-merged over defaults.
- *  Missing file → defaults. Invalid YAML → Error with line number. */
+ *  Missing file → all defaults.
+ *  File exists → §18 "Delete a key = check turns off": sections/keys absent
+ *  from the file disable their checks instead of keeping defaults.
+ *  Invalid YAML or type-inconsistent shape → Error carrying the line number. */
 export function loadRules(root: string): Rules {
   const p = join(root, '_rules.yaml');
   if (!existsSync(p)) return defaultRules();
   const source = readFileSync(p, 'utf-8');
   const parsed = parseMinimalYaml(source);
-  return deepMerge(defaultRules(), parsed) as Rules;
+  const merged = deepMerge(defaultRules(), parsed) as Record<string, unknown>;
+  validateRulesShape(merged, source);
+
+  const rules = merged as unknown as Rules;
+  const topLevel = new Set(Object.keys(parsed));
+
+  // §18: whole `redundancy:` section deleted → word-frequency/overlap checks off.
+  // Section present but `enabled` deleted → check off too (the enable key is the switch).
+  if (!topLevel.has('redundancy')) {
+    rules.redundancy = { ...rules.redundancy, enabled: false };
+  } else {
+    const section = parsed['redundancy'] as Record<string, unknown>;
+    if (!('enabled' in section)) {
+      rules.redundancy = { ...rules.redundancy, enabled: false };
+    }
+  }
+
+  // §18: keys deleted from a present `references:` section turn their checks off.
+  if (topLevel.has('references') && isPlainObject(parsed['references'])) {
+    const section = parsed['references'] as Record<string, unknown>;
+    if (!('orphan_check' in section)) {
+      rules.references = { ...rules.references, orphan_check: false };
+    }
+    if (!('duplicate_home_check' in section)) {
+      rules.references = { ...rules.references, duplicate_home_check: false };
+    }
+    if (!('max_hops' in section)) {
+      rules.references = { ...rules.references, max_hops: 1 };
+    }
+  }
+
+  return rules;
 }

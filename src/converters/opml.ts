@@ -28,8 +28,28 @@ function readAttr(attrs: string, name: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
-/** Regex-based OPML walk: top level = outlines directly under `<body>`; nesting from tag structure. */
+/** §31: OPML is XML — reject non-OPML input with a real diagnosis instead of
+ *  silently returning an empty outline (QA-05 F12). Regex-based strictness,
+ *  no XML parser dependency: root element must exist and outline tags must
+ *  balance. Throws Error with an `invalid OPML: …` message. */
+function assertOpml(source: string): void {
+  if (!/<opml[\s>]/i.test(source)) {
+    throw new Error('invalid OPML: missing <opml> root element (not XML)');
+  }
+  if (!/<opml\b[^>]*>[\s\S]*<\/opml\s*>/i.test(source)) {
+    throw new Error('invalid OPML: <opml> element is not closed');
+  }
+  const opens = (source.match(/<outline\b(?![^>]*\/\s*>)[^>]*>/gi) ?? []).length;
+  const closes = (source.match(/<\/outline\s*>/gi) ?? []).length;
+  if (opens !== closes) {
+    throw new Error(`invalid OPML: unbalanced <outline> tags (${opens} opened, ${closes} closed)`);
+  }
+}
+
+/** Regex-based OPML walk: top level = outlines directly under `<body>`; nesting from tag structure.
+ *  Throws on non-OPML / malformed XML input (see assertOpml). */
 export function parseOpml(source: string): ExternalNode[] {
+  assertOpml(source);
   const body = source.match(/<body[^>]*>([\s\S]*?)<\/body\s*>/i);
   const region = body ? body[1] : source;
   const roots: ExternalNode[] = [];
@@ -85,7 +105,9 @@ export function serializeOpml(nodes: ExternalNode[], title: string): string {
   const outline = (n: ExternalNode, depth: number): string => {
     const pad = '  '.repeat(depth);
     const note = n.metadata?.note;
-    const attrs = `text="${encodeXmlEntity(n.text)}"${note !== undefined ? ` _note="${encodeXmlEntity(note)}"` : ''}`;
+    // §28: checkbox state survives the round-trip (`- [ ] task` → `- [ ] task` in text)
+    const textContent = n.isTask ? (n.isDone ? '[x] ' : '[ ] ') + n.text : n.text;
+    const attrs = `text="${encodeXmlEntity(textContent)}"${note !== undefined ? ` _note="${encodeXmlEntity(note)}"` : ''}`;
     if (n.children.length === 0) return `${pad}<outline ${attrs}/>\n`;
     return `${pad}<outline ${attrs}>\n${n.children.map((c) => outline(c, depth + 1)).join('')}${pad}</outline>\n`;
   };

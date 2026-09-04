@@ -32,9 +32,15 @@ export function checkStyle(
         }
       }
 
+      // §14: "Parent with ≤ force_sibling_below leaf children → collapse to
+      // sibling style." `≤` semantics (exactly N is flagged). The file root is
+      // exempt — a root concept with few subtopics is the normal spec shape,
+      // not unnecessary nesting. A single child is reported by the structure
+      // engine ("exactly 1 child"); don't double-report it here.
       if (
-        children.length >= 1 &&
-        children.length < rules.force_sibling_below &&
+        node.indent > 0 &&
+        children.length >= 2 &&
+        children.length <= rules.force_sibling_below &&
         children.every((c) => c.children.length === 0)
       ) {
         issues.push({

@@ -73,6 +73,7 @@ export function buildReadPlan(
   rules: TokenBudgetRules,
   limit?: number,
   taskFile?: string,
+  activeTaskPaths?: string[],
 ): BudgetReadResult {
   const lc = concept.toLowerCase();
   const budgetLimit = limit ?? rules.default_limit;
@@ -109,6 +110,29 @@ export function buildReadPlan(
     const mentions = flattenNodes(allFiles.get(key)!).some(n => n.text.toLowerCase().includes(lc));
     if (mentions) {
       items.set(key, { file: key, anchor: null, reason: 'mentions concept', score: 20, estTokens: tokens(key), rank: 3 });
+    }
+  }
+
+  // §26 step 3: active tasks mentioning the concept score 80 and join the plan
+  // right after the canonical home.
+  if (activeTaskPaths !== undefined) {
+    for (const taskPath of activeTaskPaths) {
+      if (items.has(taskPath)) continue;
+      let content = '';
+      try {
+        content = readFileSync(taskPath, 'utf-8');
+      } catch {
+        continue;
+      }
+      if (content.toLowerCase().includes(lc)) {
+        items.set(taskPath, {
+          file: taskPath, anchor: null,
+          reason: 'active task mentions concept',
+          score: 80,
+          estTokens: estimateTokens(content, cpt),
+          rank: 2,
+        });
+      }
     }
   }
 

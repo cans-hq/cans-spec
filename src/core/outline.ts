@@ -3,14 +3,23 @@ import type { OutlineNode, BackPointer, RefTarget } from '../types';
 const BULLET_RE = /^(\s*)-\s+(.*)$/;
 const CHECKBOX_RE = /^\[( |x|X)\]\s+/;
 const OWNER_RE = /←\s*(@?\S+)/;
-const REF_RE = /see:?\s+([^\s#]+)(?:#([^\s#]+))?/g;
+// §11: `see:` parsed via regex — accepts `see:TARGET` (no space), `see: TARGET`, `see TARGET`.
+// The alternation keeps the no-colon form whitespace-required so words like "seed" never match.
+const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 const FENCE_RE = /^```/;
 
+export interface ParseWarning {
+  line: number;
+  message: string;
+}
+
 /** Parse markdown bullet outline into an OutlineNode tree.
  *  Indentation unit: 2 spaces (hardcoded). Tabs rejected.
- *  Non-bullet lines ignored (prose, headings, blanks are for humans only). */
-export function parseOutline(source: string, file: string): OutlineNode[] {
+ *  Non-bullet lines ignored (prose, headings, blanks are for humans only).
+ *  `warnings` (optional) collects non-fatal parse diagnostics, e.g. odd
+ *  (non-2-multiple) indentation that silently re-parents nodes. */
+export function parseOutline(source: string, file: string, warnings?: ParseWarning[]): OutlineNode[] {
   const lines = source.split('\n');
   for (const line of lines) {
     if (line.startsWith('\t')) {
@@ -95,6 +104,13 @@ export function parseOutline(source: string, file: string): OutlineNode[] {
     if (!m) continue; // prose / heading / blank — humans only
 
     const leading = m[1];
+    // Warn on non-2-space-aligned indentation — it silently re-parents nodes.
+    if (leading.length % 2 !== 0 && warnings !== undefined) {
+      warnings.push({
+        line: lineNo,
+        message: `odd indentation (${leading.length} space${leading.length === 1 ? '' : 's'}) — nodes may be re-parented unexpectedly; use 2-space multiples`,
+      });
+    }
     const indent = Math.floor(leading.length / 2);
     let rest = m[2];
 

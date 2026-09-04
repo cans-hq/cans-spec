@@ -6,26 +6,32 @@ import {
   discoverArchivedTasks, discoverAdrs, dirExists,
 } from '../core/fs';
 import { parseOutline, flattenNodes } from '../core/outline';
+import { parseArgs, type FlagSpec } from '../core/args';
 
 export interface StatusArgs {
   unclaimed: boolean;
   blocked: boolean;
   owners: boolean;
   json: boolean;
+  errors: string[];
 }
 
+const STATUS_FLAGS: FlagSpec[] = [
+  { name: 'unclaimed', boolean: true },
+  { name: 'blocked', boolean: true },
+  { name: 'owners', boolean: true },
+  { name: 'json', boolean: true },
+];
+
 export function parseStatusArgs(args: string[]): StatusArgs {
-  let unclaimed = false;
-  let blocked = false;
-  let owners = false;
-  let json = false;
-  for (const a of args) {
-    if (a === '--unclaimed') unclaimed = true;
-    else if (a === '--blocked') blocked = true;
-    else if (a === '--owners') owners = true;
-    else if (a === '--json') json = true;
-  }
-  return { unclaimed, blocked, owners, json };
+  const parsed = parseArgs(args, STATUS_FLAGS);
+  return {
+    unclaimed: parsed.flags.has('unclaimed'),
+    blocked: parsed.flags.has('blocked'),
+    owners: parsed.flags.has('owners'),
+    json: parsed.flags.has('json'),
+    errors: parsed.errors,
+  };
 }
 
 // globFiles throws ENOENT on missing dirs — guard the optional ones.
@@ -52,7 +58,19 @@ function countConflicts(conflictsPath: string): number {
 }
 
 export async function run(args: string[]): Promise<StatusResult> {
-  void parseStatusArgs(args); // flags only affect human filtering, not the JSON payload
+  const opts = parseStatusArgs(args);
+
+  if (opts.errors.length > 0) {
+    return {
+      ok: false, command: 'status', exitCode: 1,
+      specFiles: 0, activeTasks: 0, archivedTasks: 0, adrCount: 0,
+      tasks: { total: 0, done: 0, unclaimed: 0, blocked: 0 },
+      owners: {},
+      taskFiles: [],
+      conflicts: 0,
+      error: opts.errors[0],
+    };
+  }
 
   const workspace = resolveWorkspaceRoot();
   if (workspace === null) {
@@ -63,6 +81,7 @@ export async function run(args: string[]): Promise<StatusResult> {
       owners: {},
       taskFiles: [],
       conflicts: 0,
+      error: 'no cans workspace found — run `cans init` first',
     };
   }
 
@@ -91,6 +110,7 @@ export async function run(args: string[]): Promise<StatusResult> {
     const tasksDoneCount = tasks.filter(n => n.isDone).length;
     const gatesDoneCount = gates.filter(n => n.isDone).length;
     const isBlocked = gates.some(n => !n.isDone) || tasks.some(n => !n.isDone);
+    const unclaimedCount = tasks.filter(n => n.owner === null).length;
 
     taskFiles.push({
       name: basename(rel, '.md'),
@@ -99,12 +119,13 @@ export async function run(args: string[]): Promise<StatusResult> {
       gatesDone: gatesDoneCount,
       gatesTotal: gates.length,
       blocked: isBlocked,
+      unclaimed: unclaimedCount,
     });
 
     if (isBlocked) blockedFiles++;
     tasksTotal += tasks.length;
     tasksDone += tasksDoneCount;
-    tasksUnclaimed += tasks.filter(n => n.owner === null).length;
+    tasksUnclaimed += unclaimedCount;
 
     for (const n of flat) {
       if (!n.isTask) continue;
@@ -126,5 +147,6 @@ export async function run(args: string[]): Promise<StatusResult> {
     owners,
     taskFiles,
     conflicts: countConflicts(join(workspace, '_collab', 'conflicts.md')),
+    filter: opts.unclaimed ? 'unclaimed' : opts.blocked ? 'blocked' : opts.owners ? 'owners' : undefined,
   };
 }

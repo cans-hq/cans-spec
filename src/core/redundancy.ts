@@ -89,12 +89,16 @@ export function wordFrequency(
   return issues;
 }
 
-/** Layer 2 — pairwise Jaccard similarity of normalized word sets >= threshold. */
+/** Layer 2 — pairwise word-set overlap of normalized word sets >= threshold.
+ *  §13: "Normalized word set overlap ≥ 70% → flag." Overlap is measured
+ *  against the LARGER of the two sets (|A∩B| / max(|A|,|B|)), after stopword
+ *  and synonym normalization. */
 export function phraseOverlap(
   nodes: NodeRef[],
   threshold: number,
+  rules?: RedundancyRules,
 ): Issue[] {
-  const sets = nodes.map(n => ({ node: n, words: wordSet(n.text) }));
+  const sets = nodes.map(n => ({ node: n, words: wordSet(n.text, rules) }));
   const issues: Issue[] = [];
   for (let i = 0; i < sets.length; i++) {
     for (let j = i + 1; j < sets.length; j++) {
@@ -104,8 +108,8 @@ export function phraseOverlap(
       if (a.words.size === 0 || b.words.size === 0) continue;
       let inter = 0;
       for (const w of a.words) if (b.words.has(w)) inter++;
-      const union = a.words.size + b.words.size - inter;
-      const similarity = union === 0 ? 0 : inter / union;
+      const larger = Math.max(a.words.size, b.words.size);
+      const similarity = larger === 0 ? 0 : inter / larger;
       if (similarity >= threshold) {
         const pct = Math.round(similarity * 100);
         issues.push({
@@ -119,15 +123,20 @@ export function phraseOverlap(
   return issues;
 }
 
-/** Layer 3 — near-miss word forms (Levenshtein <= 2, both words > 4 chars) → possible typo. */
+/** Layer 3 — near-miss word forms (Levenshtein <= 2, both words > 4 chars) → possible typo.
+ *  §13: "NOT ALREADY SYNONYM-MATCHED" — words are normalized with the rules'
+ *  synonym groups first, so members of the same group collapse to one word and
+ *  never pair up as typos. */
 export function fuzzyDistance(
   nodes: NodeRef[],
+  rules?: RedundancyRules,
 ): Issue[] {
+  const synonyms = rules ? rules.synonyms : [];
   const words: NodeRef[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
     for (const raw of tokenize(node.text)) {
-      const w = normalizeWord(raw, []);
+      const w = normalizeWord(raw, synonyms);
       if (w.length === 0 || seen.has(w)) continue;
       seen.add(w);
       words.push({ text: w, file: node.file, line: node.line });
@@ -218,10 +227,12 @@ export function crossFileCanonicality(
   return issues;
 }
 
-/** All four redundancy layers over every loaded spec node. */
+/** All four redundancy layers over every loaded spec node.
+ *  `duplicateHomeCheck` (§18 references.duplicate_home_check) gates layer 4. */
 export function checkRedundancy(
   allFiles: Map<string, OutlineNode[]>,
   rules: RedundancyRules,
+  duplicateHomeCheck = true,
 ): Issue[] {
   const nodes: NodeRef[] = [];
   for (const [file, tree] of allFiles) {
@@ -231,8 +242,8 @@ export function checkRedundancy(
   }
   return [
     ...wordFrequency(nodes, rules),
-    ...phraseOverlap(nodes, rules.phrase_overlap_threshold),
-    ...fuzzyDistance(nodes),
-    ...crossFileCanonicality(allFiles, rules.cross_file_threshold),
+    ...phraseOverlap(nodes, rules.phrase_overlap_threshold, rules),
+    ...fuzzyDistance(nodes, rules),
+    ...(duplicateHomeCheck ? crossFileCanonicality(allFiles, rules.cross_file_threshold) : []),
   ];
 }

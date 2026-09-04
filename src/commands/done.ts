@@ -1,29 +1,34 @@
 import { join } from 'path';
 import { renameSync } from 'fs';
 import type { DoneResult, OutlineNode } from '../types';
-import { resolveWorkspaceRoot, mkdirp, isFile } from '../core/fs';
+import { resolveWorkspaceRoot, mkdirp, isFile, dirExists, globFiles } from '../core/fs';
 import { parseOutline, flattenNodes } from '../core/outline';
 import { checkWorkspace, type CheckArgs } from './check';
+import { parseArgs, type FlagSpec } from '../core/args';
 
 export interface DoneArgs {
   name: string;
   allowIncomplete: boolean;
   skipCheck: boolean;
   json: boolean;
+  errors: string[];
 }
 
+const DONE_FLAGS: FlagSpec[] = [
+  { name: 'allow-incomplete', boolean: true },
+  { name: 'skip-check', boolean: true },
+  { name: 'json', boolean: true },
+];
+
 export function parseDoneArgs(args: string[]): DoneArgs {
-  let name = '';
-  let allowIncomplete = false;
-  let skipCheck = false;
-  let json = false;
-  for (const a of args) {
-    if (a === '--allow-incomplete') allowIncomplete = true;
-    else if (a === '--skip-check') skipCheck = true;
-    else if (a === '--json') json = true;
-    else if (!a.startsWith('--') && name === '') name = a;
-  }
-  return { name, allowIncomplete, skipCheck, json };
+  const parsed = parseArgs(args, DONE_FLAGS);
+  return {
+    name: parsed.positional[0] ?? '',
+    allowIncomplete: parsed.flags.has('allow-incomplete'),
+    skipCheck: parsed.flags.has('skip-check'),
+    json: parsed.flags.has('json'),
+    errors: parsed.errors,
+  };
 }
 
 const ZERO_GATES = { human: 0, humanOpen: 0, tasks: 0, tasksOpen: 0 };
@@ -32,38 +37,67 @@ const ZERO_CHECK_ARGS: CheckArgs = {
   fix: false, strict: false, refsOnly: false, noRedundancy: false, file: null, json: false,
 };
 
+/** §37: every done failure carries the real diagnosis, not a fake check diagnosis. */
+function failResult(name: string, error: string): DoneResult {
+  return {
+    ok: false, command: 'done', exitCode: 1, change: name,
+    gates: { ...ZERO_GATES }, archived: null, backPointersUpdated: 0,
+    error,
+  };
+}
+
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** §24: archive record names are YYYY-MM-DD-<name>.md. A second same-day done of a
+ *  recreated task must never clobber the earlier archived record — pick the first
+ *  non-colliding name (-2, -3, …) instead. */
+function pickArchiveName(archiveDir: string, name: string): string {
+  const base = `${today()}-${name}.md`;
+  if (!isFile(join(archiveDir, base))) return base;
+  for (let i = 2; ; i++) {
+    const candidate = `${today()}-${name}-${i}.md`;
+    if (!isFile(join(archiveDir, candidate))) return candidate;
+  }
+}
+
 export async function run(args: string[]): Promise<DoneResult> {
   const opts = parseDoneArgs(args);
+  if (opts.errors.length > 0) {
+    return failResult('', opts.errors[0]);
+  }
+
   const { name, allowIncomplete, skipCheck } = opts;
+
+  if (name === '') {
+    return failResult('', 'usage: cans done <task-name>');
+  }
 
   const workspace = resolveWorkspaceRoot();
   if (workspace === null) {
-    return {
-      ok: false, command: 'done', exitCode: 1, change: name,
-      gates: { ...ZERO_GATES }, archived: null, backPointersUpdated: 0,
-    };
+    return failResult(name, 'no cans workspace found — run `cans init` first');
   }
 
   const taskFile = join(workspace, '_tasks', `${name}.md`);
   if (!isFile(taskFile)) {
-    return {
-      ok: false, command: 'done', exitCode: 1, change: name,
-      gates: { ...ZERO_GATES }, archived: null, backPointersUpdated: 0,
-    };
+    // Distinguish "already archived" from "never existed" (§24: the archive is
+    // the only history `done` keeps — say so instead of a generic failure).
+    const archiveDir = join(workspace, '_tasks', '_archive');
+    if (dirExists(archiveDir)) {
+      const archived = globFiles(archiveDir, `*-${name}.md`);
+      if (archived.length > 0) {
+        return failResult(name, `task "${name}" is already archived (_tasks/_archive/${archived[0]})`);
+      }
+    }
+    return failResult(name, `task "${name}" not found in _tasks/ — run \`cans status\` to list active tasks`);
   }
 
   let flat: OutlineNode[] = [];
   try {
     flat = flattenNodes(parseOutline(await Bun.file(taskFile).text(), taskFile));
   } catch {
-    return {
-      ok: false, command: 'done', exitCode: 1, change: name,
-      gates: { ...ZERO_GATES }, archived: null, backPointersUpdated: 0,
-    };
+    return failResult(name, `cannot parse _tasks/${name}.md — check for tab indentation or malformed content`);
   }
 
   const humanGates = flat.filter(n => n.isTask && n.isHumanGate);
@@ -77,9 +111,14 @@ export async function run(args: string[]): Promise<DoneResult> {
     tasksOpen,
   };
 
+  // §36: gate detail lines for human output (file:line — text).
+  const gateDetails = flat
+    .filter(n => n.isTask && !n.isDone)
+    .map(n => ({ file: `_tasks/${name}.md`, line: n.line, text: n.text }));
+
   const blocked = (): DoneResult => ({
     ok: false, command: 'done', exitCode: 1, change: name,
-    gates, archived: null, backPointersUpdated: 0,
+    gates, gateDetails, archived: null, backPointersUpdated: 0,
   });
 
   // Gate 1: unchecked ← @human gates always block.
@@ -95,13 +134,18 @@ export async function run(args: string[]): Promise<DoneResult> {
   }
 
   // Archive: _tasks/<name>.md → _tasks/_archive/YYYY-MM-DD-<name>.md
+  // (§24: never overwrite an earlier same-day archive record).
   const archiveDir = join(workspace, '_tasks', '_archive');
   mkdirp(archiveDir);
-  const archivedRel = join('_tasks', '_archive', `${today()}-${name}.md`);
+  const archivedRel = join('_tasks', '_archive', pickArchiveName(archiveDir, name));
   renameSync(taskFile, join(workspace, archivedRel));
+
+  // §24: "Updates back-pointers if needed." Reuse the check engine's --fix pass
+  // (strictly ref-by comment rewrites in spec files) and report the count.
+  const fixRun = await checkWorkspace(workspace, { ...ZERO_CHECK_ARGS, fix: true });
 
   return {
     ok: true, command: 'done', exitCode: 0, change: name,
-    gates, archived: archivedRel, backPointersUpdated: 0,
+    gates, archived: archivedRel, backPointersUpdated: fixRun.backPointersUpdated,
   };
 }
