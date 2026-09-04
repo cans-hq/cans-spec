@@ -1,0 +1,4 @@
+- API
+  - Auth rules: see 02-auth.md#Sessions
+  - Data rules: see 99-nonexistent.md
+  - Self ref: see 04-api.md

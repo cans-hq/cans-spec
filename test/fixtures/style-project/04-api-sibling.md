@@ -1,0 +1,5 @@
+- API
+  - POST /users
+    - Returns
+      - 201 on success
+      - 409 for duplicate email

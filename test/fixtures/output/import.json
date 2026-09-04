@@ -1,0 +1,8 @@
+{
+  "ok": true, "command": "import", "exitCode": 0,
+  "format": "obsidian", "source": "./vault",
+  "newFiles": ["07-billing.md"], "merged": ["02-authentication.md"],
+  "conflicts": [
+    { "file": "02-authentication.md", "line": 4, "cansVersion": "Session expires after 24 hours", "importVersion": "Sessions expire after 24h", "resolution": "cans-wins" }
+  ]
+}

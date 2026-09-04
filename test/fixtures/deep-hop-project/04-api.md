@@ -1,0 +1,3 @@
+- API
+  - Authentication
+    - Session rules: see 02-authentication.md#Sessions

@@ -1,0 +1,9 @@
+{
+  "ok": true, "command": "budget-read", "exitCode": 0, "concept": "sessions",
+  "plan": [
+    { "file": "02-authentication.md", "anchor": "Sessions", "reason": "canonical home", "score": 100, "estTokens": 120 },
+    { "file": "04-api.md", "anchor": null, "reason": "see: back-ref", "score": 60, "estTokens": 60 }
+  ],
+  "skipped": ["06-operations.md", "_tasks/add-dark-mode.md", "00-overview.md", "01-architecture.md", "03-data.md", "05-frontend.md"],
+  "totalTokens": 180, "budgetLimit": 200, "usagePercent": 90.0
+}

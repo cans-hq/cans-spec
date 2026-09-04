@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+<head><title>Project Backlog</title></head>
+<body>
+  <outline text="Authentication">
+    <outline text="Sign up">
+      <outline text="Email"/>
+      <outline text="Google"/>
+    </outline>
+    <outline text="Sessions">
+      <outline text="Expire after 24 hours"/>
+    </outline>
+  </outline>
+  <outline text="Dashboard">
+    <outline text="Requires verified account"/>
+  </outline>
+</body>
+</opml>

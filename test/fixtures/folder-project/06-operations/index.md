@@ -1,0 +1,11 @@
+- Operations
+  - Data protection
+    - Production database: see 03-data.md
+    - Encrypted at rest
+    - Encrypted in transit
+  - Backups
+    - Every 6 hours
+    - Retention: 30 days
+  - Deployment
+    - Draft → Tested → Approved → Released
+    - Rollback → Tested

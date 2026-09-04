@@ -1,0 +1,6 @@
+{
+  "ok": true, "command": "done", "exitCode": 0, "change": "add-dark-mode",
+  "gates": { "human": 2, "humanOpen": 0, "tasks": 5, "tasksOpen": 0 },
+  "archived": "_tasks/_archive/2025-09-03-add-dark-mode.md",
+  "backPointersUpdated": 2
+}

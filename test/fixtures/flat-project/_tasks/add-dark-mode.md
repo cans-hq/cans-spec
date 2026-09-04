@@ -1,0 +1,14 @@
+# add-dark-mode
+- Owner: agent-1
+- ADR: _adr/001-css-variables-over-tailwind.md
+- Tasks
+  - [x] Add ThemeContext provider ← agent-1
+  - [ ] Create toggle component ← agent-1
+  - [ ] Migrate colors to variables ← agent-3
+  - [ ] Test: no FOUC ← agent-2
+- Review
+  - [ ] Spec approved ← @human
+  - [x] Design approved ← agent-1
+- Handoff
+  - Context: CSS variables, not Tailwind. System preference default.
+  - Constraint: zero flash on load

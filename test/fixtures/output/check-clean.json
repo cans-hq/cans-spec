@@ -1,0 +1,7 @@
+{
+  "ok": true, "command": "check", "exitCode": 0,
+  "files": 6, "nodes": 84, "maxDepth": 4,
+  "refs": { "total": 12, "broken": 0, "deepHops": 0 },
+  "backPointers": { "total": 12, "current": 12, "stale": 0 },
+  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 0
+}
