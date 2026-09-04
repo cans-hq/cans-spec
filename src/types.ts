@@ -117,6 +117,8 @@ export interface InitResult extends CommandResult {
   created: string[];
   skipped: string[];
   root: string;
+  /** §37: set when init refuses (e.g. already inside a cans/ workspace). */
+  error?: string;
 }
 
 export interface CheckResult extends CommandResult {
@@ -136,14 +138,22 @@ export interface NewResult extends CommandResult {
   command: 'new';
   change: string;
   file: string;
+  /** §37: real diagnosis for failures (unknown kind, empty slug, no workspace). */
+  error?: string;
+  /** Set when `new` notices a condition the user should know about. */
+  warning?: string;
 }
 
 export interface DoneResult extends CommandResult {
   command: 'done';
   change: string;
   gates: { human: number; humanOpen: number; tasks: number; tasksOpen: number };
+  /** §36: gate detail lines for human output. Each: { file, line, text } */
+  gateDetails?: Array<{ file: string; line: number; text: string }>;
   archived: string | null;
   backPointersUpdated: number;
+  /** §37: real diagnosis (task not found, no workspace, parse error). */
+  error?: string;
 }
 
 export interface StatusResult extends CommandResult {
@@ -161,8 +171,15 @@ export interface StatusResult extends CommandResult {
     gatesDone: number;
     gatesTotal: number;
     blocked: boolean;
+    /** Items with `←` but no owner (§25 unclaimed semantics). */
+    unclaimed?: number;
   }>;
   conflicts: number;
+  /** Set when --unclaimed / --blocked / --owners filters are active.
+   *  Human printer uses these to restrict output; JSON always has full data. */
+  filter?: 'unclaimed' | 'blocked' | 'owners';
+  /** §37: set when the workspace is missing. */
+  error?: string;
 }
 
 export interface BudgetReadPlanItem {
@@ -181,6 +198,8 @@ export interface BudgetReadResult extends CommandResult {
   totalTokens: number;
   budgetLimit: number;
   usagePercent: number;
+  /** §37: real diagnosis (usage error, no workspace, no matches). */
+  error?: string;
 }
 
 export interface BudgetWriteResult extends CommandResult {
@@ -189,6 +208,8 @@ export interface BudgetWriteResult extends CommandResult {
   canEdit: Array<{ file: string; anchor: string | null; reason: string }>;
   mustNotEdit: Array<{ file: string; reason: string }>;
   backPointersToUpdate: Array<{ fromFile: string; fromLine: number; toFile: string }>;
+  /** §37: real diagnosis (usage error, no workspace, empty scope). */
+  error?: string;
 }
 
 export interface ImportConflict {
@@ -206,6 +227,10 @@ export interface ImportResult extends CommandResult {
   newFiles: string[];
   merged: string[];
   conflicts: ImportConflict[];
+  /** §37: real diagnosis (usage error, source not found, parse failure). */
+  error?: string;
+  /** Set when the import was a dry run (no files written). */
+  dryRun?: boolean;
 }
 
 export interface ExportResult extends CommandResult {
@@ -213,6 +238,15 @@ export interface ExportResult extends CommandResult {
   format: string;
   outputDir: string;
   filesExported: number;
+  /** §37: real diagnosis (usage error, no workspace). */
+  error?: string;
+  /** Set when the export was a dry run (no files written). */
+  dryRun?: boolean;
+}
+
+export interface VersionResult extends CommandResult {
+  command: 'version';
+  version: string;
 }
 
 // ── Converters ──

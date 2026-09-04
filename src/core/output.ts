@@ -1,4 +1,7 @@
-import type { CommandResult, CheckResult, Issue } from '../types';
+import type {
+  CommandResult, CheckResult, Issue, InitResult, NewResult, DoneResult, StatusResult,
+  BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, VersionResult,
+} from '../types';
 
 /** Single emission point. Commands never console.log or process.exit directly. */
 export function emit(result: CommandResult, json: boolean): void {
@@ -19,8 +22,17 @@ export function printHuman(result: CommandResult): void {
     case 'help':
       printHelp();
       break;
+    case 'version': {
+      const r = result as VersionResult;
+      console.log(`cans ${r.version}`);
+      break;
+    }
     case 'init': {
-      const r = result as any;
+      const r = result as InitResult;
+      if (!r.ok) {
+        console.log(`✗ ${r.error ?? 'cannot init here'}`);
+        break;
+      }
       console.log(`Workspace: ${r.root}`);
       if (r.created?.length) {
         for (const c of r.created) console.log(`  + ${c}`);
@@ -31,18 +43,36 @@ export function printHuman(result: CommandResult): void {
       break;
     }
     case 'new': {
-      const r = result as any;
-      console.log(r.ok ? `Created ${r.file}` : `✗ ${r.file ?? r.change}`);
+      const r = result as NewResult;
+      if (r.ok) {
+        console.log(`Created ${r.file}`);
+        if (r.warning) console.log(`  ⚠ ${r.warning}`);
+      } else {
+        console.log(`✗ ${r.error ?? 'failed to create'}`);
+      }
       break;
     }
     case 'done': {
-      const r = result as any;
+      const r = result as DoneResult;
       if (!r.ok) {
-        if (r.gates?.humanOpen > 0) {
-          console.log(`✗ BLOCKED: ${r.gates.humanOpen} unchecked ← @human gate`);
-          console.log(`  Check the gate, then re-run cans done.`);
-        } else if (r.gates?.tasksOpen > 0) {
-          console.log(`✗ BLOCKED: ${r.gates.tasksOpen} open tasks (--allow-incomplete to override)`);
+        if (r.error) {
+          console.log(`✗ ${r.error}`);
+        } else if ((r.gates?.humanOpen ?? 0) > 0) {
+          console.log(`✗ BLOCKED: ${r.gates.humanOpen} unchecked ← @human gate${r.gates.humanOpen > 1 ? 's' : ''}`);
+          // §36: file:line — gate text
+          for (const g of r.gateDetails ?? []) {
+            if (g.text.includes('@human')) {
+              console.log(`  ${g.file}:${g.line} — ${g.text}`);
+            }
+          }
+          console.log('  Check the gate, then re-run cans done.');
+        } else if ((r.gates?.tasksOpen ?? 0) > 0) {
+          console.log(`✗ BLOCKED: ${r.gates.tasksOpen} open task${r.gates.tasksOpen > 1 ? 's' : ''} (--allow-incomplete to override)`);
+          for (const g of r.gateDetails ?? []) {
+            if (!g.text.includes('@human')) {
+              console.log(`  ${g.file}:${g.line} — ${g.text}`);
+            }
+          }
         } else {
           console.log(`✗ BLOCKED: cans check failed (--skip-check to override)`);
         }
@@ -52,21 +82,52 @@ export function printHuman(result: CommandResult): void {
       break;
     }
     case 'status': {
-      const r = result as any;
+      const r = result as StatusResult;
+      if (!r.ok) {
+        console.log('✗ No cans workspace found.');
+        console.log('  Run `cans init` or cd into a project with a cans/ directory.');
+        break;
+      }
+      if (r.filter === 'owners') {
+        // Owners view: per-owner rollup, structurally distinct from the default report.
+        console.log('Owners view:');
+        const names = Object.keys(r.owners ?? {});
+        if (names.length === 0) console.log('  no owners assigned yet');
+        for (const name of names) {
+          const s = (r.owners ?? {})[name];
+          console.log(`  ${name}: ${s.tasks} task(s), ${s.done} done`);
+        }
+        if (r.conflicts > 0) console.log(`Conflicts: ${r.conflicts} unresolved in _collab/conflicts.md`);
+        break;
+      }
       console.log(`Files: ${r.specFiles} specs, ${r.activeTasks} tasks, ${r.archivedTasks} archived, ${r.adrCount} ADRs`);
       console.log(`Tasks: ${r.tasks?.done ?? 0}/${r.tasks?.total ?? 0} done, ${r.tasks?.unclaimed ?? 0} unclaimed, ${r.tasks?.blocked ?? 0} blocked`);
       if (r.owners && Object.keys(r.owners).length > 0) {
         console.log(`Owners: ${Object.keys(r.owners).join(', ')}`);
       }
-      for (const tf of r.taskFiles ?? []) {
-        const flag = tf.blocked ? '    ⚠ BLOCKED' : '';
-        console.log(`  ${tf.name}: tasks ${tf.tasksDone}/${tf.tasksTotal}, gates ${tf.gatesDone}/${tf.gatesTotal}${flag}`);
+      let shown = r.taskFiles ?? [];
+      if (r.filter === 'unclaimed') {
+        // Only task files that still hold unclaimed items (§25 semantics).
+        shown = shown.filter(tf => (tf.unclaimed ?? Math.max(tf.tasksTotal - tf.tasksDone, 0)) > 0);
+      } else if (r.filter === 'blocked') {
+        shown = shown.filter(tf => tf.blocked);
+      }
+      // §36: multi-line per-task block
+      for (const tf of shown) {
+        console.log(`  ${tf.name}:`);
+        console.log(`    Tasks: ${tf.tasksDone}/${tf.tasksTotal}`);
+        console.log(`    Gates: ${tf.gatesDone}/${tf.gatesTotal} ← @human`);
+        if (tf.blocked) console.log('    ⚠ BLOCKED');
       }
       if (r.conflicts > 0) console.log(`Conflicts: ${r.conflicts} unresolved in _collab/conflicts.md`);
       break;
     }
     case 'budget-read': {
-      const r = result as any;
+      const r = result as BudgetReadResult;
+      if (!r.ok) {
+        console.log(`✗ ${r.error ?? `No files match concept "${r.concept}".`}`);
+        break;
+      }
       console.log(`Reading plan for: ${r.concept}`);
       let i = 1;
       for (const item of r.plan ?? []) {
@@ -81,7 +142,11 @@ export function printHuman(result: CommandResult): void {
       break;
     }
     case 'budget-write': {
-      const r = result as any;
+      const r = result as BudgetWriteResult;
+      if (!r.ok) {
+        console.log(`✗ ${r.error ?? `No files match concept "${r.concept}".`}`);
+        break;
+      }
       console.log(`Writing scope for: ${r.concept}`);
       console.log(`CAN edit:`);
       for (const e of r.canEdit ?? []) console.log(`  ${e.file} ← ${e.reason}`);
@@ -90,25 +155,61 @@ export function printHuman(result: CommandResult): void {
       break;
     }
     case 'import': {
-      const r = result as any;
-      console.log(`Imported ${r.format} from ${r.source}`);
+      const r = result as ImportResult;
+      if (!r.ok) {
+        console.log(`✗ ${r.error ?? 'import failed'}`);
+        break;
+      }
+      if (r.dryRun) {
+        console.log(`[dry-run] Would import ${r.format} from ${r.source}. No files written.`);
+      } else {
+        console.log(`Imported ${r.format} from ${r.source}`);
+      }
       for (const f of r.newFiles ?? []) console.log(`  + ${f}`);
       for (const f of r.merged ?? []) console.log(`  ~ ${f} (merged)`);
       for (const c of r.conflicts ?? []) console.log(`  ! ${c.file}:${c.line} ${c.resolution}`);
       break;
     }
     case 'export': {
-      const r = result as any;
-      console.log(`Exported ${r.format} → ${r.outputDir} (${r.filesExported} files)`);
+      const r = result as ExportResult;
+      if (!r.ok) {
+        console.log(`✗ ${r.error ?? 'export failed'}`);
+        break;
+      }
+      if (r.dryRun) {
+        console.log(`[dry-run] Would export ${r.format} → ${r.outputDir} (${r.filesExported} files). No files written.`);
+      } else {
+        console.log(`Exported ${r.format} → ${r.outputDir} (${r.filesExported} files)`);
+      }
       break;
     }
     default: {
-      console.log(JSON.stringify(result, null, 2));
+      // §37: unknown command — say what happened and how to fix it.
+      const err = (result as { error?: string }).error;
+      if (err) {
+        console.log(`✗ ${err}`);
+      } else {
+        console.log(`✗ Unknown command "${result.command}".`);
+        console.log('  Run `cans help` for available commands.');
+      }
     }
   }
 }
 
 function printCheckHuman(r: CheckResult): void {
+  // Workspace-level errors (e.g. no cans workspace) print standalone,
+  // not nested under a section header with a bogus ":0" location.
+  const wsErrors = (r.issues ?? []).filter(i => i.file === '' && i.line === 0);
+  if (wsErrors.length > 0) {
+    for (const e of wsErrors) {
+      console.log(`✗ ${e.message}`);
+      if (e.suggestion) console.log(`  ${e.suggestion}`);
+    }
+    console.log('');
+    console.log(`${r.errorCount} errors, ${r.warningCount} warnings.`);
+    return;
+  }
+
   const byCategory = new Map<string, Issue[]>();
   for (const i of r.issues) {
     const list = byCategory.get(i.category) ?? [];
@@ -149,7 +250,10 @@ function printCheckHuman(r: CheckResult): void {
 function printIssues(issues: Issue[] | undefined): void {
   for (const i of issues ?? []) {
     const mark = i.level === 'error' ? '✗' : '⚠';
-    console.log(`  ${mark} ${i.file}:${i.line} — ${i.message}`);
+    // Avoid duplicating the file path when the message already carries it (parse errors)
+    const msg = i.message.startsWith(`${i.file}:`) ? i.message.slice(i.file.length + 1) : i.message;
+    const linePart = i.line > 0 ? `:${i.line}` : '';
+    console.log(`  ${mark} ${i.file}${linePart} — ${msg}`);
     if (i.suggestion) console.log(`    ${i.suggestion}`);
   }
 }
@@ -171,6 +275,7 @@ Commands:
   import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>]
   export <format> [--from <path>] [--vault <path>] [--dry-run]
   help
+  version
 
 Formats: opml, dynalist, logseq, obsidian
 Config:  cans/_rules.yaml
