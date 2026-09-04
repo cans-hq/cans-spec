@@ -1,11 +1,16 @@
 import { join, basename, dirname } from 'path';
 import { readdirSync } from 'fs';
-import type { ImportResult, ImportFormat, ImportConflict, MergeStrategy, ExternalNode } from '../types';
+import type {
+  ImportResult, ImportFormat, ImportConflict, MergeStrategy, ExternalNode,
+} from '../types';
 import { resolveWorkspaceRoot, discoverSpecFiles, mkdirp, isFile, dirExists } from '../core/fs';
 import { parseOpml } from '../converters/opml';
 import { parseLogseq } from '../converters/logseq';
 import { parseObsidian, stripFrontmatter } from '../converters/obsidian';
-import { serializeToCans, parseFromCans, stripMetadata } from '../converters/shared';
+import {
+  serializeToCans, parseFromCans, stripMetadata, parseCheckbox,
+  extractOverflowContent, type OverflowExtraction,
+} from '../converters/shared';
 
 export interface ImportArgs {
   format: ImportFormat;
@@ -13,16 +18,20 @@ export interface ImportArgs {
   out: string | null;
   dryRun: boolean;
   mergeStrategy: MergeStrategy;
+  /** Raw `--merge-strategy` value as given, so invalid enums can be rejected (QA-05 F10). */
+  mergeStrategyRaw: string | null;
   json: boolean;
 }
 
 const FORMATS: readonly string[] = ['opml', 'dynalist', 'logseq', 'obsidian'];
+const STRATEGIES: readonly MergeStrategy[] = ['cans-wins', 'import-wins', 'ask'];
 
 export function parseImportArgs(args: string[]): ImportArgs {
   const positional: string[] = [];
   let out: string | null = null;
   let dryRun = false;
   let mergeStrategy: MergeStrategy = 'cans-wins';
+  let mergeStrategyRaw: string | null = null;
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -31,8 +40,9 @@ export function parseImportArgs(args: string[]): ImportArgs {
     } else if (a === '--dry-run') {
       dryRun = true;
     } else if (a === '--merge-strategy') {
-      const s = args[i + 1];
-      if (s === 'cans-wins' || s === 'import-wins' || s === 'ask') mergeStrategy = s;
+      const s = args[i + 1] ?? null;
+      mergeStrategyRaw = s;
+      if (s !== null && (STRATEGIES as readonly string[]).includes(s)) mergeStrategy = s as MergeStrategy;
     } else if (a === '--json') {
       json = true;
     } else if (!a.startsWith('--')) {
@@ -45,15 +55,15 @@ export function parseImportArgs(args: string[]): ImportArgs {
     out,
     dryRun,
     mergeStrategy,
+    mergeStrategyRaw,
     json,
   };
 }
 
-function fail(format: string, source: string, message: string): ImportResult {
-  void message;
+function fail(format: string, source: string, error: string): ImportResult {
   return {
     ok: false, command: 'import', exitCode: 1,
-    format, source, newFiles: [], merged: [], conflicts: [],
+    format, source, newFiles: [], merged: [], conflicts: [], error,
   };
 }
 
@@ -66,20 +76,40 @@ function slugify(input: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-function normalizeText(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/** §4 canonical ref form: spec-slug ref targets carry the `.md` extension when
+ *  written into the workspace (`see: 02-authentication#Sessions` →
+ *  `see: 02-authentication.md#Sessions`). Converter output stays mechanical;
+ *  the importer emits workspace-conformant refs (QA-05 F2/F3). Idempotent. */
+function canonicalizeRefTargets(text: string): string {
+  return text.replace(
+    /\bsee:?\s+([^\s#]+)(#[^\s]+)?/g,
+    (m, target: string, anchor: string | undefined) => {
+      if (/^\d{2}-/.test(target) && !target.endsWith('.md')) {
+        return `see: ${target}.md${anchor ?? ''}`;
+      }
+      return m;
+    },
+  );
 }
 
-function flattenExternal(nodes: ExternalNode[]): ExternalNode[] {
-  const out: ExternalNode[] = [];
-  const walk = (list: ExternalNode[]): void => {
-    for (const n of list) {
-      out.push(n);
-      walk(n.children);
-    }
-  };
-  walk(nodes);
-  return out;
+/** Normalized key for fuzzy text matching: lowercase, strip punctuation, collapse whitespace. */
+function normKey(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Near-match: same words (len > 1) with ≥ 0.75 overlap.
+ * Threshold note: the pasted patch said 0.8, but the QA-05 F8 flagship conflict
+ * pair — "Expire after 24 hours" vs "Expire after 48 hours" — shares 3 of 4
+ * words (0.75) and MUST be flagged, so the threshold is tuned to 0.75.
+ */
+function isNearMatch(a: string, b: string): boolean {
+  const wa = new Set(normKey(a).split(' ').filter(w => w.length > 1));
+  const wb = new Set(normKey(b).split(' ').filter(w => w.length > 1));
+  if (wa.size === 0 || wb.size === 0) return false;
+  let shared = 0;
+  for (const w of wa) if (wb.has(w)) shared++;
+  return shared / Math.max(wa.size, wb.size) >= 0.75;
 }
 
 /** Source files to import: a single file, or every supported file inside a directory. */
@@ -138,11 +168,21 @@ function findExistingBySlug(targetDir: string, slug: string): string | null {
 }
 
 interface MergeOutcome {
-  content: string | null; // null = no write
+  content: string | null; // null = no write (ask)
   conflicts: ImportConflict[];
 }
 
-/** Merge imported nodes into an existing CANS file per the strategy. */
+/**
+ * Tree-level merge (QA-05 F8/F9). One single-pass walk of the import tree:
+ * for each imported node, match it against the existing tree by normalized text
+ * (global exact index) and, failing that, against its sibling slot by word
+ * overlap; brand-new nodes are inserted under the CORRECT parent so tree
+ * position is preserved (the old flat-append corrupts the hierarchy).
+ *   exact normalized match → conflict only if text differs
+ *     (cans-wins keeps the CANS text, import-wins overwrites it)
+ *   near-match (word overlap ≥ 0.75) → conflict + strategy
+ *   new node → inserted under the matched/near parent; `ask` reports it, no write
+ */
 function mergeInto(
   existingText: string,
   imported: ExternalNode[],
@@ -150,72 +190,131 @@ function mergeInto(
   relName: string,
 ): MergeOutcome {
   const conflicts: ImportConflict[] = [];
-  const existingFlat = flattenExternal(parseFromCans(existingText));
-  const exactTexts = new Set(existingFlat.map(n => n.text));
-  const normalizedIndex = new Map<string, { text: string; line: number }>();
-  existingFlat.forEach((n, i) => {
-    if (!normalizedIndex.has(normalizeText(n.text))) {
-      normalizedIndex.set(normalizeText(n.text), { text: n.text, line: i + 1 });
-    }
+  const existingTree = parseFromCans(existingText);
+
+  // Real source line per existing node text (first occurrence, document order).
+  const lineOfKey = new Map<string, number>();
+  existingText.split(/\r?\n/).forEach((l, i) => {
+    if (!/^\s*-\s+/.test(l)) return;
+    const k = normKey(parseCheckbox(l).clean);
+    if (k !== '' && !lineOfKey.has(k)) lineOfKey.set(k, i + 1);
   });
 
-  const presence = (text: string): 'new' | 'exact' | 'near' => {
-    if (exactTexts.has(text)) return 'exact';
-    const hit = normalizedIndex.get(normalizeText(text));
-    if (hit !== undefined) {
-      conflicts.push({
-        file: relName,
-        line: hit.line,
-        cansVersion: hit.text,
-        importVersion: text,
-        resolution: strategy,
-      });
-      return 'near';
-    }
-    return 'new';
-  };
-
-  if (strategy === 'import-wins') {
-    // conflict scan first, then wholesale overwrite
-    for (const n of flattenExternal(imported)) presence(n.text);
-    return { content: serializeToCans(imported), conflicts };
-  }
-
-  // cans-wins / ask: keep only nodes whose text is not already present
-  const filterTree = (nodes: ExternalNode[]): ExternalNode[] => {
-    const out: ExternalNode[] = [];
+  // Index existing nodes by normalized text (first occurrence wins).
+  const existingIndex = new Map<string, ExternalNode>();
+  const indexTree = (nodes: ExternalNode[]): void => {
     for (const n of nodes) {
-      const kids = filterTree(n.children);
-      if (presence(n.text) === 'new') {
-        out.push({ ...n, children: kids });
-      } else {
-        out.push(...kids); // re-attach surviving children one level up
-      }
+      const k = normKey(n.text);
+      if (k !== '' && !existingIndex.has(k)) existingIndex.set(k, n);
+      indexTree(n.children);
     }
-    return out;
   };
-  const kept = filterTree(imported);
+  indexTree(existingTree);
+
+  let newEntryLine = existingText.split(/\r?\n/).length; // approx. line for inserted content
+
+  const mergeNodes = (importNodes: ExternalNode[], targetChildren: ExternalNode[]): void => {
+    for (const imp of importNodes) {
+      const key = normKey(imp.text);
+      const exact = key !== '' ? existingIndex.get(key) : undefined;
+
+      if (exact !== undefined) {
+        // Matched by normalized text → conflict only when the wording differs.
+        if (exact.text !== imp.text) {
+          conflicts.push({
+            file: relName,
+            line: lineOfKey.get(key) ?? 0,
+            cansVersion: exact.text,
+            importVersion: imp.text,
+            resolution: strategy,
+          });
+          if (strategy === 'import-wins') exact.text = imp.text;
+          // cans-wins / ask: keep the CANS version
+        }
+        mergeNodes(imp.children, exact.children);
+        continue;
+      }
+
+      // Near-match check against the siblings at this slot (word overlap).
+      const near = targetChildren.find(c => isNearMatch(c.text, imp.text));
+      if (near !== undefined) {
+        conflicts.push({
+          file: relName,
+          line: lineOfKey.get(normKey(near.text)) ?? 0,
+          cansVersion: near.text,
+          importVersion: imp.text,
+          resolution: strategy,
+        });
+        if (strategy === 'import-wins') near.text = imp.text;
+        mergeNodes(imp.children, near.children);
+        continue;
+      }
+
+      if (strategy === 'ask') {
+        // ask = report, don't merge: the would-be addition is surfaced too,
+        // otherwise ask would silently drop new content with no trace.
+        conflicts.push({
+          file: relName,
+          line: ++newEntryLine,
+          cansVersion: '',
+          importVersion: imp.text,
+          resolution: 'ask',
+        });
+        continue;
+      }
+
+      // New node → insert under the correct parent, re-index so deeper
+      // children can find it, then merge its subtree.
+      const inserted: ExternalNode = { ...imp, children: [] };
+      targetChildren.push(inserted);
+      if (key !== '') existingIndex.set(key, inserted);
+      mergeNodes(imp.children, inserted.children);
+    }
+  };
+
+  mergeNodes(imported, existingTree);
+
   if (strategy === 'ask') return { content: null, conflicts };
-  const appended = serializeToCans(kept);
-  const base = existingText.endsWith('\n') || existingText === '' ? existingText : `${existingText}\n`;
-  return { content: appended === '' ? existingText : base + appended, conflicts };
+  return { content: serializeToCans(existingTree), conflicts };
 }
 
 export async function run(args: string[]): Promise<ImportResult> {
   const opts = parseImportArgs(args);
+  const fmt = opts.format.toLowerCase(); // §27 formats are lowercase; accept OPML/Obsidian casing
 
-  if (!FORMATS.includes(opts.format) || opts.path === '') {
-    return fail(opts.format, opts.path, 'unknown format or missing source path');
+  // §37/§27: invalid enum values are rejected, never silently defaulted (QA-05 F10).
+  if (opts.mergeStrategyRaw !== null && !(STRATEGIES as readonly string[]).includes(opts.mergeStrategyRaw)) {
+    return fail(fmt, opts.path,
+      `unknown merge strategy "${opts.mergeStrategyRaw}" — valid: cans-wins, import-wins, ask`);
   }
 
-  const files = sourceFiles(opts.path, opts.format);
+  if (opts.path === '') {
+    return fail(fmt, opts.path,
+      'usage: cans import <format> <path>\n  Formats: opml, dynalist, logseq, obsidian');
+  }
+  if (!FORMATS.includes(fmt)) {
+    return fail(fmt, opts.path,
+      `unknown format "${opts.format}" — valid formats: opml, dynalist, logseq, obsidian`);
+  }
+
+  const files = sourceFiles(opts.path, fmt);
   if (files === null || files.length === 0) {
-    return fail(opts.format, opts.path, 'source not found');
+    return fail(fmt, opts.path,
+      `source not found: ${opts.path}\n  Check the path and try again.`);
   }
 
-  const workspace = resolveWorkspaceRoot() ?? opts.out;
-  if (workspace === null) {
-    return fail(opts.format, opts.path, 'no cans workspace found (pass --out <dir>)');
+  // §20/§36: --out overrides workspace discovery; otherwise a workspace is required.
+  let workspace: string;
+  if (opts.out !== null) {
+    workspace = opts.out;
+    if (!opts.dryRun) mkdirp(workspace);
+  } else {
+    const ws = resolveWorkspaceRoot();
+    if (ws === null) {
+      return fail(fmt, opts.path,
+        'no cans workspace found — run `cans init` first, or pass --out <dir>');
+    }
+    workspace = ws;
   }
 
   const newFiles: string[] = [];
@@ -231,7 +330,26 @@ export async function run(args: string[]): Promise<ImportResult> {
     } catch {
       continue;
     }
-    const imported = parseSource(text, opts.format);
+
+    // §27: fenced code blocks under bullets are extracted to overflow files
+    // before parsing, so their content survives as files + see: refs (QA-05 F5).
+    let overflow: OverflowExtraction[] = [];
+    let cleanText = text;
+    if (fmt === 'obsidian' || fmt === 'logseq') {
+      const baseSlug = slugify(basename(src).replace(/\.[^.]+$/, '')) || 'import';
+      const extracted = extractOverflowContent(text, baseSlug);
+      cleanText = extracted.cleanedSource;
+      overflow = extracted.extractions;
+    }
+
+    let imported: ExternalNode[];
+    try {
+      imported = parseSource(cleanText, fmt);
+    } catch (e) {
+      // e.g. non-XML garbage passed as .opml (QA-05 F12) — fail loudly, write nothing.
+      return fail(fmt, opts.path,
+        `invalid OPML in ${basename(src)} — ${(e as Error).message}`);
+    }
     if (imported.length === 0) continue;
 
     const slug = slugify(imported[0].text);
@@ -249,8 +367,16 @@ export async function run(args: string[]): Promise<ImportResult> {
       );
       conflicts.push(...outcome.conflicts);
       if (outcome.content !== null) {
-        if (!opts.dryRun) await Bun.write(absTarget, outcome.content);
+        if (!opts.dryRun) {
+          await Bun.write(absTarget, canonicalizeRefTargets(outcome.content));
+          for (const ovf of overflow) {
+            const ovfAbs = join(workspace, ovf.overflowFile);
+            mkdirp(dirname(ovfAbs));
+            await Bun.write(ovfAbs, `${ovf.content}\n`);
+          }
+        }
         merged.push(existingRel);
+        for (const ovf of overflow) newFiles.push(ovf.overflowFile);
       }
       continue;
     }
@@ -258,17 +384,24 @@ export async function run(args: string[]): Promise<ImportResult> {
     const relName = `${String(nextNum).padStart(2, '0')}-${slug}.md`;
     const absTarget = join(workspace, relName);
 
-    const cansText = serializeToCans(imported);
+    const cansText = canonicalizeRefTargets(serializeToCans(imported));
     if (!opts.dryRun) {
       mkdirp(dirname(absTarget));
       await Bun.write(absTarget, cansText);
+      for (const ovf of overflow) {
+        const ovfAbs = join(workspace, ovf.overflowFile);
+        mkdirp(dirname(ovfAbs));
+        await Bun.write(ovfAbs, `${ovf.content}\n`);
+      }
     }
     newFiles.push(relName);
+    for (const ovf of overflow) newFiles.push(ovf.overflowFile);
     nextNum++;
   }
 
   return {
     ok: true, command: 'import', exitCode: 0,
-    format: opts.format, source: opts.path, newFiles, merged, conflicts,
+    format: fmt, source: opts.path, newFiles, merged, conflicts,
+    dryRun: opts.dryRun || undefined,
   };
 }

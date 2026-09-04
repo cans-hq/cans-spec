@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { basename } from 'path';
+import { basename, relative } from 'path';
 import type {
   OutlineNode, BackPointer, TokenBudgetRules,
   BudgetReadPlanItem, BudgetReadResult, BudgetWriteResult,
@@ -9,6 +9,13 @@ import { targetMatchesKey } from './refs';
 
 export function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil(text.length / charsPerToken);
+}
+
+/** QA-03 F12: file paths in budget output are cwd-relative, never absolute
+ *  (workspace keys are already relative and pass through untouched). */
+function relPath(file: string): string {
+  if (!file.startsWith('/')) return file;
+  return relative(process.cwd(), file) || file;
 }
 
 function serializedNodeText(nodes: OutlineNode[]): string {
@@ -73,6 +80,7 @@ export function buildReadPlan(
   rules: TokenBudgetRules,
   limit?: number,
   taskFile?: string,
+  activeTaskPaths?: string[],
 ): BudgetReadResult {
   const lc = concept.toLowerCase();
   const budgetLimit = limit ?? rules.default_limit;
@@ -109,6 +117,29 @@ export function buildReadPlan(
     const mentions = flattenNodes(allFiles.get(key)!).some(n => n.text.toLowerCase().includes(lc));
     if (mentions) {
       items.set(key, { file: key, anchor: null, reason: 'mentions concept', score: 20, estTokens: tokens(key), rank: 3 });
+    }
+  }
+
+  // §26 step 3: active tasks mentioning the concept score 80 and join the plan
+  // right after the canonical home.
+  if (activeTaskPaths !== undefined) {
+    for (const taskPath of activeTaskPaths) {
+      if (items.has(taskPath)) continue;
+      let content = '';
+      try {
+        content = readFileSync(taskPath, 'utf-8');
+      } catch {
+        continue;
+      }
+      if (content.toLowerCase().includes(lc)) {
+        items.set(taskPath, {
+          file: taskPath, anchor: null,
+          reason: 'active task mentions concept',
+          score: 80,
+          estTokens: estimateTokens(content, cpt),
+          rank: 2,
+        });
+      }
     }
   }
 
@@ -169,7 +200,9 @@ export function buildReadPlan(
     : 0;
   return {
     ok: true, command: 'budget-read', exitCode: 0, concept,
-    plan, skipped, totalTokens, budgetLimit, usagePercent,
+    plan: plan.map(p => ({ ...p, file: relPath(p.file) })),
+    skipped: skipped.map(relPath),
+    totalTokens, budgetLimit, usagePercent,
   };
 }
 
@@ -240,6 +273,12 @@ export function buildWritePlan(
 
   return {
     ok: true, command: 'budget-write', exitCode: 0, concept,
-    canEdit, mustNotEdit, backPointersToUpdate,
+    canEdit: canEdit.map(e => ({ ...e, file: relPath(e.file) })),
+    mustNotEdit: mustNotEdit.map(e => ({ ...e, file: relPath(e.file) })),
+    backPointersToUpdate: backPointersToUpdate.map(b => ({
+      ...b,
+      fromFile: relPath(b.fromFile),
+      toFile: relPath(b.toFile),
+    })),
   };
 }

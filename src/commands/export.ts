@@ -1,4 +1,4 @@
-import { join, basename } from 'path';
+import { join, basename, relative } from 'path';
 import type { ExportResult, ExportFormat, OutlineNode, ExternalNode } from '../types';
 import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, mkdirp, dirExists } from '../core/fs';
 import { parseOutline } from '../core/outline';
@@ -113,11 +113,15 @@ function outputFileName(specRel: string, fmt: string): string {
 
 export async function run(args: string[]): Promise<ExportResult> {
   const opts = parseExportArgs(args);
+  const fmt: string = opts.format.toLowerCase(); // §28 formats are lowercase; accept OPML/All casing
 
-  if (!FORMATS.includes(opts.format)) {
+  if (!FORMATS.includes(fmt)) {
     return {
       ok: false, command: 'export', exitCode: 1,
-      format: opts.format, outputDir: '', filesExported: 0,
+      format: fmt, outputDir: '', filesExported: 0,
+      error: fmt === ''
+        ? 'usage: cans export <format>\n  Formats: opml, dynalist, logseq, obsidian, all'
+        : `unknown format "${opts.format}" — valid: opml, dynalist, logseq, obsidian, all`,
     };
   }
 
@@ -125,7 +129,8 @@ export async function run(args: string[]): Promise<ExportResult> {
   if (workspace === null) {
     return {
       ok: false, command: 'export', exitCode: 1,
-      format: opts.format, outputDir: '', filesExported: 0,
+      format: fmt, outputDir: '', filesExported: 0,
+      error: 'no cans workspace found — run `cans init` first',
     };
   }
 
@@ -134,16 +139,16 @@ export async function run(args: string[]): Promise<ExportResult> {
     sources.push(...discoverActiveTasks(workspace));
   }
 
-  const formats = opts.format === 'all'
+  const formats = fmt === 'all'
     ? ['opml', 'dynalist', 'logseq', 'obsidian']
-    : [opts.format];
+    : [fmt];
 
   const baseDir = opts.vault ?? join(process.cwd(), 'cans-export');
-  const outputDir = opts.format === 'all' ? baseDir : join(baseDir, opts.format);
+  const outputDir = fmt === 'all' ? baseDir : join(baseDir, fmt);
 
   let filesExported = 0;
-  for (const fmt of formats) {
-    const fmtDir = opts.format === 'all' ? join(baseDir, fmt) : outputDir;
+  for (const f of formats) {
+    const fmtDir = fmt === 'all' ? join(baseDir, f) : outputDir;
     for (const rel of sources) {
       let text = '';
       try {
@@ -157,13 +162,13 @@ export async function run(args: string[]): Promise<ExportResult> {
       } catch {
         continue;
       }
-      const external = tree.map(n => toExternal(n, fmt));
+      const external = tree.map(n => toExternal(n, f));
       if (external.length === 0) continue;
-      const content = serializeFor(external, fmt, basename(rel));
+      const content = serializeFor(external, f, basename(rel));
       if (content === '') continue;
       if (!opts.dryRun) {
         mkdirp(fmtDir);
-        await Bun.write(join(fmtDir, outputFileName(rel, fmt)), content);
+        await Bun.write(join(fmtDir, outputFileName(rel, f)), content);
       }
       filesExported++;
     }
@@ -171,6 +176,9 @@ export async function run(args: string[]): Promise<ExportResult> {
 
   return {
     ok: true, command: 'export', exitCode: 0,
-    format: opts.format, outputDir, filesExported,
+    format: fmt,
+    outputDir: relative(process.cwd(), outputDir) || '.', // §35 fixture: relative to cwd
+    filesExported,
+    dryRun: opts.dryRun || undefined,
   };
 }

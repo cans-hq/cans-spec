@@ -42,6 +42,77 @@ export function discoverSpecFiles(root: string): string[] {
   return out.sort();
 }
 
+/** Detect flat-vs-folder conflicts: both `NN-name.md` AND `NN-name/index.md` exist.
+ *  §8: "Flat wins over folder. If both exist, `cans check` flags error."
+ *  Returns pairs of [flatRel, folderRel]. */
+export function detectFlatFolderConflicts(root: string): Array<[string, string]> {
+  const conflicts: Array<[string, string]> = [];
+  if (!dirExists(root)) return conflicts;
+
+  const flatFiles = new Set<string>();
+  const folderDirs = new Set<string>();
+
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.name.startsWith('_') || entry.name === 'AGENTS.md') continue;
+    if (entry.isFile() && SPEC_FILE_RE.test(entry.name)) {
+      flatFiles.add(entry.name);
+    } else if (entry.isDirectory() && exists(join(root, entry.name, 'index.md'))) {
+      folderDirs.add(entry.name);
+    }
+  }
+
+  for (const flat of flatFiles) {
+    const dirName = flat.replace(/\.md$/, '');
+    if (folderDirs.has(dirName)) {
+      conflicts.push([flat, `${dirName}/index.md`]);
+    }
+  }
+
+  return conflicts.sort();
+}
+
+/** Directories named like a spec file (e.g. `02-authentication.md/`) — malformed
+ *  workspace entries that discovery would silently skip (§37: report what the
+ *  user can fix instead of tolerating it). Returns the directory names. */
+export function detectMalformedSpecDirs(root: string): string[] {
+  const out: string[] = [];
+  if (!dirExists(root)) return out;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory() && SPEC_FILE_RE.test(entry.name)) {
+      out.push(entry.name);
+    }
+  }
+  return out.sort();
+}
+
+/** Overflow target files: `.md` content files inside workspace subfolders
+ *  (e.g. `04-api/request-schema.md`) that are not spec files themselves.
+ *  §16: these must NOT contain their own `see:` refs (no chaining). */
+export function discoverOverflowTargets(root: string): string[] {
+  const out: string[] = [];
+  if (!dirExists(root)) return out;
+  const walk = (dir: string, prefix: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('_') || entry.name === 'AGENTS.md') continue;
+      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        // `*/index.md` is a folder-mode spec file, not an overflow target.
+        if (prefix !== '' && entry.name !== 'index.md') out.push(rel);
+      } else if (entry.isDirectory()) {
+        walk(join(dir, entry.name), rel);
+      }
+    }
+  };
+  walk(root, '');
+  return out.sort();
+}
+
 export function discoverActiveTasks(root: string): string[] {
   return globFiles(join(root, '_tasks'), '*.md')
     .map(p => join('_tasks', basename(p)))

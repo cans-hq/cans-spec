@@ -2,15 +2,16 @@ import { join } from 'path';
 import type { CheckResult, Issue, OutlineNode } from '../types';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
-  dirExists,
+  dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
 } from '../core/fs';
 import {
   parseOutline, extractBackPointers, flattenNodes, maxDepth as outlineMaxDepth,
+  type ParseWarning,
 } from '../core/outline';
 import { loadRules } from '../core/rules';
 import { checkStructure } from '../core/structure';
 import { checkStyle } from '../core/style';
-import { checkOverflow } from '../core/overflow';
+import { checkOverflow, checkNoChaining } from '../core/overflow';
 import { checkRedundancy } from '../core/redundancy';
 import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
@@ -135,6 +136,25 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   const issues: Issue[] = [];
 
+  // §37: malformed workspace entries (directories named like spec files) are
+  // reported, never silently skipped.
+  for (const name of detectMalformedSpecDirs(root)) {
+    issues.push({
+      file: name, line: 0, level: 'warning', category: 'structure',
+      message: `malformed workspace entry: directory "${name}" looks like a spec file — rename it or use folder mode (${name.replace(/\.md$/, '')}/index.md)`,
+      suggestion: `remove or rename the directory cans/${name}`,
+    });
+  }
+
+  // §8: "Flat wins over folder. If both exist, `cans check` flags error."
+  for (const [flat, folder] of detectFlatFolderConflicts(root)) {
+    issues.push({
+      file: flat, line: 0, level: 'error', category: 'structure',
+      message: `duplicate home: both ${flat} and ${folder} exist — flat wins, remove the folder`,
+      suggestion: `delete ${folder} (or merge its content into ${flat})`,
+    });
+  }
+
   // Spec files: full checks.
   const specRel = discoverSpecFiles(root);
   const specFiles = new Map<string, OutlineNode[]>();
@@ -151,12 +171,20 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       continue;
     }
     specSources.set(rel, text);
+    const fileWarnings: ParseWarning[] = [];
     try {
-      specFiles.set(rel, parseOutline(text, rel));
+      specFiles.set(rel, parseOutline(text, rel, fileWarnings));
     } catch (e) {
       issues.push({
         file: rel, line: 0, level: 'error', category: 'structure',
         message: `parse error: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+    // Odd (non-2-multiple) indentation silently re-parents nodes — surface it.
+    for (const pw of fileWarnings) {
+      issues.push({
+        file: rel, line: pw.line, level: 'warning', category: 'structure',
+        message: pw.message,
       });
     }
   }
@@ -179,11 +207,18 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   const checkable = opts.file !== null
     ? [...specFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
     : [...specFiles.keys()];
+  // §37: a file filter that matches nothing is a user-correctable mistake —
+  // never a silently-empty clean check (missing Part-4 item, QA-02 F13).
+  if (opts.file !== null && checkable.length === 0) {
+    return checkFail(
+      `no spec file matches "${opts.file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`,
+    );
+  }
   const checkableMap = new Map<string, OutlineNode[]>(
     checkable.map(k => [k, specFiles.get(k)!]),
   );
 
-  const deepHops = detectDeepHops(graph);
+  const deepHops = detectDeepHops(graph, rules.references.max_hops);
 
   if (!opts.refsOnly) {
     for (const key of checkable) {
@@ -228,11 +263,23 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   if (!opts.refsOnly) {
     if (!opts.noRedundancy && rules.redundancy.enabled) {
-      issues.push(...checkRedundancy(checkableMap, rules.redundancy));
+      issues.push(...checkRedundancy(checkableMap, rules.redundancy, rules.references.duplicate_home_check));
     }
     for (const key of checkable) {
       issues.push(...checkOverflow(specFiles.get(key)!, key, rules.overflow));
     }
+
+    // §16 no-chaining: overflow target files (spec subfolder content) must not
+    // contain their own see: refs.
+    const targetFiles = new Map<string, OutlineNode[]>();
+    for (const rel of discoverOverflowTargets(root)) {
+      try {
+        targetFiles.set(rel, parseOutline(await Bun.file(join(root, rel)).text(), rel));
+      } catch {
+        // unreadable overflow target: skipped
+      }
+    }
+    issues.push(...checkNoChaining(targetFiles));
   }
 
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.
@@ -246,6 +293,33 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         await Bun.write(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         backPointersUpdated++;
+      }
+    }
+
+    // §35 check-fix.json reports the POST-fix state: recompute back-pointer
+    // counts from the rewritten sources and drop now-fixed stale issues.
+    bpTotal = 0;
+    bpCurrent = 0;
+    bpStale = 0;
+    for (const [rel, source] of specSources) {
+      for (const bp of extractBackPointers(source, rel)) {
+        bpTotal++;
+        const fromKey = refTargetKey(bp.fromFile, allFiles.keys());
+        const fromRefs = fromKey !== null ? graph.forward.get(fromKey) : undefined;
+        const isCurrent =
+          fromKey !== null &&
+          fromRefs !== undefined &&
+          fromRefs.some(t => refTargetKey(t.file, allFiles.keys()) === rel);
+        if (isCurrent) {
+          bpCurrent++;
+        } else {
+          bpStale++;
+        }
+      }
+    }
+    for (let i = issues.length - 1; i >= 0; i--) {
+      if (issues[i]!.category === 'refs' && issues[i]!.message.startsWith('stale back-pointer:')) {
+        issues.splice(i, 1);
       }
     }
   }
@@ -271,13 +345,19 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     exitCode: ok ? 0 : 1,
     files: specFiles.size,
     nodes: nodeCount,
-    maxDepth: depthMax,
+    // §35: maxDepth is 1-based (a 4-level chain reports 4); 0 for an empty workspace.
+    maxDepth: nodeCount === 0 ? 0 : depthMax + 1,
     refs: { total: refsTotal, broken, deepHops: deepHops.length },
     backPointers: { total: bpTotal, current: bpCurrent, stale: bpStale },
     issues,
     errorCount,
     warningCount,
     backPointersUpdated,
+    // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
+    rulesSummary:
+      `node_length: ${rules.structure.node_length.min}\u2013${rules.structure.node_length.max}` +
+      ` | siblings: ${rules.structure.siblings.min}\u2013${rules.structure.siblings.max}` +
+      ` | depth: ${rules.structure.depth.min}\u2013${rules.structure.depth.max}`,
   };
 }
 

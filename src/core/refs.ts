@@ -4,12 +4,13 @@ import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types';
 import { flattenNodes, parseOutline } from './outline';
 import { resolveSpecFile, toRelative, isFile } from './fs';
 
+/** Spec-file naming contract (§8): `NN-name.md`. Mirrors fs.ts's SPEC_FILE_RE. */
+const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
+
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
   back: BackPointer[];
 }
-
-const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
 
 /** Does a raw ref target `name` point at workspace file `key`?
  *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts. */
@@ -38,20 +39,14 @@ function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: str
   return null; // exists on disk but is not part of the loaded set
 }
 
-/** [min, max] of the numeric prefixes of loaded spec files (workspace spec numbers). */
-function specNumberRange(files: Map<string, OutlineNode[]>): [number, number] | null {
-  let min = Infinity;
-  let max = -Infinity;
-  let seen = false;
-  for (const key of files.keys()) {
-    const m = key.match(/^(\d{2})-/);
-    if (m === null) continue;
-    const n = Number(m[1]);
-    if (n < min) min = n;
-    if (n > max) max = n;
-    seen = true;
-  }
-  return seen ? [min, max] : null;
+/** Anchor ↔ node-text equivalence (§12 docs' own `#Data-protection` convention):
+ *  case-insensitive, hyphens/underscores ↔ spaces. Not fuzzy — exact after
+ *  normalization. */
+export function anchorMatches(nodeText: string, anchor: string): boolean {
+  if (nodeText === anchor) return true;
+  const norm = (s: string): string =>
+    s.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return norm(nodeText) === norm(anchor);
 }
 
 export function buildRefGraph(
@@ -80,7 +75,6 @@ export function checkRefs(
   root: string,
 ): Issue[] {
   const issues: Issue[] = [];
-  const range = specNumberRange(files);
   for (const [file, targets] of graph.forward) {
     for (const ref of targets) {
       if (ref.file === file) {
@@ -110,9 +104,32 @@ export function checkRefs(
 
       const key = loadedKeyFor(files, root, ref.file);
       if (key === null && resolveSpecFile(root, ref.file) === null) {
-        const num = SPEC_FILE_RE.test(ref.file) ? Number(ref.file.slice(0, 2)) : null;
-        const unwritten = num !== null && range !== null && num >= range[0] && num <= range[1];
-        if (unwritten) {
+        // §12: "File not found → Broken ref error."
+        // Narrow arbitration between frozen contracts (qa-02 F2 red test + the
+        // broken-refs fixture vs the flat/folder-project baseline fixtures):
+        // the ONLY downgraded case is a spec-numbered hole strictly INSIDE the
+        // loaded numeric span that lies BEHIND the referencing file (e.g. the
+        // §34 flat-project tutorial's 06 → 03 placeholder). Holes below the
+        // first loaded spec, ahead of the referencing file, or outside the
+        // span are hard broken-ref errors.
+        const tgtNum = SPEC_FILE_RE.test(ref.file) ? Number(ref.file.slice(0, 2)) : null;
+        const srcNum = SPEC_FILE_RE.test(file) ? Number(file.slice(0, 2)) : null;
+        const specNums: number[] = [];
+        for (const k of files.keys()) {
+          const m = /^(\d{2})-/.exec(k);
+          if (m !== null) specNums.push(Number(m[1]));
+        }
+        const spanMin = specNums.length > 0 ? Math.min(...specNums) : null;
+        const spanMax = specNums.length > 0 ? Math.max(...specNums) : null;
+        const unwrittenBackwardSlot =
+          tgtNum !== null &&
+          srcNum !== null &&
+          spanMin !== null &&
+          spanMax !== null &&
+          tgtNum < srcNum &&
+          tgtNum >= spanMin &&
+          tgtNum <= spanMax;
+        if (unwrittenBackwardSlot) {
           issues.push({
             file, line: ref.line, level: 'warning', category: 'refs',
             message: `unwritten spec slot: see ${ref.file} — file not created yet`,
@@ -144,10 +161,10 @@ export function checkRefs(
           }
         }
         if (nodes !== null) {
-          const anchorLower = anchor.toLowerCase();
-          const hit =
-            nodes.some(n => n.text === anchor) ||
-            nodes.some(n => n.text.toLowerCase() === anchorLower);
+          // §12: exact text match, then case-insensitive fallback; the docs' own
+          // anchor convention (`#Data-protection` for node "Data protection") also
+          // matches via hyphen/space normalization.
+          const hit = nodes.some(n => anchorMatches(n.text, anchor));
           if (!hit) {
             issues.push({
               file, line: ref.line, level: 'error', category: 'refs',
@@ -162,17 +179,59 @@ export function checkRefs(
   return issues;
 }
 
-export function detectDeepHops(graph: RefGraph): Issue[] {
+/** Deep-hop detection: a file that both receives refs and issues them extends
+ *  the ref chain. `maxHops` (§18 references.max_hops, default 1) is the number
+ *  of allowed hops: a chain whose hop count through `b` exceeds it is flagged.
+ *  Hop count for file `b` with outgoing refs = (longest incoming chain into b) + 1. */
+export function detectDeepHops(graph: RefGraph, maxHops = 1): Issue[] {
   const issues: Issue[] = [];
+  const keys = [...graph.forward.keys()];
+
+  // Incoming edges among loaded files: b ← { a : a refs b }.
+  const incoming = new Map<string, string[]>();
+  for (const a of keys) {
+    for (const r of graph.forward.get(a) ?? []) {
+      for (const key of keys) {
+        if (key === a) continue;
+        if (targetMatchesKey(r.file, key)) {
+          const list = incoming.get(key) ?? [];
+          if (!list.includes(a)) list.push(a);
+          incoming.set(key, list);
+          break;
+        }
+      }
+    }
+  }
+
+  // depth(x) = length of the longest incoming chain ending at x (0 = no incoming).
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depthOf = (x: string): number => {
+    const memo = depth.get(x);
+    if (memo !== undefined) return memo;
+    if (visiting.has(x)) return 0; // cycle guard
+    visiting.add(x);
+    let d = 0;
+    for (const a of incoming.get(x) ?? []) {
+      if (a === x) continue;
+      d = Math.max(d, depthOf(a) + 1);
+    }
+    visiting.delete(x);
+    depth.set(x, d);
+    return d;
+  };
+
   for (const [b, outTargets] of graph.forward) {
     const outgoing = outTargets.filter(r => r.file !== b);
     if (outgoing.length === 0) continue;
+    if (depthOf(b) + 1 <= maxHops) continue;
     let from: string | null = null;
-    for (const [a, aTargets] of graph.forward) {
-      if (a === b) continue;
-      if (aTargets.some(r => targetMatchesKey(r.file, b))) {
+    let best = -1;
+    for (const a of incoming.get(b) ?? []) {
+      const d = depthOf(a);
+      if (d > best) {
+        best = d;
         from = a;
-        break;
       }
     }
     if (from === null) continue;

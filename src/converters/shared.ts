@@ -21,17 +21,38 @@ export function parseCheckbox(text: string): { isTask: boolean; isDone: boolean;
   return { isTask: false, isDone: false, clean: s };
 }
 
-/** `[[X]]` → `see: X`; `[[X#Y]]` → `see: X#Y`; labels (`|label`) are discarded. */
+/** A fenced code block extracted during import into an overflow file (§27). */
+export interface OverflowExtraction {
+  /** Overflow file path relative to the workspace (e.g. `cb-note/request-schema.json`). */
+  overflowFile: string;
+  /** The raw fenced body. */
+  content: string;
+  /** The bullet text the fence hung under. */
+  parentText: string;
+}
+
+/** `[[X]]` → `see: X`; `[[X#Y]]` → `see: X#Y`; labels (`|label`) are discarded.
+ *  Mechanical format translation only — the importer canonicalizes spec-slug
+ *  targets to the §4 `.md` form when writing workspace files (QA-05 F2).
+ *  Same-line whitespace right after the link is consumed and re-emitted as a
+ *  single separator, keeping the ref token clean and trailing prose as node
+ *  content (QA-05 F3). Newlines are never consumed. */
 export function convertWikiLinks(text: string): string {
   return text.replace(
-    /\[\[([^[\]|#]*)(?:#([^[\]|#]*))?(?:\|[^[\]]*)?\]\]/g,
-    (_m, page: string, anchor?: string) => `see: ${anchor ? `${page}#${anchor}` : page}`
+    /\[\[([^[\]|#]*)(?:#([^[\]|#]*))?(?:\|[^[\]]*)?\]\]([ \t]*)/g,
+    (_m, page: string, anchor: string | undefined, trail: string) => {
+      const ref = anchor ? `see: ${page}#${anchor}` : `see: ${page}`;
+      return trail.length > 0 ? `${ref} ` : ref;
+    }
   );
 }
 
-/** Inverse of convertWikiLinks: `see: X#Y` → `[[X#Y]]`. */
+/** Inverse of convertWikiLinks: `see: X.md#Y` → `[[X#Y]]` (`.md` stripped for wiki form). */
 export function reverseWikiLinks(text: string): string {
-  return text.replace(/\bsee:\s+([^\s]+)/g, (_m, target: string) => `[[${target}]]`);
+  return text.replace(/\bsee:\s+([^\s]+)/g, (_m, target: string) => {
+    const cleaned = target.replace(/\.md(?=#|$)/, '');
+    return `[[${cleaned}]]`;
+  });
 }
 
 /** Remove app cruft: logseq `key:: value` props, dynalist `^block-ids`, obsidian `#tags`, `*`/`_` emphasis. */
@@ -58,6 +79,13 @@ export function serializeToCans(nodes: ExternalNode[]): string {
     for (const n of list) {
       const box = n.isTask ? (n.isDone ? '[x] ' : '[ ] ') : '';
       lines.push('  '.repeat(n.indent) + '- ' + box + n.text);
+      // §31: OPML `_note` content is spec content — emit as indented child nodes.
+      if (n.metadata?.note !== undefined && n.metadata.note !== '') {
+        for (const nl of n.metadata.note.split('\n')) {
+          if (nl.trim() === '') continue;
+          lines.push('  '.repeat(n.indent + 1) + '- ' + nl.trim());
+        }
+      }
       walk(n.children);
     }
   };
@@ -79,4 +107,81 @@ export function parseFromCans(source: string): ExternalNode[] {
     stack.push(node);
   }
   return roots;
+}
+
+function slugFor(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/** §27 "Extract code blocks → overflow files": fenced blocks under bullets are
+ *  overflow, never inline spec content. Each fence is extracted to
+ *  `<baseSlug>/<node-slug>.<ext>` and replaced by a `see:` reference on the
+ *  owning bullet (QA-05 F5 — fenced content must survive import).
+ *  Returns the cleaned bullet source plus the extractions to write. */
+export function extractOverflowContent(
+  source: string,
+  baseSlug: string,
+): { cleanedSource: string; extractions: OverflowExtraction[] } {
+  const lines = source.split(/\r?\n/);
+  const outLines: string[] = [];
+  const extractions: OverflowExtraction[] = [];
+  let inFence = false;
+  let fenceLang = '';
+  let fenceBody: string[] = [];
+  let lastBulletText = '';
+  let lastBulletIdx = -1; // index of the last bullet line within outLines
+  let fenceDirectlyUnderBullet = false;
+  let extractionIndex = 0;
+
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      if (!inFence) {
+        inFence = true;
+        fenceLang = line.trim().slice(3).trim();
+        fenceBody = [];
+        fenceDirectlyUnderBullet = lastBulletIdx >= 0 && lastBulletIdx === outLines.length - 1;
+      } else {
+        // End of fence → extract body to an overflow file, reference via see:
+        inFence = false;
+        // Sanitize the fence language into a safe file extension: plain
+        // alphanumerics only (a crafted fence like ``` ../../../evil must
+        // never escape the workspace overflow directory).
+        const rawExt = fenceLang !== '' ? fenceLang : 'md';
+        const ext = /^[A-Za-z0-9]{1,12}$/.test(rawExt) ? rawExt : 'md';
+        const slug = lastBulletText !== '' ? slugFor(lastBulletText) : `block-${extractionIndex}`;
+        const overflowFile = `${baseSlug}/${slug}.${ext}`;
+        extractions.push({
+          overflowFile,
+          content: fenceBody.join('\n'),
+          parentText: lastBulletText,
+        });
+        const replaceIdx = fenceDirectlyUnderBullet ? lastBulletIdx : -1;
+        const anchorLine = replaceIdx >= 0 ? outLines[replaceIdx] : (outLines[outLines.length - 1] ?? '');
+        const indent = anchorLine.match(/^\s*/)?.[0] ?? '';
+        const refLine = `${indent}- ${lastBulletText}: see ${overflowFile}`;
+        if (replaceIdx >= 0) outLines[replaceIdx] = refLine;
+        else outLines.push(refLine);
+        lastBulletText = `${lastBulletText}: see ${overflowFile}`;
+        lastBulletIdx = replaceIdx >= 0 ? replaceIdx : outLines.length - 1;
+        extractionIndex++;
+      }
+      continue;
+    }
+    if (inFence) {
+      fenceBody.push(line);
+      continue;
+    }
+    const bulletMatch = line.match(/^\s*-\s+(.*)/);
+    if (bulletMatch) {
+      lastBulletText = bulletMatch[1].trim();
+      lastBulletIdx = outLines.length;
+    }
+    outLines.push(line);
+  }
+
+  return { cleanedSource: outLines.join('\n'), extractions };
 }
