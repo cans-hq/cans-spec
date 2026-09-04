@@ -1,6 +1,7 @@
 # QA-02 — `cans check` Engines I: Outline Parser, Refs, Structure, Style
 
 Task ID: 3-b · Agent: qa-refs-structure-style · Date: 2025 QA session
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 13/18 findings RESOLVED, 2 PARTIAL, 1 DOC-GAP, 2 OPEN; mapped suite qa-02-refs-structure-style 11/11 green.
 Repo: /home/z/my-project/cans-spec @ impl/full-engines, commit 54b0b52 (untouched; only this report file written)
 Method: BLACKBOX manual shell QA. No src/ read, no tests read, no `bun test`/`typecheck`. All inputs copied to /home/z/my-project/qa-playground/qa-refs/ (scratch, outside repo).
 
@@ -71,58 +72,87 @@ Method: BLACKBOX manual shell QA. No src/ read, no tests read, no `bun test`/`ty
 ## 4. Findings
 
 **F1 · MAJOR · flat-vs-folder conflict not detected (§8/§11).**
+> **Status: RESOLVED** — Green red-test "F1: flat + folder duplicate home for the same slug is flagged as an error (§8/§11)"; CLI spot-check now emits `✗ duplicate home: both 02-authentication.md and 02-authentication/index.md exist — flat wins, remove the folder` with exit 1.
 Repro: scratch `t06/`: `cans/02-authentication.md` + `cans/02-authentication/index.md` (+ `04-api/index.md`), run `cans check`.
 Expected: "Flat wins over folder. If both exist, `cans check` flags error." (§8 line 170, §11 line 291).
 Actual: both parsed as separate spec files (files=3); no error; exit 0. The conflict surfaces only indirectly as redundancy noise ("100% overlap", depth-0-1 duplicate warning). A workspace can silently carry two divergent copies of the same concept.
 
 **F2 · MAJOR · file-not-found is a warning for in-range `NN-` targets, contradicting §12.**
+> **Status: PARTIAL** — Green red-test "F2: ref to a non-existent spec file is a broken-ref ERROR even when its number is in-span (§12)"; the original repro (refs from 02-authentication.md to 04/05/99) now yields three `✗ broken ref … file not found` errors, exit 1. Remainder: a BACKWARD in-span ref still downgrades to the undocumented ⚠ `unwritten spec slot` warning — the docs' own §34 flat-project fixture (`06-operations.md → see 03-data.md`) reports refs.broken=0 and exits 0 (src/core/refs.ts gates the downgrade on `tgtNum < srcNum`); §12 still documents only "File not found → Broken ref error".
 Repro: `t02b-span/` (files 02-authentication.md, 06-operations.md; refs `see 04-api.md`, `see 05-frontend.md`, `see 99-zzz.md`).
 Expected: §12 edge case table — "File not found → Broken ref error" (error ⇒ exit 1).
 Actual: targets whose number falls inside the numeric span [min…max] of existing spec files produce ⚠ `unwritten spec slot: see 04-api.md — file not created yet` (exit stays 0); only out-of-span targets (99) get ✗ `broken ref`. The term "unwritten spec slot" appears nowhere in the docs. Consequence: a genuinely broken ref can exit 0 in CI when the number happens to be in-range (also affects §34 flat-project: `see 03-data.md` → warning, refs.broken=0).
 
 **F3 · MAJOR · ref tokens ("see", "md", filenames) counted by redundancy word-frequency make the documented clean contract unreachable.**
+> **Status: RESOLVED** — CLI repro with 5 `see:` lines (incl. target `03-storage.md`) now produces zero `"see"`/`"md"`/target-filename word-frequency warnings (ref tokens excluded from Layer 1; commit e628ff2); cross-checked QA-03's suite: 16/16 green.
 Repro: any project with ≥4 `see:` lines (e.g. t05: 5 refs → ⚠ `"see" × 5 nodes`, ⚠ `"md" × 5 nodes`, plus target-filename tokens like `"db" × 5` via synonym expansion of "storage").
 Expected: §35 `check-clean.json` shows `refs.total: 12` with `issues: []`.
 Actual: every ref line contributes `see`/`md`/target tokens; at ≥4 ref lines word-frequency warnings are unavoidable (threshold 4). Either ref text must be excluded from Layer 1 or the docs' clean fixture is impossible. (Docs and implementation co-deviate; flagging for engine owner.)
 
 **F4 · MAJOR · §34 deep-hop fixture produces an extra `broken anchor` error.**
+> **Status: RESOLVED** — Green red-test "F4: §34 deep-hop fixture — anchor #Data-protection resolves against node \"Data protection\""; CLI: the fixture now reports only `✗ DEEP HOP: 04-api.md → 02-authentication.md → 06-operations.md` among refs errors (no broken anchor).
 Repro: `t03-deephop/` — `see 06-operations.md#Data-protection` targeting node `Data protection`.
 Expected: §34 says the fixture's expected output is only `✗ DEEP HOP: 04-api.md → 02-authentication.md → 06-operations.md`.
 Actual: additionally `✗ broken anchor: 06-operations.md#Data-protection — no node matches`. Anchor normalization (hyphen↔space, as the docs' own `#Data-protection` convention implies) is not implemented and §12 only promises exact + case-insensitive matching. Docs fixtures and §12 resolution rules are mutually inconsistent; as shipped, the documented tutorial scenario reports a spurious error.
 
 **F5 · MINOR · style `force_sibling_below` off-by-one (§14).**
+> **Status: RESOLVED** — Green red-test "F5: parent with exactly 3 leaf children is flagged \"collapse to sibling style\" (§14, force_sibling_below=3, ≤ semantics)"; CLI: `⚠ "Sessions" has 3 children. Collapse to sibling style.` — ≤ semantics implemented (src/core/style.ts).
 Expected: "Parent with ≤ `force_sibling_below` (3) leaf children → flag" ⇒ 3 children flagged.
 Actual: 3 leaf children NOT flagged (t02b, t08e, t01 "Data protection"); 2 are. With override `force_sibling_below: 4`, 3 children flag (t14a) — semantics are `< N`, not `≤ N`.
 
 **F6 · MINOR · style collapse flag requires an all-leaf sibling group (§14 wording).**
+> **Status: OPEN** — Repro unchanged (verified t08f shape plus a non-root variant): `Root → BranchA(1 child) + LeafB` still gets no style flag; src/core/style.ts still requires `children.every(leaf)`. Needs either mixed-group flagging or a §14 clarification that only all-leaf sibling groups are flagged (docs untouched since creation).
 Repro: t08f `Root → BranchA(has 1 child) + LeafB`.
 Expected: "parent with ≤3 leaf children" ⇒ flagged (has 1 leaf child).
 Actual: no flag. The engine only flags parents whose children are ALL leaves. Mixed groups of ≤2 children escape detection (structure single-child still catches the 1-child subset).
 
-**F7 · MINOR · severity mismatches vs docs (§14/§15/§36).** Docs show ✗ (error) for style flags ("✗ … Collapse to sibling style.", "✗ … Group under nested style.") and for single-child collapse ("✗ … has exactly 1 child. Collapse."); implementation emits ⚠ warnings for all style findings, single-child, siblings-over-max, node-too-short, orphan. ✗ is reserved for node-too-long, depth>max, and refs errors. Net effect: a doc-example-shaped output (3 errors incl. two style ✗) is unreachable; exit codes stay 0 for style-only problems. (Arguably defensible, but the human-text contract in §36 does not match.)
+**F7 · MINOR · severity mismatches vs docs (§14/§15/§36).**
+> **Status: DOC-GAP** — Impl unchanged and now a documented decision (src/core/style.ts "SEVERITY NOTE"; commit e628ff2 "style severity stays warning — frozen baselines pin errorCount 0"): style/single-child/orphan findings are ⚠ and ✗ is reserved for node-too-long, depth>max and refs errors (CLI-verified, exit 0 for style-only projects). Docs §14 example, §15 example (`✗ … has exactly 1 child. Collapse.`) and §36 human-text example still show ✗ for those findings and need the ✗→⚠ sync.
+Docs show ✗ (error) for style flags ("✗ … Collapse to sibling style.", "✗ … Group under nested style.") and for single-child collapse ("✗ … has exactly 1 child. Collapse."); implementation emits ⚠ warnings for all style findings, single-child, siblings-over-max, node-too-short, orphan. ✗ is reserved for node-too-long, depth>max, and refs errors. Net effect: a doc-example-shaped output (3 errors incl. two style ✗) is unreachable; exit codes stay 0 for style-only problems. (Arguably defensible, but the human-text contract in §36 does not match.)
 
 **F8 · MINOR · JSON `maxDepth` uses 0-based depth while depth errors are 1-based (§35).**
+> **Status: RESOLVED** — Green red-test "F8: JSON maxDepth is 1-based — a 4-level chain reports maxDepth 4 (§35)"; CLI: 4-level chain → `maxDepth: 4`, no depth error.
 Repro: t07d 7-level chain → errors `Depth 6`/`Depth 7` (1-based) but JSON `maxDepth: 6`. §35 clean fixture (4-level project) reports `maxDepth: 4`, i.e. 1-based. Off-by-one inconsistency inside one result object.
 
-**F9 · MINOR · rules keys `duplicate_home_check` and `max_hops` are not honored (§18).** `orphan_check: false` works; `duplicate_home_check: false` still emits the depth-0-1 duplicate warning (t17); `max_hops: 2` still flags deep hops (t17b — principle-3-safe behavior, but the documented key is dead).
+**F9 · MINOR · rules keys `duplicate_home_check` and `max_hops` are not honored (§18).**
+> **Status: RESOLVED** — Green red-tests "F9a" (duplicate_home_check: false suppresses the depth-0-1 duplicate warning) and "F9b" (max_hops: 2 lets a 04→02→06 chain pass with deepHops 0); both re-confirmed via CLI spot-check.
+`orphan_check: false` works; `duplicate_home_check: false` still emits the depth-0-1 duplicate warning (t17); `max_hops: 2` still flags deep hops (t17b — principle-3-safe behavior, but the documented key is dead).
 
-**F10 · MINOR · ref syntax: `see:TARGET` (colon, no space) silently not parsed.** `see X` and `see: X` work; `see:X` yields 0 refs with no diagnostic (t10n). §11's stated regex `/see:\s*(\S+?)(?:#(\S+))?/g` would match it, while it would NOT match the colon-less form used by every docs example (which the implementation does accept). Regex doc ↔ implementation disagree in both directions.
+**F10 · MINOR · ref syntax: `see:TARGET` (colon, no space) silently not parsed.**
+> **Status: RESOLVED** — Green red-test "F10: ref syntax \"see:TARGET\" (colon, no space) is parsed as a ref (§11 regex)"; CLI: `see:02-authentication.md` parses and validates (refs.total 1, broken 0).
+`see X` and `see: X` work; `see:X` yields 0 refs with no diagnostic (t10n). §11's stated regex `/see:\s*(\S+?)(?:#(\S+))?/g` would match it, while it would NOT match the colon-less form used by every docs example (which the implementation does accept). Regex doc ↔ implementation disagree in both directions.
 
-**F11 · MINOR · non-2-space indentation silently re-parents nodes (§11).** 1-space indented line becomes a **root-level sibling of its parent** (t10d: `- Root` + ` - X` → 2 roots, maxDepth 0); 3-space floors into the previous level (t10c). No diagnostic; tabs are the only rejected case. A "weird-but-legal" file silently changes meaning.
+**F11 · MINOR · non-2-space indentation silently re-parents nodes (§11).**
+> **Status: RESOLVED** — No longer silent: 1-space/3-space indents now emit `⚠ <file>:<line> — odd indentation (N spaces) — nodes may be re-parented unexpectedly; use 2-space multiples` (CLI-verified); tabs remain hard-rejected per §11. (The re-parenting itself still occurs but is flagged at file:line.)
+1-space indented line becomes a **root-level sibling of its parent** (t10d: `- Root` + ` - X` → 2 roots, maxDepth 0); 3-space floors into the previous level (t10c). No diagnostic; tabs are the only rejected case. A "weird-but-legal" file silently changes meaning.
 
-**F12 · MINOR · a directory named like a spec file (`cans/04-api.md/`) is silently skipped** from the file count with no error (t18). Also: empty `cans/` → clean exit 0 (t16), while missing `cans/` → error exit 1 — reasonable but undocumented.
+**F12 · MINOR · a directory named like a spec file (`cans/04-api.md/`) is silently skipped** from the file count with no error (t18).
+> **Status: RESOLVED** — CLI: directory `cans/04-api.md/` now yields `⚠ malformed workspace entry: directory "04-api.md" looks like a spec file — rename it or use folder mode (04-api/index.md)` instead of a silent skip; cross-evidence: green QA-06 finding-9 test. (Empty `cans/` still exits 0 — benign, unchanged.)
+Also: empty `cans/` → clean exit 0 (t16), while missing `cans/` → error exit 1 — reasonable but undocumented.
 
-**F13 · UX · `[file]` argument has no validation and partial scoping.** `check 99-missing.md` and `check cans/04-api.md` (wrong base path) run a filtered check with exit 0 and no "file not found" diagnostic; refs issues from *other* files and the global structure summary still print (refs are graph-global). Users get no signal their argument matched nothing.
+**F13 · UX · `[file]` argument has no validation and partial scoping.**
+> **Status: RESOLVED** — CLI: `check 99-missing.md` and `check cans/04-api.md` now fail with `✗ no spec file matches "…" — pass a spec filename like 04-api.md or run cans status to list files`, exit 1 (commit 146bc10); a valid file argument still scopes issues as before.
+`check 99-missing.md` and `check cans/04-api.md` (wrong base path) run a filtered check with exit 0 and no "file not found" diagnostic; refs issues from *other* files and the global structure summary still print (refs are graph-global). Users get no signal their argument matched nothing.
 
-**F14 · MINOR · parse errors are all-or-nothing with odd formatting.** One tab in an otherwise fine file drops the whole file (0 nodes, t10) with message `10-weird-a.md:0 — parse error: 10-weird-a.md: tab indentation rejected…` (path twice, line :0). Invalid `_rules.yaml` likewise reports under `✗ :0 —`. File-level issues use empty file + line 0.
+**F14 · MINOR · parse errors are all-or-nothing with odd formatting.**
+> **Status: PARTIAL** — Fixed half: invalid `_rules.yaml` is line-numbered without `:0` (`✗ invalid _rules.yaml: line 1 — "structure" must be a mapping, got number`, exit 1; also QA-03 F2) and the human parse-error line no longer carries `:0`. Remainder: the parse-error message still duplicates the path (`✗ 10-weird-a.md — parse error: 10-weird-a.md: tab indentation rejected (use 2 spaces)`), JSON still reports `line: 0` for file-level issues, and the whole-file drop is unchanged (docs don't specify partial parsing, so that aspect stays doc-silent rather than violated).
+One tab in an otherwise fine file drops the whole file (0 nodes, t10) with message `10-weird-a.md:0 — parse error: 10-weird-a.md: tab indentation rejected…` (path twice, line :0). Invalid `_rules.yaml` likewise reports under `✗ :0 —`. File-level issues use empty file + line 0.
 
-**F15 · UX · fuzzy-typo layer (§13 L3, Levenshtein ≤2 for >4-char words) is extremely noisy on natural vocabulary.** t12 clean-project authoring required renaming to avoid `reading↔loading`, `service↔device`, `binding↔billing`, `hashed↔based`, `storage↔store`, and t07c flags `seven↔eleven`. A 0-warning workspace is achievable but demands unnatural word choices; docs' own fixtures all trigger it.
+**F15 · UX · fuzzy-typo layer (§13 L3, Levenshtein ≤2 for >4-char words) is extremely noisy on natural vocabulary.**
+> **Status: OPEN** — Still reproduces: a natural-vocabulary CLI workspace flags reading↔loading, service↔device, binding↔billing, seven↔eleven (+ words↔holds, saves↔seven), and the docs' own §34 flat fixture emits sessions↔session (Lev 1, singular/plural), never↔every, protection↔production. Impl matches §13 L3 as written (no plural/stem normalization; QA-03's fix covers only synonym-matched pairs), so closing this needs a docs+impl decision (docs untouched since creation).
+t12 clean-project authoring required renaming to avoid `reading↔loading`, `service↔device`, `binding↔billing`, `hashed↔based`, `storage↔store`, and t07c flags `seven↔eleven`. A 0-warning workspace is achievable but demands unnatural word choices; docs' own fixtures all trigger it.
 
-**F16 · UX · double-reporting + grammar on single-child nodes.** A 1-child node yields both `structure ⚠ "X" has exactly 1 child. Collapse.` and `style ⚠ "X" has 1 children. Collapse to sibling style.` (grammar: "1 children"). Same node, two categories, no added information.
+**F16 · UX · double-reporting + grammar on single-child nodes.**
+> **Status: RESOLVED** — Green red-test "F16: single-child node is not double-reported by structure AND style (≤ 1 finding per node)"; CLI: a 1-child node yields only structure `⚠ "X" has exactly 1 child. Collapse.` (style no longer echoes it; pluralization correct — "2 children"/"3 children", no "1 children").
+A 1-child node yields both `structure ⚠ "X" has exactly 1 child. Collapse.` and `style ⚠ "X" has 1 children. Collapse to sibling style.` (grammar: "1 children"). Same node, two categories, no added information.
 
-**F17 · MINOR · `Rules (_rules.yaml)` report section never printed (§22 fixed order, §36 example).** Output sections are Structure → Style → References → Redundancy → Overflow → summary line; the Rules section and its `✓ node_length: 3–120 | …` line are absent even when `_rules.yaml` exists and is honored.
+**F17 · MINOR · `Rules (_rules.yaml)` report section never printed (§22 fixed order, §36 example).**
+> **Status: RESOLVED** — CLI: `Rules (_rules.yaml)` now prints in the §22 fixed order (after Overflow, before Summary) both with `_rules.yaml` (shows the override, `node_length: 3–60`) and without it (defaults `3–120`); commit e628ff2.
+Output sections are Structure → Style → References → Redundancy → Overflow → summary line; the Rules section and its `✓ node_length: 3–120 | …` line are absent even when `_rules.yaml` exists and is honored.
 
-**F18 · UX · `check --fix` prints the PRE-fix state.** During the fixing run, the report still shows `back-pointers: 0/1 current`, the stale-back-pointer warning, and JSON `backPointers.current: 0, stale: 1` even though the same run rewrote them (only `backPointersUpdated: 1` reveals the write). §35 `check-fix.json` implies post-fix state (`current: 12`). Also: --fix may INSERT a standalone `<!-- ref-by: … -->` line, shifting subsequent line numbers (t10l) — within "back-pointers only" scope but worth knowing.
+**F18 · UX · `check --fix` prints the PRE-fix state.**
+> **Status: RESOLVED** — Green red-test "F18: check --fix --json reports post-fix backPointers (current === total, stale === 0) (§35)"; CLI human output during the fixing run now shows `back-pointers: 1/1 current` (no stale warning).
+During the fixing run, the report still shows `back-pointers: 0/1 current`, the stale-back-pointer warning, and JSON `backPointers.current: 0, stale: 1` even though the same run rewrote them (only `backPointersUpdated: 1` reveals the write). §35 `check-fix.json` implies post-fix state (`current: 12`). Also: --fix may INSERT a standalone `<!-- ref-by: … -->` line, shifting subsequent line numbers (t10l) — within "back-pointers only" scope but worth knowing.
 
 ## 5. Observations (non-finding)
 
@@ -136,6 +166,14 @@ Repro: t07d 7-level chain → errors `Depth 6`/`Depth 7` (1-based) but JSON `max
 
 ## 6. Verdict summary
 
+Pre-fix (historical):
+
 - ~35 test cases executed. PASS ≈ 24 · FAIL 3 (F1 flat/folder conflict, F2 in-range broken-ref downgrade, F5/F6 style-threshold semantics counted here as 2 of the FAILs) · DEVIATION 7 · UNDOCUMENTED 6 · remainder PASS-with-notes. (Exact per-row verdicts in the matrix; some rows carry a PASS + linked finding.)
 - Core refs machinery is solid: broken/self/deep-hop/transient/_collab/orphan detection, case-insensitive anchors, multi-ref lines, back-pointer rebuild (`--fix` scope strictly honored, idempotent), folder-mode resolution, `_adr`/`_tasks` ref checks, rules overrides for thresholds, JSON contract (§22/§35) and exit codes (§19) all behave.
 - Highest-priority fixes: F1 (documented error case missing entirely), F2 (broken refs can exit 0), F3/F15 (noise makes the documented clean contract unreachable), F4 (docs' own tutorial fixture emits a spurious error).
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+
+- 13/18 RESOLVED (F1, F3, F4, F5, F8, F9, F10, F11, F12, F13, F16, F17, F18) · 2 PARTIAL (F2 backward in-span refs still downgrade to undocumented "unwritten spec slot" warnings; F14 parse-error message still doubles the path / JSON line 0) · 1 DOC-GAP (F7 docs §14/§15/§36 still show ✗ where impl deliberately emits ⚠) · 2 OPEN (F6 mixed all-leaf collapse flag, F15 fuzzy noise on natural vocabulary).
+- Mapped red suite `qa-02-refs-structure-style.test.ts` 11/11 green (10 finding tests + 1 control, 24 expect()); whole-repo `bun test` 192 pass / 0 fail; QA-03 cross-check suite 16/16 green.
+- Docs untouched since the QA (last commit b663473) — all remaining gaps (F2 remainder, F6, F7, F15) need either a small impl follow-up or a docs sync pass.
