@@ -1,6 +1,7 @@
 # QA-01 — `cans init` & Workspace Lifecycle (Blackbox)
 
 Task ID: 3-a | Agent: qa-init | Date: 2026-09-03
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 8/12 findings RESOLVED, 0 PARTIAL, 4 DOC-GAP, 0 OPEN; mapped suite qa-01-init-lifecycle 9/9 green.
 
 ## Scope & docs covered
 
@@ -51,19 +52,31 @@ Totals: **26 checks → 15 PASS, 1 FAIL, 5 DEVIATION, 3 UNDOCUMENTED** (some row
 ## Findings
 
 1. **MAJOR — `--flat --folders` accepted; init produces an invalid workspace.**
+   > **Status: RESOLVED** — red-test `red #1` (no folder twins beside existing flat specs) is green; blackbox re-run over a flat workspace now skips all 14 concepts (0 created, 0 `index.md` twins, exit 0), and fresh `--flat --folders` in either flag order yields a single-mode folders workspace — a both-exist state is no longer manufacturable.
    Repro: `mkdir t && cd t && cans init && cans init --flat --folders`
    Expected: error/refusal, or deterministic precedence (flat wins per §8). Actual: exit 0, folder twins (`01-architecture/index.md` …) created beside existing `01-architecture.md` — 6 duplicate canonical homes; §8 says `cans check` flags this as an error, so init can manufacture a state its own checker rejects. Also reveals skip-check is per-path, not per-concept.
 2. **MINOR (DEVIATION) — `_adr/_template.md` not created.** §8 workspace structure shows it; §35 `init.json` fixture omits it; actual matches the fixture, not §8 (doc-internal inconsistency). No downstream breakage: `cans new adr` still produces a correctly formatted ADR from its own template.
+   > **Status: DOC-GAP** — no impl change required and none made: `_adr/` still ships empty (verified 2026-09-04) and `cans new adr` still creates a correctly formatted ADR from its own template; impl matches the §35 fixture. Residual is docs-internal: §8 (L157) and the `discoverAdrs()` note (L774) still reference `_adr/_template.md`, which nothing creates.
 3. **MINOR (DEVIATION) — `init` from a subdirectory of `cans/` doesn't refuse.** §21: "Refuses if already inside a `cans/` directory." Only cwd = `cans/` itself refuses (exit 1); from `cans/_collab/` init silently walks up and re-runs idempotently against the ancestor workspace (exit 0, `ok:true`).
+   > **Status: RESOLVED** — red-test `red #3` (cwd inside `cans/_collab/` must refuse) is green; blackbox `init` from `cans/_collab/` — and from a deeper `cans/_tasks/deep/deeper/` — now exits 1 with `✗ already inside a cans/ workspace — cd to the project root first`.
 4. **MINOR (DEVIATION) — JSON `root` is absolute**, fixture §35 shows `"./cans"`.
+   > **Status: RESOLVED** — red-test `red #4` (`root` must be `"./cans"`) is green; blackbox `init --json` now emits `"root": "./cans"` exactly per the §35 fixture.
 5. **MINOR (DEVIATION) — §33 "~800 tokens" claim.** `AGENTS.md` = 737 words / 4728 bytes ≈ 1350 tokens at the project's own 3.5 chars-per-token (§18), ≈950–1200 by common tokenizers. Overstated by ~20–70%.
+   > **Status: DOC-GAP** — no impl change required and none made: emitted `AGENTS.md` re-measured 2026-09-04 at 737 words / 4728 chars. Residual is the doc claim itself: §33 heading (L778) and the comparison-table rows (L27, L34) still say "~800 tokens".
 6. **MINOR (UNDOCUMENTED/UX) — unknown flags silently ignored.** `--bogus`, and the realistic typo `--folder` (singular), produce default behavior with exit 0 and no warning. A typo'ed `--folders` user silently gets flat mode.
+   > **Status: RESOLVED** — red-tests `red #6a` (`--bogus`) and `red #6b` (typo `--folder`) are green; blackbox now exits 1 with `✗ unknown flag "--bogus"` / `✗ unknown flag "--folder"` — nothing is silently swallowed.
 7. **MINOR (UNDOCUMENTED/UX) — `--tool <unknown>` silently ignored.** `--tool windsurf` → no CLAUDE.md/.cursorrules, no warning, exit 0. Also, emitted CLAUDE.md/.cursorrules are verbatim copies of AGENTS.md (template has no placeholder, so the §29 "string-replace for tool name" concept is not observable — consistent with §21's weaker wording).
+   > **Status: RESOLVED** — red-test `red #7` is green; blackbox `--tool windsurf` now exits 1 with `✗ unknown tool "windsurf" — supported tools: claude, cursor`; documented tools unchanged (row-12 regression: `--tool claude` still emits CLAUDE.md, identical to AGENTS.md).
 8. **MINOR (UX) — refusal message is empty.** `init` inside `cans/`: stdout `Workspace: ` (nothing after colon), stderr empty, JSON `root:""` with no error/reason field; user is told nothing about why (§21 says only "Refuses").
+   > **Status: RESOLVED** — red-test `red #8` (refusal must state WHY) is green; blackbox `init` inside `cans/` now exits 1 with `✗ already inside a cans/ workspace — cd to the project root first` instead of the empty `Workspace: ` header.
 9. **MINOR (UX, documented behavior) — `--force` silently clobbers `_collab/{handoffs,conflicts,decisions}.md`** (multi-agent coordination state) plus all specs and `_rules.yaml`, with no confirmation/prompt or backup. Matches §21 wording ("skips existing files unless --force"), but destructive scope is undocumented.
+   > **Status: DOC-GAP** — impl matches the documented §21 contract (L510, unchanged on this branch): blackbox `init --force` still recreates `_collab/*` and edited specs from templates (verified 2026-09-04). Remainder is doc-only: §21 does not spell out `--force`'s destructive scope / absence of confirmation or backup.
 10. **OBS — exit 2 on `EEXIST` (file named `cans` in cwd):** raw internal error to stderr, exit 2 — matches §19's exit-code contract (2 = internal, top-level catch), not graceful.
+    > **Status: RESOLVED** — verified unchanged on this branch: init still exits 2 with stderr `✗ Internal error: EEXIST ... mkdir '.../cans'` — exactly the §19 contract the observation noted; no change was required.
 11. **OBS — `--force` never touches `_adr/`/`_tasks/` dirs** (reported "exists, skipped"; never emptied/recreated) — sensible.
+    > **Status: RESOLVED** — verified unchanged on this branch: `init --force` still reports `_adr/`/`_tasks/` as `(exists, skipped)` and leaves user files inside them untouched; sensible behavior retained.
 12. **OBS — `--bare --folders` → bare wins** (no `01-architecture/` dirs); undocumented but sensible.
+    > **Status: DOC-GAP** — impl unchanged and deterministic (verified: bare wins, only `_rules.yaml`/`AGENTS.md`/`00-overview.md`); the combo's precedence remains undocumented in §21's flags line (L512).
 
 ## Observations
 
@@ -75,6 +88,12 @@ Totals: **26 checks → 15 PASS, 1 FAIL, 5 DEVIATION, 3 UNDOCUMENTED** (some row
 
 ## Verdict summary
 
+Pre-fix (historical):
 - **15 PASS / 1 FAIL / 5 DEVIATION / 3 UNDOCUMENTED** (26 checks; combos and flag-matrices extend the requested 12-point matrix).
 - Blockers: none. Majors: 1 (finding #1). Everything else minor/UX or doc-consistency issues.
 - Core §21 promises hold: idempotency, skip-unless-`--force`, `--flat` default, `--folders`/`--bare`/`--tool` variants, refusal inside `cans/`, §35 JSON shape.
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+- 8/12 findings RESOLVED, 0 PARTIAL, 4 DOC-GAP (#2, #5, #9, #12), 0 OPEN; mapped red-suite `qa-01-init-lifecycle` 9/9 green (7 red + 2 controls), repo-wide `bun test` 192 pass / 0 fail.
+- All implementation findings fixed and blackbox-verified: no duplicate-canonical-home state from `--flat --folders`, refusal inside `cans/` at any depth with a reason, JSON `root: "./cans"`, unknown flags/tools rejected with exit 1.
+- Remaining DOC-GAPs are docs-internal with no impl breakage: §8/L774 `_adr/_template.md` ghost entry (#2), §33 "~800 tokens" claim (#5), §21 `--force` destructive scope (#9), §21 `--bare --folders` precedence (#12).
