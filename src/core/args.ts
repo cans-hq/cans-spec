@@ -70,9 +70,10 @@ export function parseArgs(args: string[], spec: FlagSpec[]): ParsedArgs {
   return { positional, flags, errors };
 }
 
-/** Format arg errors per §37: what / where / what to do. */
+/** Format arg errors per §37: what / where / what to do — WITHOUT the `✗` mark
+ *  (error fields carry raw text; the human printer adds the mark). */
 export function formatArgErrors(errors: string[], command: string): string {
   return errors
-    .map(e => `✗ ${e}\n  Run \`cans help\` for valid ${command} flags.`)
+    .map(e => `${e}\n  Run \`cans help\` for valid ${command} flags.`)
     .join('\n');
 }

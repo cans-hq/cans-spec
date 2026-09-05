@@ -64,11 +64,15 @@ function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
-/** Layer 1 — words appearing in >= threshold nodes (node count, not occurrences). */
+/** Layer 1 — words appearing in >= threshold nodes (node count, not occurrences).
+ *  §18 delete-key semantics: `word_frequency_threshold` null (deleted) → the
+ *  layer is OFF — skipped entirely, never compared against null. */
 export function wordFrequency(
   nodes: NodeRef[],
   rules: RedundancyRules,
 ): Issue[] {
+  const threshold = rules.word_frequency_threshold;
+  if (threshold === null) return [];
   const counts = new Map<string, number>();
   const firstLoc = new Map<string, NodeRef>();
   for (const node of nodes) {
@@ -80,14 +84,14 @@ export function wordFrequency(
       if (!firstLoc.has(w)) firstLoc.set(w, node);
     }
   }
-  const flagged = [...counts.entries()].filter(([, n]) => n >= rules.word_frequency_threshold);
+  const flagged = [...counts.entries()].filter(([, n]) => n >= threshold);
   flagged.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const issues: Issue[] = [];
   for (const [word, n] of flagged) {
     const loc = firstLoc.get(word)!;
     issues.push({
       file: loc.file, line: loc.line, level: 'warning', category: 'redundancy',
-      message: `"${word}" × ${n} nodes (threshold: ${rules.word_frequency_threshold})`,
+      message: `"${word}" × ${n} nodes (threshold: ${threshold})`,
       suggestion: `pick one canonical home for "${word}" and see: it from the others`,
     });
   }
@@ -97,12 +101,13 @@ export function wordFrequency(
 /** Layer 2 — pairwise word-set overlap of normalized word sets >= threshold.
  *  §13: "Normalized word set overlap ≥ 70% → flag." Overlap is measured
  *  against the LARGER of the two sets (|A∩B| / max(|A|,|B|)), after stopword
- *  and synonym normalization. */
+ *  and synonym normalization. §18: threshold null (deleted key) → layer OFF. */
 export function phraseOverlap(
   nodes: NodeRef[],
-  threshold: number,
+  threshold: number | null,
   rules?: RedundancyRules,
 ): Issue[] {
+  if (threshold === null) return [];
   const sets = nodes.map(n => ({ node: n, words: wordSet(n.text, rules) }));
   const issues: Issue[] = [];
   for (let i = 0; i < sets.length; i++) {
@@ -193,11 +198,13 @@ function filesConnected(
   return refsTo(aNodes, bNames) || refsTo(bNodes, aNames);
 }
 
-/** Layer 4 — identical node text at depth 0-1 in >= threshold files without see: linkage. */
+/** Layer 4 — identical node text at depth 0-1 in >= threshold files without see: linkage.
+ *  §18 delete-key semantics: threshold null (deleted) → layer OFF. */
 export function crossFileCanonicality(
   allFiles: Map<string, OutlineNode[]>,
-  threshold: number,
+  threshold: number | null,
 ): Issue[] {
+  if (threshold === null) return [];
   const concepts = new Map<string, { files: Set<string>; first: NodeRef }>();
   for (const [key, nodes] of allFiles) {
     for (const node of flattenNodes(nodes)) {

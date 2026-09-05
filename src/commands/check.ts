@@ -17,6 +17,7 @@ import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey,
 } from '../core/refs';
+import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args';
 
 export interface CheckArgs {
   fix: boolean;
@@ -25,7 +26,19 @@ export interface CheckArgs {
   noRedundancy: boolean;
   file: string | null;
   json: boolean;
+  /** §24 (done): the archiving task's parsed nodes, injected under their
+   *  former `_tasks/<name>.md` identity so refs held by the archived task
+   *  still count for the back-pointer rebuild. Never set by `check` itself. */
+  extraReferrer?: { key: string; nodes: OutlineNode[] } | null;
 }
+
+const CHECK_FLAGS: FlagSpec[] = [
+  { name: 'fix', boolean: true },
+  { name: 'strict', boolean: true },
+  { name: 'refs-only', boolean: true },
+  { name: 'no-redundancy', boolean: true },
+  { name: 'json', boolean: true },
+];
 
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 
@@ -38,24 +51,26 @@ function safeAdrs(root: string): string[] {
   return dirExists(join(root, '_adr')) ? discoverAdrs(root) : [];
 }
 
-export function parseCheckArgs(args: string[]): CheckArgs {
-  let fix = false;
-  let strict = false;
-  let refsOnly = false;
-  let noRedundancy = false;
-  let json = false;
-  let file: string | null = null;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--fix') fix = true;
-    else if (a === '--strict') strict = true;
-    else if (a === '--refs-only') refsOnly = true;
-    else if (a === '--no-redundancy') noRedundancy = true;
-    else if (a === '--json') json = true;
-    else if (a === '--file') file = args[i + 1] ?? null;
-    else if (!a.startsWith('--')) file = a; // single optional positional = file filter
+/** §20: route check's args through the shared parser — `--flag value` only,
+ *  `[file]` is the sole positional. Unknown flags, short flags, `--flag=value`
+ *  and extra positionals are user errors, never silently ignored. */
+export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] } {
+  const parsed = parseArgs(args, CHECK_FLAGS);
+  const errors = [...parsed.errors];
+  const positional = parsed.positional;
+  const file = positional.length > 0 ? positional[0]! : null;
+  if (positional.length > 1) {
+    errors.push(`unexpected argument "${positional[1]}" — check takes a single optional [file]`);
   }
-  return { fix, strict, refsOnly, noRedundancy, file, json };
+  return {
+    fix: parsed.flags.has('fix'),
+    strict: parsed.flags.has('strict'),
+    refsOnly: parsed.flags.has('refs-only'),
+    noRedundancy: parsed.flags.has('no-redundancy'),
+    json: parsed.flags.has('json'),
+    file,
+    errors,
+  };
 }
 
 function zeroedCounts(): Omit<CheckResult, 'ok' | 'command' | 'exitCode'> {
@@ -72,7 +87,10 @@ function zeroedCounts(): Omit<CheckResult, 'ok' | 'command' | 'exitCode'> {
   };
 }
 
-function checkFail(message: string): CheckResult {
+/** §37: check-level failure (no workspace, invalid rules, unknown flag, file
+ *  filter matched nothing). The diagnosis rides in `error` so the human printer
+ *  can show it standalone — never inside a report-shaped body. */
+function checkFail(message: string): CheckResult & { error: string } {
   return {
     ok: false,
     command: 'check',
@@ -80,6 +98,7 @@ function checkFail(message: string): CheckResult {
     ...zeroedCounts(),
     issues: [{ file: '', line: 0, level: 'error', category: 'refs', message }],
     errorCount: 1,
+    error: message,
   };
 }
 
@@ -201,6 +220,12 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   }
 
   const allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
+  // §24 (done): the archiving task has already been renamed into _archive/, so
+  // its parsed nodes join the graph here under their former _tasks/ identity —
+  // its see: refs still earn their targets' ref-by marks.
+  if (opts.extraReferrer !== undefined && opts.extraReferrer !== null) {
+    allFiles.set(opts.extraReferrer.key, opts.extraReferrer.nodes);
+  }
   const graph = buildRefGraph(allFiles, root);
 
   // File filter: restrict structure/style/overflow/redundancy to one file (refs stay global).
@@ -236,27 +261,32 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   }
 
   // Back-pointers: ref-by comments in spec sources vs actual incoming refs.
+  // §18: `references.back_pointers` false (explicit or deleted key) turns the
+  // back-pointer check OFF — no stale warnings, and --fix writes nothing.
+  const backPointersOn = rules.references.back_pointers;
   let bpTotal = 0;
   let bpCurrent = 0;
   let bpStale = 0;
-  for (const [rel, source] of specSources) {
-    for (const bp of extractBackPointers(source, rel)) {
-      bpTotal++;
-      const fromKey = refTargetKey(bp.fromFile, allFiles.keys());
-      const fromRefs = fromKey !== null ? graph.forward.get(fromKey) : undefined;
-      const isCurrent =
-        fromKey !== null &&
-        fromRefs !== undefined &&
-        fromRefs.some(t => refTargetKey(t.file, allFiles.keys()) === rel);
-      if (isCurrent) {
-        bpCurrent++;
-      } else {
-        bpStale++;
-        issues.push({
-          file: rel, line: bp.fromLine, level: 'warning', category: 'refs',
-          message: `stale back-pointer: ${bp.fromFile} no longer refs ${rel}`,
-          suggestion: 'remove the ref-by comment (or re-run cans check --fix)',
-        });
+  if (backPointersOn) {
+    for (const [rel, source] of specSources) {
+      for (const bp of extractBackPointers(source, rel)) {
+        bpTotal++;
+        const fromKey = refTargetKey(bp.fromFile, allFiles.keys());
+        const fromRefs = fromKey !== null ? graph.forward.get(fromKey) : undefined;
+        const isCurrent =
+          fromKey !== null &&
+          fromRefs !== undefined &&
+          fromRefs.some(t => refTargetKey(t.file, allFiles.keys()) === rel);
+        if (isCurrent) {
+          bpCurrent++;
+        } else {
+          bpStale++;
+          issues.push({
+            file: rel, line: bp.fromLine, level: 'warning', category: 'refs',
+            message: `stale back-pointer: ${bp.fromFile} no longer refs ${rel}`,
+            suggestion: 'remove the ref-by comment (or re-run cans check --fix)',
+          });
+        }
       }
     }
   }
@@ -283,8 +313,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   }
 
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.
+  // §18/§17: with the back-pointer check off (back_pointers false or deleted),
+  // --fix must not write anything — backPointersUpdated stays 0, no file touched.
   let backPointersUpdated = 0;
-  if (opts.fix) {
+  if (opts.fix && backPointersOn) {
     const desired = rebuildBackPointers(allFiles, graph);
     for (const [rel, source] of specSources) {
       const body = desired.get(rel) ?? null;
@@ -354,15 +386,34 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     warningCount,
     backPointersUpdated,
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
+    // §18 delete-key semantics: a deleted range key shows as "off", never a raw null.
     rulesSummary:
-      `node_length: ${rules.structure.node_length.min}\u2013${rules.structure.node_length.max}` +
-      ` | siblings: ${rules.structure.siblings.min}\u2013${rules.structure.siblings.max}` +
-      ` | depth: ${rules.structure.depth.min}\u2013${rules.structure.depth.max}`,
+      `node_length: ${fmtRange(rules.structure.node_length)}` +
+      ` | siblings: ${fmtRange(rules.structure.siblings)}` +
+      ` | depth: ${fmtRange(rules.structure.depth)}`,
   };
 }
 
+/** "3–120" for an active range; "off" when §18 delete-key semantics nulled it. */
+function fmtRange(r: { min: number | null; max: number | null }): string {
+  if (r.min === null || r.max === null) return 'off';
+  return `${r.min}\u2013${r.max}`;
+}
+
 export async function run(args: string[]): Promise<CheckResult> {
+  // §20/§36: --help/-h show help — they never execute the check.
+  if (args.includes('--help') || args.includes('-h')) {
+    const help = { ok: true, command: 'help', exitCode: 0 };
+    return help as CheckResult;
+  }
   const opts = parseCheckArgs(args);
+
+  // §20/§37: unknown flags, short flags, --flag=value, extra positionals —
+  // surface the real problem and never run a check on malformed args.
+  if (opts.errors.length > 0) {
+    return checkFail(formatArgErrors(opts.errors, 'check'));
+  }
+
   const root = resolveWorkspaceRoot();
   if (root === null) {
     return checkFail('no cans workspace found — run `cans init` or cd into a project with a cans/ directory');

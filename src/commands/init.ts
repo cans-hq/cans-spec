@@ -106,7 +106,6 @@ export async function run(args: string[]): Promise<InitResult> {
 
   const rulesContent = await readTemplate('_rules.yaml');
   const agentsContent = await readTemplate('AGENTS.md');
-  let agentOutside = false;
 
   const plan: PlanEntry[] = [
     { path: '_rules.yaml', dir: false, content: rulesContent },
@@ -132,12 +131,11 @@ export async function run(args: string[]): Promise<InitResult> {
     plan.push({ path: '_collab/handoffs.md', dir: false, content: '- handoffs\n' });
     plan.push({ path: '_collab/conflicts.md', dir: false, content: '- conflicts\n' });
     plan.push({ path: '_collab/decisions.md', dir: false, content: '- decisions\n' });
-  } else {
-    // --bare (§21 "minimal"): the workspace stays lean (specs + _rules.yaml);
-    // agent instructions are emitted at the project root, beside cans/, so the
-    // workspace contains no agent-facing .md alongside the spec stubs.
-    agentOutside = true;
   }
+  // --bare (§21 "minimal") keeps the workspace lean (_rules.yaml + AGENTS.md +
+  // 00-overview.md) but still emits cans/AGENTS.md — §36 help advertises
+  // "Agents: cans/AGENTS.md" and the bare skeleton must match it (QA-07
+  // QA-01 #10).
 
   if (opts.tool === 'claude') {
     plan.push({ path: 'CLAUDE.md', dir: false, content: agentsContent });
@@ -148,9 +146,7 @@ export async function run(args: string[]): Promise<InitResult> {
   const created: string[] = [];
   const skipped: string[] = [];
   for (const entry of plan) {
-    const abs = join(agentOutside && entry.path === 'AGENTS.md'
-      ? dirname(workspace) // --bare: AGENTS.md lives beside cans/, not inside it
-      : workspace, entry.path);
+    const abs = join(workspace, entry.path);
     if (entry.dir) {
       const label = `${entry.path}/`;
       if (dirExists(abs)) {
@@ -159,6 +155,13 @@ export async function run(args: string[]): Promise<InitResult> {
         mkdirp(abs);
         created.push(label);
       }
+      continue;
+    }
+    // §29: _collab/*.md carry append-only coordination state (decisions.md is
+    // the ADR index). --force regenerates the skeleton spec files but must
+    // never clobber existing _collab files — create only when missing (QA-09 E1).
+    if (opts.force && entry.path.startsWith('_collab/') && exists(abs)) {
+      skipped.push(entry.path);
       continue;
     }
     if (exists(abs) && !opts.force) {

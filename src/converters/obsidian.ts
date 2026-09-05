@@ -1,5 +1,8 @@
 import type { ExternalNode } from '../types';
-import { convertWikiLinks, parseCheckbox, parseIndent, reverseWikiLinks, stripMetadata } from './shared';
+import {
+  convertOwnerMarkers, convertWikiLinks, parseCheckbox, parseIndent,
+  reverseWikiLinks, stripMetadata,
+} from './shared';
 
 /** Remove a leading YAML frontmatter block (`---` fences at very top), fences included. */
 export function stripFrontmatter(source: string): string {
@@ -50,7 +53,9 @@ export function parseObsidian(source: string): ExternalNode[] {
         }
       } else {
         // `> body text` → child node under the callout header
-        const text = convertWikiLinks(stripMetadata(callout.text, 'obsidian'));
+        const text = convertWikiLinks(
+          stripMetadata(convertOwnerMarkers(callout.text, 'obsidian'), 'obsidian'),
+        );
         if (text !== '') {
           nodes.push({
             text, indent: calloutIndent + 1, isTask: false, isDone: false,
@@ -63,8 +68,11 @@ export function parseObsidian(source: string): ExternalNode[] {
 
     if (!/^\s*-\s/.test(raw)) continue; // bullets only
     const { isTask, isDone, clean } = parseCheckbox(raw);
-    // strip #tags before link conversion so anchors (`X#Y`) are never eaten; `![[embed]]` → plain link
-    const text = convertWikiLinks(stripMetadata(clean.replace(/!\[\[/g, '[['), 'obsidian'));
+    // strip #tags before link conversion so anchors (`X#Y`) are never eaten; `![[embed]]` → plain link.
+    // §28 inverse: `🤖 agent-1` / `⏳ Human` come back as owner/gate arrows (QA-09 D5).
+    const text = convertWikiLinks(
+      stripMetadata(convertOwnerMarkers(clean.replace(/!\[\[/g, '[['), 'obsidian'), 'obsidian'),
+    );
     if (!text) continue;
     calloutIndent = parseIndent(raw); // track last bullet indent for callout attachment
     nodes.push({ text, indent: parseIndent(raw), isTask, isDone, children: [], metadata: {} });

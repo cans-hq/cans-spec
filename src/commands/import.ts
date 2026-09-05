@@ -4,7 +4,7 @@ import type {
   ImportResult, ImportFormat, ImportConflict, MergeStrategy, ExternalNode,
 } from '../types';
 import { resolveWorkspaceRoot, discoverSpecFiles, mkdirp, isFile, dirExists } from '../core/fs';
-import { parseOpml } from '../converters/opml';
+import { convertArrowRefs, parseOpml, parseOpmlTitle } from '../converters/opml';
 import { parseLogseq } from '../converters/logseq';
 import { parseObsidian, stripFrontmatter } from '../converters/obsidian';
 import {
@@ -128,18 +128,20 @@ function sourceFiles(path: string, format: string): string[] | null {
   return null;
 }
 
+/** Map every node's text (depth-first) through `f`, preserving structure. */
+function mapText(nodes: ExternalNode[], f: (t: string) => string): ExternalNode[] {
+  return nodes.map((n) => ({ ...n, text: f(n.text), children: mapText(n.children, f) }));
+}
+
 function parseSource(text: string, format: string): ExternalNode[] {
   if (format === 'opml' || format === 'dynalist') {
-    const nodes = parseOpml(text);
+    let nodes = parseOpml(text);
+    // §28 table inverse: the exported `→ X.md#Y` marker restores as `see: X.md#Y`
+    // (QA-05 F16 / QA-09 D9 — refs must survive the OPML round-trip).
+    nodes = mapText(nodes, (t) => convertArrowRefs(t));
     if (format === 'dynalist') {
       // dynalist exports carry app metadata (^block-ids, #tags, emphasis) inside text
-      const clean = (list: ExternalNode[]): ExternalNode[] =>
-        list.map(n => ({
-          ...n,
-          text: stripMetadata(n.text, 'dynalist'),
-          children: clean(n.children),
-        }));
-      return clean(nodes);
+      nodes = mapText(nodes, (t) => stripMetadata(t, 'dynalist'));
     }
     return nodes;
   }
@@ -278,6 +280,14 @@ function mergeInto(
   return { content: serializeToCans(existingTree), conflicts };
 }
 
+/** §27/§28 (QA-09 D12): OPML/Dynalist exports carry the SOURCE SPEC FILENAME in
+ *  `<head><title>` (e.g. `02-authentication.md`). When the title names a spec
+ *  file it — not the first node's text — drives merge-target matching and
+ *  new-file naming, so re-importing an edited export lands on the original
+ *  file instead of silently forking. Other titles (e.g. "Project Backlog")
+ *  fall back to first-node naming. */
+const SPEC_TITLE_RE = /^\d{2}-[a-z0-9-]+(?:\.md)?$/i;
+
 export async function run(args: string[]): Promise<ImportResult> {
   const opts = parseImportArgs(args);
   const fmt = opts.format.toLowerCase(); // §27 formats are lowercase; accept OPML/Obsidian casing
@@ -331,6 +341,16 @@ export async function run(args: string[]): Promise<ImportResult> {
       continue;
     }
 
+    // §27/§28 (QA-09 D12): use the export's source-filename title as the file
+    // identity when it names a spec file; otherwise first-node naming.
+    let titleBase: string | null = null;
+    if (fmt === 'opml' || fmt === 'dynalist') {
+      const title = parseOpmlTitle(text);
+      if (title !== null && SPEC_TITLE_RE.test(title)) {
+        titleBase = title.replace(/\.md$/i, '');
+      }
+    }
+
     // §27: fenced code blocks under bullets are extracted to overflow files
     // before parsing, so their content survives as files + see: refs (QA-05 F5).
     let overflow: OverflowExtraction[] = [];
@@ -352,7 +372,12 @@ export async function run(args: string[]): Promise<ImportResult> {
     }
     if (imported.length === 0) continue;
 
-    const slug = slugify(imported[0].text);
+    // Merge target: the export's source-file identity when available, else the
+    // first node's text (QA-09 D12 — `02-authentication.opml` must re-match
+    // 02-authentication.md, not slug the first node "sessions" into a fork).
+    const slug = titleBase !== null
+      ? slugify(titleBase.replace(/^\d{2}-/, ''))
+      : slugify(imported[0].text);
     if (slug === '') continue;
 
     // Same-slug spec already present → merge; otherwise a new NN-slug.md file.
@@ -381,7 +406,11 @@ export async function run(args: string[]): Promise<ImportResult> {
       continue;
     }
 
-    const relName = `${String(nextNum).padStart(2, '0')}-${slug}.md`;
+    // New file: preserve the source spec's NN-name identity when the export
+    // carries it (QA-09 D12/D4), else the next free NN-first-node-slug.md.
+    const relName = titleBase !== null
+      ? `${titleBase}.md`
+      : `${String(nextNum).padStart(2, '0')}-${slug}.md`;
     const absTarget = join(workspace, relName);
 
     const cansText = canonicalizeRefTargets(serializeToCans(imported));
@@ -396,7 +425,7 @@ export async function run(args: string[]): Promise<ImportResult> {
     }
     newFiles.push(relName);
     for (const ovf of overflow) newFiles.push(ovf.overflowFile);
-    nextNum++;
+    if (titleBase === null) nextNum++;
   }
 
   return {

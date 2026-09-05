@@ -4,14 +4,16 @@ import { flattenNodes } from './outline';
 /** Overflow checks: code fences, tables, over-long nodes. All errors.
  *  §18: `force_file_for` lists the content categories forced into files —
  *  `code_block` gates code-fence flags, `table` gates table flags. Empty list
- *  = nothing forced = no content-type flags. Node-length always applies. */
+ *  = nothing forced = no content-type flags; null (deleted key) = same.
+ *  §18 delete-key semantics: `max_node_chars` null (deleted) → the char-length
+ *  check is OFF — skipped entirely, never compared against null. */
 export function checkOverflow(
   nodes: OutlineNode[],
   file: string,
   rules: OverflowRules,
 ): Issue[] {
   const issues: Issue[] = [];
-  const forceSet = new Set(rules.force_file_for);
+  const forceSet = new Set(rules.force_file_for ?? []);
 
   const walk = (list: OutlineNode[]): void => {
     for (const node of list) {
@@ -33,7 +35,7 @@ export function checkOverflow(
           message: 'table detected — extract to file and reference via see:',
         });
       }
-      if (node.text.length > rules.max_node_chars) {
+      if (rules.max_node_chars !== null && node.text.length > rules.max_node_chars) {
         issues.push({
           file,
           line: node.line,

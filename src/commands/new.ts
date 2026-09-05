@@ -10,14 +10,22 @@ async function readTemplate(name: string): Promise<string> {
 }
 
 /** lowercase → strip double quotes → non-alphanumeric runs → hyphens → trim hyphens.
- *  Apostrophes become hyphens ("What's Next?" → "what-s-next"). */
+ *  Apostrophes become hyphens ("What's Next?" → "what-s-next").
+ *  §23/§37: the slug is capped at 80 chars (truncating cleanly, without
+ *  trailing dashes) so the derived `_adr/NNN-<slug>.md` / `_tasks/<slug>.md`
+ *  filename is always filesystem-safe — a 300-char title is user input to
+ *  normalize, never an ENAMETOOLONG internal error (QA-08 A5). */
+export const MAX_SLUG_LENGTH = 80;
+
 export function slugify(input: string): string {
-  return input
+  const full = input
     .trim()
     .toLowerCase()
     .replace(/["“”]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+  if (full.length <= MAX_SLUG_LENGTH) return full;
+  return full.slice(0, MAX_SLUG_LENGTH).replace(/-+$/g, '');
 }
 
 /** Next ADR number: max existing NNN in _adr + 1 (starts at 1). */

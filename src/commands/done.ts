@@ -79,6 +79,15 @@ export async function run(args: string[]): Promise<DoneResult> {
     return failResult(name, 'no cans workspace found — run `cans init` first');
   }
 
+  // §24: task names resolve ONLY inside _tasks/. A name carrying path
+  // separators or traversal segments can never name a task there — refuse
+  // with the standard not-found error BEFORE any gate/read/rename logic
+  // (QA-08 A13/A14: no gate evaluation outside _tasks/, no raw ENOENT, nothing
+  // moved, exit 1).
+  if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+    return failResult(name, `task "${name}" not found in _tasks/ — run \`cans status\` to list active tasks`);
+  }
+
   const taskFile = join(workspace, '_tasks', `${name}.md`);
   if (!isFile(taskFile)) {
     // Distinguish "already archived" from "never existed" (§24: the archive is
@@ -93,9 +102,11 @@ export async function run(args: string[]): Promise<DoneResult> {
     return failResult(name, `task "${name}" not found in _tasks/ — run \`cans status\` to list active tasks`);
   }
 
+  let taskNodes: OutlineNode[] = [];
   let flat: OutlineNode[] = [];
   try {
-    flat = flattenNodes(parseOutline(await Bun.file(taskFile).text(), taskFile));
+    taskNodes = parseOutline(await Bun.file(taskFile).text(), `_tasks/${name}.md`);
+    flat = flattenNodes(taskNodes);
   } catch {
     return failResult(name, `cannot parse _tasks/${name}.md — check for tab indentation or malformed content`);
   }
@@ -142,7 +153,16 @@ export async function run(args: string[]): Promise<DoneResult> {
 
   // §24: "Updates back-pointers if needed." Reuse the check engine's --fix pass
   // (strictly ref-by comment rewrites in spec files) and report the count.
-  const fixRun = await checkWorkspace(workspace, { ...ZERO_CHECK_ARGS, fix: true });
+  // The task has just been renamed into _archive/, so its parsed nodes are
+  // injected under their former _tasks/<name>.md identity — refs held by the
+  // archived task still earn their targets' ref-by marks (QA-04 #10). The pass
+  // is gated on §18 references.back_pointers inside checkWorkspace (off →
+  // zero writes, backPointersUpdated 0).
+  const fixRun = await checkWorkspace(workspace, {
+    ...ZERO_CHECK_ARGS,
+    fix: true,
+    extraReferrer: { key: `_tasks/${name}.md`, nodes: taskNodes },
+  });
 
   return {
     ok: true, command: 'done', exitCode: 0, change: name,

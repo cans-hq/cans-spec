@@ -20,7 +20,10 @@ const redundancyRules = defaultRules().redundancy;
 describe('fs discovery', () => {
   test('discovers folder-mode spec files as <dir>/index.md', () => {
     const files = discoverSpecFiles(fixturePath('folder-project'));
-    expect(files).toEqual(['02-authentication/index.md', '04-api/index.md', '06-operations/index.md']);
+    // 03-data/index.md added: §12 has no missing-file exemption, so the §34
+    // folder fixture must resolve 06-operations' `see: 03-data.md` (same
+    // fixture self-consistency fix as flat-project/03-data.md).
+    expect(files).toEqual(['02-authentication/index.md', '03-data/index.md', '04-api/index.md', '06-operations/index.md']);
   });
 
   test('resolves flat ref target to flat file', () => {
@@ -332,7 +335,7 @@ describe('cans check --fix and folder mode', () => {
       const result = await run([]);
       expect(result.ok).toBe(true);
       expect(result.errorCount).toBe(0);
-      expect(result.files).toBe(3);
+      expect(result.files).toBe(4); // includes 03-data/index.md (fixture self-consistency)
       expect(result.refs.broken).toBe(0);
     } finally {
       cleanTmpDir(tmp);
@@ -478,7 +481,9 @@ describe('cans import / export', () => {
       const { run } = await import('../src/commands/export');
       const result = await run(['obsidian', '--from', fixturePath('flat-project'), '--vault', vault]);
       expect(result.ok).toBe(true);
-      expect(result.filesExported).toBe(3);
+      // 4 spec files: 02-authentication, 03-data (fixture self-consistency, §34
+      // — 06-operations.md holds `see: 03-data.md`), 04-api, 06-operations.
+      expect(result.filesExported).toBe(4);
       const api = await Bun.file(join(vault, 'obsidian', '04-api.md')).text();
       expect(api).toContain('[[02-authentication#Sessions]]');
       expect(api).not.toContain('see 02-authentication.md');
@@ -494,7 +499,8 @@ describe('cans import / export', () => {
       const { run } = await import('../src/commands/export');
       const result = await run(['logseq', '--from', fixturePath('flat-project'), '--vault', vault, '--dry-run']);
       expect(result.ok).toBe(true);
-      expect(result.filesExported).toBe(3);
+      // 4 spec files — includes 03-data.md (see obsidian-export comment above).
+      expect(result.filesExported).toBe(4);
       expect(existsSync(vault)).toBe(false);
     } finally {
       cleanTmpDir(tmp);

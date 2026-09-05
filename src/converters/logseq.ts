@@ -1,15 +1,26 @@
 import type { ExternalNode } from '../types';
-import { convertWikiLinks, parseCheckbox, parseIndent, reverseWikiLinks, stripMetadata } from './shared';
+import {
+  convertOwnerMarkers, convertWikiLinks, logseqSlashLinks, parseCheckbox,
+  parseIndent, reverseWikiLinks, stripMetadata,
+} from './shared';
 
 /** Logseq page → flat ExternalNode list (document order; hierarchy via `indent`).
- *  Drops pure `key:: value` property lines, strips `((block-refs))`, `[[wiki]]` → `see:`, TODO/DONE → isTask/isDone. */
+ *  Drops pure `key:: value` property lines (keys may contain spaces — only `::`
+ *  marks the property, QA-08 E11), strips `((block-refs))`, `[[wiki]]` → `see:`
+ *  (with `[[X/Y]]` → `see: X.md#Y` per §28, QA-09 D8), TODO/DONE → isTask/isDone,
+ *  `⏳ Human` → `← @human` (QA-09 D5). */
 export function parseLogseq(source: string): ExternalNode[] {
   const nodes: ExternalNode[] = [];
   for (const raw of source.split(/\r?\n/)) {
     if (!/^\s*-\s/.test(raw)) continue; // logseq pages are bullets only
     const { isTask, isDone, clean } = parseCheckbox(raw);
-    if (/^[\w-]+::/.test(clean)) continue; // pure property line → drop
-    const text = stripMetadata(convertWikiLinks(clean.replace(/\(\([\w-]+\)\)/g, '')), 'logseq');
+    if (/^[\w\s-]+::/.test(clean)) continue; // pure property line → drop
+    const text = stripMetadata(
+      convertWikiLinks(
+        convertOwnerMarkers(logseqSlashLinks(clean.replace(/\(\([\w-]+\)\)/g, '')), 'logseq'),
+      ),
+      'logseq',
+    );
     if (!text) continue;
     nodes.push({ text, indent: parseIndent(raw), isTask, isDone, children: [], metadata: {} });
   }

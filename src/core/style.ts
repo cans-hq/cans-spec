@@ -6,7 +6,10 @@ import type { OutlineNode, Issue, StyleRules } from '../types';
  *  folder-project, init templates) structurally trigger the ≤N-leaf rule and the
  *  frozen baselines pin `errorCount === 0` / `ok === true` on them — so style
  *  findings stay `warning`-level. Changing test fixtures is out of bounds
- *  (test/ is frozen). */
+ *  (test/ is frozen).
+ *  §18 delete-key semantics: a style rule whose key is null/false no longer
+ *  fires (deleted force_nested_above / force_sibling_below / prefer or
+ *  shared_prefix_detection: false skip their rules entirely). */
 export function checkStyle(
   nodes: OutlineNode[],
   file: string,
@@ -18,7 +21,8 @@ export function checkStyle(
     for (const node of list) {
       const children = node.children;
 
-      if (rules.shared_prefix_detection && children.length >= rules.force_nested_above) {
+      const nestedAbove = rules.force_nested_above;
+      if (rules.shared_prefix_detection && nestedAbove !== null && children.length >= nestedAbove) {
         const groups = new Map<string, number>();
         for (const child of children) {
           const word = child.text.split(/\s+/)[0] ?? '';
@@ -26,7 +30,7 @@ export function checkStyle(
           groups.set(word, (groups.get(word) ?? 0) + 1);
         }
         for (const [word, size] of groups) {
-          if (size >= rules.force_nested_above) {
+          if (size >= nestedAbove) {
             issues.push({
               file,
               line: node.line,
@@ -43,10 +47,12 @@ export function checkStyle(
       // exempt — a root concept with few subtopics is the normal spec shape,
       // not unnecessary nesting. A single child is reported by the structure
       // engine ("exactly 1 child"); don't double-report it here.
+      const siblingBelow = rules.force_sibling_below;
       if (
+        siblingBelow !== null &&
         node.indent > 0 &&
         children.length >= 2 &&
-        children.length <= rules.force_sibling_below &&
+        children.length <= siblingBelow &&
         children.every((c) => c.children.length === 0)
       ) {
         issues.push({
