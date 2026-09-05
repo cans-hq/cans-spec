@@ -1,16 +1,35 @@
 {
   "name": "cans",
   "version": "0.1.0",
-  "description": "Canonical Agent-Native Spec",
+  "description": "Canonical Agent-Native Spec — the outline is the spec, the state, and the task board",
   "bin": { "cans": "./src/cli.ts" },
   "type": "module",
   "engines": { "bun": ">=1.0.0" },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
-    "prepublishOnly": "bun test"
+    "prepublishOnly": "bun run typecheck && bun test"
   },
   "files": ["src/", "templates/", "README.md", "LICENSE"],
+  "keywords": [
+    "cans",
+    "spec",
+    "spec-driven",
+    "agents",
+    "agent-native",
+    "ai",
+    "markdown",
+    "outline"
+  ],
+  "author": "cans-hq",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cans-hq/cans-spec.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cans-hq/cans-spec/issues"
+  },
+  "homepage": "https://github.com/cans-hq/cans-spec#readme",
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.5.0",
