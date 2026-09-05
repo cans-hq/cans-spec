@@ -1,6 +1,6 @@
-import { join } from 'path';
+import { join, basename } from 'path';
 import type { BudgetReadResult, BudgetWriteResult, OutlineNode, Rules } from '../types';
-import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists, isFile } from '../core/fs';
+import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists } from '../core/fs';
 import { parseOutline } from '../core/outline';
 import { loadRules } from '../core/rules';
 import { buildRefGraph } from '../core/refs';
@@ -172,17 +172,32 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
   const graph = buildRefGraph(files, workspace);
 
   if (opts.mode === 'read') {
-    // --change: center the plan on an active task file.
+    // §26 step 3: active tasks mentioning the concept join the plan (score 80).
+    const activeTaskRels = dirExists(join(workspace, '_tasks'))
+      ? discoverActiveTasks(workspace)
+      : [];
+
+    // --change: center the plan on an active task file. A name that matches no
+    // active task is a user-correctable failure (§19: exit 1, ok:false; §37:
+    // name the real cause + what to do) — never silently ignored (QA-14 F6).
     let taskFile: string | undefined;
     if (opts.change !== null) {
-      const p = join(workspace, '_tasks', `${opts.change}.md`);
-      if (isFile(p)) taskFile = p;
+      const rel = join('_tasks', `${opts.change}.md`);
+      if (activeTaskRels.includes(rel)) {
+        taskFile = join(workspace, rel);
+      } else {
+        const names = activeTaskRels.map(t => basename(t, '.md'));
+        const listing = names.length > 0
+          ? `Active tasks: ${names.join(', ')}.`
+          : 'No active tasks in _tasks/.';
+        return readFail(
+          opts.concept,
+          `Unknown change: ${opts.change} — no task file _tasks/${opts.change}.md\n  ${listing} Create it with \`cans new task ${opts.change}\`.`,
+        );
+      }
     }
 
-    // §26 step 3: active tasks mentioning the concept join the plan (score 80).
-    const activeTaskPaths = dirExists(join(workspace, '_tasks'))
-      ? discoverActiveTasks(workspace).map(rel => join(workspace, rel))
-      : [];
+    const activeTaskPaths = activeTaskRels.map(rel => join(workspace, rel));
 
     const result = buildReadPlan(
       opts.concept,
