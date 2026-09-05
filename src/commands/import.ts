@@ -20,6 +20,8 @@ export interface ImportArgs {
   mergeStrategy: MergeStrategy;
   /** Raw `--merge-strategy` value as given, so invalid enums can be rejected (QA-05 F10). */
   mergeStrategyRaw: string | null;
+  /** First `--flag=value` token seen, so the equals form can be rejected (§20, QA-14 F3). */
+  invalidFlagForm: string | null;
   json: boolean;
 }
 
@@ -32,9 +34,16 @@ export function parseImportArgs(args: string[]): ImportArgs {
   let dryRun = false;
   let mergeStrategy: MergeStrategy = 'cans-wins';
   let mergeStrategyRaw: string | null = null;
+  let invalidFlagForm: string | null = null;
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    // §20: `--flag value` only — the equals form is rejected like on every other
+    // command, never silently defaulted (QA-14 F3 / QA-06 #4).
+    if (a.startsWith('--') && a.includes('=')) {
+      if (invalidFlagForm === null) invalidFlagForm = a;
+      continue;
+    }
     if (a === '--out') {
       out = args[i + 1] ?? null;
     } else if (a === '--dry-run') {
@@ -56,6 +65,7 @@ export function parseImportArgs(args: string[]): ImportArgs {
     dryRun,
     mergeStrategy,
     mergeStrategyRaw,
+    invalidFlagForm,
     json,
   };
 }
@@ -98,18 +108,22 @@ function normKey(text: string): string {
 }
 
 /**
- * Near-match: same words (len > 1) with ≥ 0.75 overlap.
- * Threshold note: the pasted patch said 0.8, but the QA-05 F8 flagship conflict
- * pair — "Expire after 24 hours" vs "Expire after 48 hours" — shares 3 of 4
- * words (0.75) and MUST be flagged, so the threshold is tuned to 0.75.
+ * Near-match: same words (len > 1) with ≥ minOverlap word overlap.
+ * Default 0.75 — the QA-05 F8 flagship conflict pair — "Expire after 24 hours"
+ * vs "Expire after 48 hours" — shares 3 of 4 words (0.75) and MUST be flagged.
+ * The positional counterpart check (QA-14 F2) passes 0.5: same parent + same
+ * sibling slot is strong evidence of correspondence, so a reworded node that
+ * picked up extra words ("Expire after 24 hours" vs "Sessions expire after
+ * 24h", overlap 0.5) still pairs, while unrelated texts (overlap 0) stay
+ * genuinely new.
  */
-function isNearMatch(a: string, b: string): boolean {
+function isNearMatch(a: string, b: string, minOverlap = 0.75): boolean {
   const wa = new Set(normKey(a).split(' ').filter(w => w.length > 1));
   const wb = new Set(normKey(b).split(' ').filter(w => w.length > 1));
   if (wa.size === 0 || wb.size === 0) return false;
   let shared = 0;
   for (const w of wa) if (wb.has(w)) shared++;
-  return shared / Math.max(wa.size, wb.size) >= 0.75;
+  return shared / Math.max(wa.size, wb.size) >= minOverlap;
 }
 
 /** Source files to import: a single file, or every supported file inside a directory. */
@@ -216,7 +230,8 @@ function mergeInto(
   let newEntryLine = existingText.split(/\r?\n/).length; // approx. line for inserted content
 
   const mergeNodes = (importNodes: ExternalNode[], targetChildren: ExternalNode[]): void => {
-    for (const imp of importNodes) {
+    for (let i = 0; i < importNodes.length; i++) {
+      const imp = importNodes[i]!;
       const key = normKey(imp.text);
       const exact = key !== '' ? existingIndex.get(key) : undefined;
 
@@ -252,6 +267,25 @@ function mergeInto(
         continue;
       }
 
+      // Positional counterpart (QA-14 F2): under the SAME matched parent, the
+      // imported node's own sibling slot holding a textually-related but
+      // diverged node is the same concept re-imported with different wording —
+      // a conflict per §35, never a silent duplicate sibling appended.
+      const counterpart = targetChildren[i];
+      if (counterpart !== undefined && isNearMatch(counterpart.text, imp.text, 0.5)) {
+        conflicts.push({
+          file: relName,
+          line: lineOfKey.get(normKey(counterpart.text)) ?? 0,
+          cansVersion: counterpart.text,
+          importVersion: imp.text,
+          resolution: strategy,
+        });
+        if (strategy === 'import-wins') counterpart.text = imp.text;
+        // cans-wins / ask: keep the CANS version
+        mergeNodes(imp.children, counterpart.children);
+        continue;
+      }
+
       if (strategy === 'ask') {
         // ask = report, don't merge: the would-be addition is surfaced too,
         // otherwise ask would silently drop new content with no trace.
@@ -280,6 +314,28 @@ function mergeInto(
   return { content: serializeToCans(existingTree), conflicts };
 }
 
+/** Merge-target fallback (QA-14 F2): when no spec file matches the imported
+ *  slug, the file already holding the FIRST imported node's text (exact
+ *  normalized match anywhere in its outline) is the merge target — a diverged
+ *  re-import must land on the existing outline, not silently fork a duplicate
+ *  home. First match in `discoverSpecFiles` order (deterministic). */
+async function findExistingByRootText(targetDir: string, imported: ExternalNode[]): Promise<string | null> {
+  const rootKey = normKey(imported[0].text);
+  if (rootKey === '') return null;
+  for (const rel of discoverSpecFiles(targetDir)) {
+    let text = '';
+    try {
+      text = await Bun.file(join(targetDir, rel)).text();
+    } catch {
+      continue;
+    }
+    const hasRoot = (nodes: ExternalNode[]): boolean =>
+      nodes.some(n => normKey(n.text) === rootKey || hasRoot(n.children));
+    if (hasRoot(parseFromCans(text))) return rel;
+  }
+  return null;
+}
+
 /** §27/§28 (QA-09 D12): OPML/Dynalist exports carry the SOURCE SPEC FILENAME in
  *  `<head><title>` (e.g. `02-authentication.md`). When the title names a spec
  *  file it — not the first node's text — drives merge-target matching and
@@ -291,6 +347,14 @@ const SPEC_TITLE_RE = /^\d{2}-[a-z0-9-]+(?:\.md)?$/i;
 export async function run(args: string[]): Promise<ImportResult> {
   const opts = parseImportArgs(args);
   const fmt = opts.format.toLowerCase(); // §27 formats are lowercase; accept OPML/Obsidian casing
+
+  // §20: the equals form is rejected before anything else — silently behaving
+  // as the default strategy is worse than an error (QA-14 F3 / QA-06 #4).
+  if (opts.invalidFlagForm !== null) {
+    const flag = opts.invalidFlagForm.slice(2).split('=')[0];
+    return fail(fmt, opts.path,
+      `invalid flag form "${opts.invalidFlagForm}" — use "--${flag} <value>"`);
+  }
 
   // §37/§27: invalid enum values are rejected, never silently defaulted (QA-05 F10).
   if (opts.mergeStrategyRaw !== null && !(STRATEGIES as readonly string[]).includes(opts.mergeStrategyRaw)) {
@@ -380,8 +444,13 @@ export async function run(args: string[]): Promise<ImportResult> {
       : slugify(imported[0].text);
     if (slug === '') continue;
 
-    // Same-slug spec already present → merge; otherwise a new NN-slug.md file.
-    const existingRel = findExistingBySlug(workspace, slug);
+    // Same-slug spec already present → merge; otherwise fall back to the file
+    // already holding the first imported node's text (QA-14 F2 — a diverged
+    // re-import must land on the existing outline, not fork a duplicate home);
+    // otherwise a new NN-slug.md file.
+    const existingRel =
+      findExistingBySlug(workspace, slug) ??
+      (await findExistingByRootText(workspace, imported));
     if (existingRel !== null) {
       const absTarget = join(workspace, existingRel);
       const outcome = mergeInto(
