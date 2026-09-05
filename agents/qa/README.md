@@ -104,3 +104,36 @@ Both round-1 BLOCKERs confirmed fixed (QA-05 F8 import merge corruption, false-s
 ## What held up (round 2)
 
 Round-1 BLOCKER fixes verified green; unknown-command/typo guidance 16/16 (QA-10 B); flag-interaction matrix clean 11/11 (QA-10 E); lifecycle chain 16/17 PASS; `check --fix` converges to a stable fixpoint and is idempotent; budget write/read state machine coherent (10/12); export→import round-trips preserve hierarchy for opml/dynalist; fresh imports of all three formats still exact; no data-loss BLOCKER found anywhere in round 2.
+
+---
+
+# Round 3 (2026-09-05, npm package `cans-spec@0.1.0`)
+
+Method unchanged: manual blackbox QA, shell only, no scripting, no `src/`/`node_modules`/`test/*.test.ts` reads, no fixes.
+**Artifact under test is new: the npm-published package** (`cans-spec@0.1.0`, global binary `/home/z/.npm-global/bin/cans`), i.e. exactly what `npm install -g cans-spec` users execute — not repo source. Env: Bun 1.3.14, Node v24.19.0, Linux.
+Four parallel agents, disjoint scopes (each owns its commands' `--json`/exit-code contracts, so no separate CLI-surface agent was needed). Reports QA-11..QA-14.
+
+| Report | Area | Tests | Result |
+|---|---|---|---|
+| QA-11-init-new-done-status-round3.md | init/new/done/status lifecycle, help/version, JSON contracts for these | ~75 probes | 0 FAIL · 4 DEV (minor) · ~8 UNDOC |
+| QA-12-check-structure-style-refs-round3.md | check structure/style/refs engines, --fix, --strict, --refs-only, flat-vs-folder | ~55 | 0 FAIL · 4 DEV (minor) · 3 STILL-BROKEN (minor) · 8 UNDOC |
+| QA-13-check-redundancy-overflow-rules-round3.md | check redundancy/overflow engines + `_rules.yaml` config system | 63 | 53 PASS · 9 FAIL (2 MAJOR) · 1 DEV |
+| QA-14-interop-budget-round3.md | import/export interop, merge strategies, round-trips, budget read/write | ~64 | 52 PASS · 7 FAIL (1 MAJOR) · 4 DEV |
+
+Totals: ~256 probes — 0 BLOCKER, 3 MAJOR. Severity profile is the best of all three rounds.
+
+## Round-3 headline: the npm artifact is ahead of the repo docs
+
+The published 0.1.0 contains fix waves that landed after the docs were last touched. Verified FIXED on npm (previously open in rounds 1–2): backward in-span missing-ref downgrade gone (QA-02 F2), `check` unknown-flag swallowing gone (QA-06 M3), `init --tool claude` no longer manufactures a failing workspace (CLAUDE.md excluded), Obsidian callouts + post-fence content preserved, logseq `[[X/Y]]` round-trip refs fixed, `--merge-strategy ask` reports conflicts, `--limit abc/-5` rejected, active `_adr/` exported, OPML/obsidian round-trip owner+gate restoration, §18 delete-key-disables-check implemented. Docs-side residuals now: §35 JSON fixtures no longer key-exact (`done` adds `gateDetails`, `status` adds `unclaimed`), §36 help text drift, §36 clean-summary `✓` prefix, §34 synonym-head wording, README `--strict` "warnings become errors" is exit-only.
+
+## Top issues new/still-open (round 3)
+
+1. **MAJOR — partial `_rules.yaml` silently disables every unlisted check** (QA-13 F1): a config containing only `redundancy: {word_frequency_threshold: 2}` turns off structure/style/refs/overflow (Rules echo prints `off`, green report, exit 0). §18 "only listed keys override" violated; same for empty and unknown-key files. Over-applies the (otherwise working) delete-key contract. npm users should ship the untouched scaffolded `_rules.yaml` until fixed.
+2. **MAJOR — inline-object synonyms crash** (QA-13 F2): `synonyms: {vehicle: [car, auto]}` → `✗ Internal error: {} is not iterable`, exit 2. §18 documents inline objects.
+3. **MAJOR — logseq import drops any line containing an inline `key:: value` property** (QA-14 F1): cans' own exported `agent-1:: assigned` form vanishes on re-import, silent, exit 0 — breaks cans' own §28 round-trip.
+4. STILL-BROKEN minors: overflow-target chaining unenforced (QA-03 #10), import equals-form `--merge-strategy=ask` silently defaults (QA-06 #4), style/single-child ⚠ vs docs ✗ (QA-02 F7), all-leaf collapse-group condition (QA-02 F6), `export --from .` 0-file + stale outputs (QA-05 F15 residual), parse-error path printed twice (QA-02 F14).
+5. New minors: cans-wins conflict detection is similarity-heuristic (divergent edit re-imports as duplicate sibling, `conflicts:[]`); `budget read --change <unknown>` silently ignored; `new task` duplicate-of-pristine-template returns ok with no write; `init --force` clobbers user-edited spec files per §21's letter while now protecting `_collab/` (destructive scope undocumented); §16 content knobs (`tbd_allowed`, `max_tbd_per_file`) inert.
+
+## What held up (round 3)
+
+Entire lifecycle area (init idempotency + skeleton fidelity + same-day `-2` archive suffix + truthful done diagnostics + real status filters); check engine contract on structure/style/refs incl. thresholds and boundary exactness (120/121 chars, 5/6 prefix siblings, 70.0% overlap, word ×4); `--fix` back-pointer-only + idempotent (md5-verified); exit-code triad; budget area fully green (§26 scoring/election/--change 1-hop/--limit greedy/ceil(chars/3.5)/config flow, §35 shapes key-for-key); OPML/obsidian round-trips preserve refs, owners, gates; no BLOCKER, no data loss found on the npm artifact. Perf: workspaces in the 4–8 file range respond in tens of ms (§40 budget), consistent with round 2.
