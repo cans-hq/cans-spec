@@ -1,5 +1,5 @@
 {
-  "name": "cans",
+  "name": "cans-spec",
   "version": "0.1.0",
   "description": "Canonical Agent-Native Spec — the outline is the spec, the state, and the task board",
   "bin": { "cans": "./src/cli.ts" },

@@ -1405,7 +1405,7 @@ Never: stack traces for expected errors, "An unexpected error occurred", error c
 
 No build step. No `dist/`. No `tsc`. Shebang: `#!/usr/bin/env bun`. Source IS distribution.
 
-Install: `npm install -g cans` or `bun install -g cans`.
+Install: `npm install -g cans-spec` or `bun install -g cans-spec` (bin: `cans`).
 
 CI: GitHub Actions → `oven-sh/setup-bun@v2` → `bun install` → `bun test`. Nothing else.
 

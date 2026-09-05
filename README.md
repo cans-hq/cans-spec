@@ -169,11 +169,27 @@ This is the most important section.
 
 ## Install
 
-Requires [Bun](https://bun.sh) ≥ 1.0. No build step. Source IS distribution.
+Requires [Bun](https://bun.sh) ≥ 1.0 on your PATH (the CLI runs on the Bun runtime). No build step. Source IS distribution.
+
+**npm**
 
 ```bash
-bun install -g cans
+npm install -g cans-spec
 ```
+
+**Bun**
+
+```bash
+bun install -g cans-spec
+```
+
+**One-shot, no install**
+
+```bash
+npx -p cans-spec cans init
+```
+
+All three give you the same `cans` command:
 
 ```bash
 cd your-project
@@ -181,6 +197,17 @@ cans init
 ```
 
 Done. You have a `cans/` directory. Start writing bullets.
+
+### How to use it
+
+1. **Scaffold** — `cans init` creates `cans/` with 7 spec files, `_adr/`, `_tasks/`, `_collab/`. Use `cans init --flat` for a flat layout, `--bare` for the minimal skeleton, `--tool claude` to also emit `CLAUDE.md`.
+2. **Write your spec as dense bullets** — hierarchy is indentation, cross-links are `see:` references. The outline is the spec; there is nothing else to learn.
+3. **Check health** — `cans check` lints structure, broken refs, deep hops, redundancy, style, and overflow. `cans check --fix` repairs back-pointers. Exit code 0 means clean.
+4. **Track work** — `cans new task add-dark-mode` creates a task, `cans status` shows the board, `cans done add-dark-mode` archives it (it blocks on `← @human` gates until a human signs off).
+5. **Mind the budget** — `cans budget read <concept>` gives your agent a token-budgeted reading plan; `cans budget write <concept>` says what it may edit.
+6. **Interoperate** — `cans export logseq --from cans` and `cans import logseq <path>` round-trip OPML / Dynalist, Logseq, and Obsidian. State lives in git; the transport layer is a plain text format your tools already read.
+
+Everything else — ADRs, ownership arrows (`← agent-1`, `← @human`), rules in `_rules.yaml` — is documented inline by the scaffolded files.
 
 ---
 
