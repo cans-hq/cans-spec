@@ -2,6 +2,7 @@
 
 Task ID: 3-f | Agent: qa-cli-surface | Repo: cans-spec @ impl/full-engines, commit 54b0b52
 Date: 2026-09-03 | Method: manual shell only, blackbox (no src/, no tests read)
+Resolution: verified 2026-09-04 on fix/qa-red-tests-green @ e628ff2 — 8/13 findings RESOLVED, 3 PARTIAL, 2 DOC-GAP, 0 OPEN; mapped suite qa-06-cli-surface 16/16 green.
 
 ---
 
@@ -156,6 +157,8 @@ Verdicts: PASS / FAIL / DEVIATION / UNDOCUMENTED. "exit" = CLI exit code.
 Severity scale: blocker / major / minor / ux.
 
 1. **MAJOR — `done` misdiagnoses every failure as "check failed".**
+   > **Status: RESOLVED** — Blackbox @ e628ff2: bare `done` → "✗ usage: cans done <task-name>"; unknown/archived name → "✗ task … not found in _tasks/ — run cans status to list active tasks"; no workspace → "✗ no cans workspace found — run cans init first"; a genuinely blocked `done` names the unchecked @human gate. The false "BLOCKED: cans check failed" no longer reproduces in any variant (also covered green by QA-04 red tests, finding 4 ×2).
+
    Repro: `cans done` (no name), `cans done nonexistent`, `done <archived>`, `done … --skip-check`,
    or any `done` in a dir without `cans/` → all print `✗ BLOCKED: cans check failed (--skip-check
    to override)`, exit 1. Expected (§37): the real cause ("no task name given", "task not found",
@@ -163,6 +166,8 @@ Severity scale: blocker / major / minor / ux.
    the printed remedy (`--skip-check`) changes nothing (byte-identical output).
 
 2. **MAJOR — Missing required args produce blank-filled success-shaped output or an empty error.**
+   > **Status: RESOLVED** — Red tests finding 2a/2b/2c green; blackbox: `budget read`/`budget write` → "✗ usage: cans budget … <concept>" + example line, `import`/`import obsidian` → "✗ usage: cans import <format> <path>" + valid formats, `export` → "✗ usage: cans export <format>" + formats, `new` → "✗ usage: cans new <adr|task> <name>" — all exit 1, no blank-filled success shapes remain.
+
    `budget read` → `Reading plan for: ` (exit 1); `budget write` → `Writing scope for: `;
    `import [format]` → `Imported  from `; `export` → `Exported  →  (0 files)`; `new`/`new adr`/
    `new task` → literally `✗ ` with nothing after it. All exit 1 with stderr empty. Violates §37
@@ -170,13 +175,18 @@ Severity scale: blocker / major / minor / ux.
    wrong; the output looks like success with blanks.
 
 3. **MAJOR — Unknown command / no args / bad format: bare JSON, no message, wrong stream+mode.**
+   > **Status: RESOLVED** — Red tests finding 3a/3b green; blackbox: `cans frobnicate` → "✗ unknown command "frobnicate" — run cans help" (human text, exit 1), no args → "✗ no command given — run cans help", `import csv …` → "✗ unknown format "csv" — valid formats: opml, dynalist, logseq, obsidian"; §41 removed commands get the same guidance; `--json` failure payloads now carry a populated `error` field (verified on done/status/new/budget read).
+
    `cans frobnicate`, `cans` (no args), all §41 removed commands, `cans import csv …` → stdout:
    `{"ok":false,"command":"<name>","exitCode":1}`. No human hint ("Unknown command, run `cans
    help`"), and JSON is emitted although `--json` was not passed (contradicts §19 default human
    text). Same bare-JSON shape (no message field) on every `--json` error path — agents can detect
    failure but never the reason.
 
-4. **MAJOR — Arg parser silently swallows malformed/unknown flags** (§20 says these forms are not
+4. **MAJOR — Arg parser silently swallows malformed/unknown flags**
+   > **Status: PARTIAL** — Red tests 4a/4b+4c/4d green: `budget read sessions --limit=10` → "✗ invalid flag form "--limit=10" — use "--limit <value>"" (exit 1); `status --bogus`/`status -j` exit 1 as "unknown flag …" (correct in the JSON `error` field — the human renderer still mislabels any failed status as "No cans workspace found"); `check -fs` → real error via the positional file-match check; missing `--limit` value rejected. Remainder: `import` still silently swallows the equals form — `import obsidian <f> --merge-strategy=bogus` proceeds with the default strategy at exit 0 with no signal, while the space form properly errors with the valid list (row-14 repro).
+
+   (§20 says these forms are not
    supported; actual behavior is silent ignore, not rejection):
    - `--flag=value` ignored: `budget read sessions --limit=10` returns the *unlimited* plan, exit 0;
    - unknown flags ignored: `status --bogus` runs normally, exit 0;
@@ -186,7 +196,10 @@ Severity scale: blocker / major / minor / ux.
    Risk: typos (`--jsoo`, `--strct`) silently degrade behavior with exit 0. Expected: error per
    §20/§37, or at minimum a warning.
 
-5. **MAJOR — `new` appends flags into the created name.** `cans new task add-dark-mode --json`
+5. **MAJOR — `new` appends flags into the created name.**
+   > **Status: RESOLVED** — Blackbox: `new task add-dark-mode --json` creates `_tasks/add-dark-mode.md` with clean §35 JSON; `new adr "Use postgres" --json` creates `001-use-postgres.md`; `new task --json` with no name exits 1 with JSON "error": "empty slug from "" — provide a non-empty title" and creates nothing. Also covered green by QA-04 red tests (finding 1 ×3).
+
+   `cans new task add-dark-mode --json`
    creates `_tasks/add-dark-mode-json.md`; `cans new adr "Use postgres" --json` creates
    `_adr/001-use-postgres-json.md`; `cans new task --json` (no name) exits **0** creating
    `_tasks/json.md`. `new` does not parse flags at all — everything after the kind is joined into
@@ -194,6 +207,8 @@ Severity scale: blocker / major / minor / ux.
    unreachable without polluting the name.
 
 6. **MAJOR — No-workspace handling is inconsistent across commands.**
+   > **Status: RESOLVED** — Red tests 6a/6b/6c green; blackbox: `status`, `export opml`, `budget read`, `new task` with no `cans/` all exit 1 with the standard "no cans workspace found — run cans init …" explanation, and `new task foo` no longer auto-vivifies a workspace (no `cans/` created).
+
    - `check`: good message, exit 1 (PASS);
    - `status`: exit 1 (per §25) but prints a success-looking all-zeros status, no explanation;
    - `budget read`: exit 1, success-shaped output, no message;
@@ -203,34 +218,55 @@ Severity scale: blocker / major / minor / ux.
      only `init` should.
    Expected: uniform "no cans workspace found — run `cans init`" + exit 1 (the `check` message).
 
-7. **MINOR — `init` refusal inside a `cans/` directory has a broken message.** §21 requires
+7. **MINOR — `init` refusal inside a `cans/` directory has a broken message.**
+   > **Status: RESOLVED** — Blackbox: `init` with cwd inside `cans/` → "✗ already inside a cans/ workspace — cd to the project root first", exit 1, no nested workspace created; `--json` carries the same text in `error`. Also covered green by QA-01 red tests #3/#8.
+
+   §21 requires
    refusal (behavior correct, exit 1) but the whole output is `Workspace: ` — no root, no reason,
    no fix.
 
-8. **MINOR — Stream asymmetry.** All user-level errors (missing args, unknown command, broken refs,
+8. **MINOR — Stream asymmetry.**
+   > **Status: DOC-GAP** — Behavior verified unchanged and self-consistent: unknown-command, failed-status and blocked-`done` output all land on stdout with empty stderr; only the internal-error path (exit 2) writes stderr. Remainder is documentation only: §19 still does not document the one-stream discipline (docs/ untouched on fix branch).
+
+   All user-level errors (missing args, unknown command, broken refs,
    blocked done) go to **stdout** with empty stderr; only internal errors (EACCES → exit 2) go to
    stderr. Self-consistent for agents (one stream), but undocumented in §19 and unfriendly to
    `2>/dev/null`-style shell hygiene.
 
-9. **MINOR — Malformed workspace entries silently tolerated by `check`.** A directory named
+9. **MINOR — Malformed workspace entries silently tolerated by `check`.**
+   > **Status: PARTIAL** — Red test "finding 9" green: `check --json` now reports an issue naming the `cans/02-authentication.md/` directory (verified), and the mistyped positional `check nope.md` is a real error ("no spec file matches "nope.md"", exit 1). Remainder: a 64-random-byte spec file is still counted as a spec file (orphan warning only, exit 0, no malformed-content complaint).
+
+   A directory named
    `02-authentication.md` (EISDIR case) is skipped without warning (6 files counted vs 7); a binary
    file passes as an empty spec (orphan warning only). Combined with #10: a mistyped positional
    (`check nope.md`) is ignored and the full workspace is checked with exit 0.
 
-10. **MINOR — Doc/CLI inconsistencies (documentation bugs, not code).** §36 help text omits
+10. **MINOR — Doc/CLI inconsistencies (documentation bugs, not code).**
+    > **Status: DOC-GAP** — Implementation side is consistent (help byte-identical to the §36 fixture; CLI accepts `export --json`, re-verified), but the doc bugs persist untouched (no commits to docs/ or README.md on fix branch): §36 help fixture line 1339 still omits `[--json]` on the `export` line while §20 line 491 lists it, and README line 31 still omits `[--out <path>]` from the `import` line.
+
+    §36 help text omits
     `[--json]` on the `export` line while §20:491 lists it (CLI accepts `export --json`);
     README's `import` line omits `[--out <path>]` while §20 and the actual help include it. Help
     itself is byte-identical to the §36 fixture.
 
-11. **UX — No version or help shortcuts.** `--version`/`-v`/`version`/`-h`/`--help` are all
+11. **UX — No version or help shortcuts.**
+    > **Status: RESOLVED** — Red tests 11a/11b green; blackbox: `--help`/`-h` print full help, exit 0; `--version`/`version` print "cans 0.1.0", exit 0. (`-v` remains an unknown command but now with guidance: "✗ unknown command "-v" — run cans help", exit 1.)
+
+    `--version`/`-v`/`version`/`-h`/`--help` are all
     rejected as unknown commands (bare JSON, exit 1). §44 defines versioning but no flag; `-h` /
     `--help` are conventional gaps.
 
-12. **UX — Dry-run verbs.** `import/export --dry-run` print "Imported…/Exported…" and, for
+12. **UX — Dry-run verbs.**
+    > **Status: RESOLVED** — Red test "finding 12" green; blackbox: `export opml --dry-run` → "[dry-run] Would export opml → … (7 files). No files written." and `import … --dry-run` → "[dry-run] Would import … No files written." — no completed-side-effect claims.
+
+    `import/export --dry-run` print "Imported…/Exported…" and, for
     `export`, a file count — reads like a completed side-effect (no mutation actually occurs;
     verified via md5/dir listing).
 
-13. **UX — `--refs-only` naming.** Suppresses only the Redundancy section; Structure/Style/Overflow
+13. **UX — `--refs-only` naming.**
+    > **Status: PARTIAL** — Implementation fixed on this branch (commit e628ff2, "--refs-only scoping"): `check --refs-only` now prints only the References section plus the Rules header and summary — Structure/Style/Overflow are suppressed, so the name matches the behavior. Remainder: §20 still carries no prose defining the flag's semantics (docs untouched on fix branch).
+
+    Suppresses only the Redundancy section; Structure/Style/Overflow
     still reported. Semantics undocumented in §20.
 
 ---
@@ -251,6 +287,7 @@ Severity scale: blocker / major / minor / ux.
 
 ## Verdict summary
 
+Pre-fix (historical):
 - Tests recorded: **68** matrix rows (≈100+ individual CLI invocations across multi-command rows).
 - **PASS: 32 | FAIL: 24 | DEVIATION: 4 (#2, #55, #58, #68) | UNDOCUMENTED: 8 (#4, #8, #22, #23, #50, #56, #61, #66)**.
 - The core plumbing is solid: exit-code triad, JSON fixture fidelity, strict semantics, help text,
@@ -258,3 +295,8 @@ Severity scale: blocker / major / minor / ux.
   §37: silent flag swallowing (#4, #5), blank/false error messages (#1, #2, #3), and inconsistent
   no-workspace behavior (#6).
 - No blockers found; 6 majors, all in error/diagnostic paths rather than happy paths.
+
+Post-fix (2026-09-04, fix/qa-red-tests-green @ e628ff2):
+- Findings: 8/13 RESOLVED, 3 PARTIAL (#4 `import` still swallows `--flag=value`; #9 random-bytes spec file still tolerated as an empty spec; #13 `--refs-only` semantics still undocumented in §20), 2 DOC-GAP (#8 one-stream discipline undocumented in §19; #10 §36 export line / README import line still inconsistent with §20), 0 OPEN.
+- Mapped red suite `test/qa-verify/qa-06-cli-surface.test.ts`: 16/16 green (15 finding tests + 1 control); whole-repo `bun test` 192 pass / 0 fail.
+- Former FAIL/DEVIATION hot spots re-verified blackbox (unknown-command and missing-arg guidance, uniform no-workspace refusals, `new` name pollution, `init` refusal, `--help`/`--version`, `--dry-run` markers, `check <file>` positional): all now behave per §19/§20/§25/§35/§36/§37/§44.
