@@ -294,7 +294,10 @@ describe('QA-05 interop import/export (agents/qa/QA-05-interop-import-export.md)
     expect(r.exit).not.toBe(0);
     expect(`${r.out}${r.err}`).toMatch(/invalid|not valid|malformed|not well.?formed/i);
     // No silent partial import: no new spec file may appear.
-    const specs = readdirSync(join(ws, 'cans')).filter(f => f.endsWith('.md') && f !== '00-overview.md');
+    // (AGENTS.md excluded: §21/§36 bare init emits cans/AGENTS.md as the
+    // instruction artifact — this scan was written against the regressed bare
+    // skeleton that omitted it; AGENTS.md is not a spec, §32/§22.)
+    const specs = readdirSync(join(ws, 'cans')).filter(f => f.endsWith('.md') && f !== '00-overview.md' && f !== 'AGENTS.md');
     expect(specs).toEqual([]);
   });
 

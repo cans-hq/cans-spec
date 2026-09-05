@@ -83,7 +83,9 @@ describe('QA-06 CLI surface (red verification)', () => {
     expect(r.out).toContain('CANS — Canonical Agent-Native Spec');
     expect(r.out).toContain('Usage: cans <command> [args]');
     expect(r.out).toContain('check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]');
-    expect(r.out).toContain('budget read <concept> [--limit <tokens>] [--json]');
+    // Updated: help now mirrors §20:488 verbatim — the budget read line
+    // documents the (working) --change flag (QA-10 A5).
+    expect(r.out).toContain('budget read <concept> [--limit <tokens>] [--change <name>] [--json]');
     expect(r.out).toContain('Formats: opml, dynalist, logseq, obsidian');
     expect(r.err).toBe('');
   });

@@ -21,6 +21,27 @@ export function decodeXmlEntity(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+/** §28 import inverse (OPML/Dynalist): export encodes CANS `see: X.md#Y` as the
+ *  text `→ X.md#Y`; import must restore the ref or the round-trip kills it
+ *  (QA-05 F16 / QA-09 D9). Prose arrows are untouched — the target must be an
+ *  `.md` path (`Draft → Tested` stays prose). */
+export function convertArrowRefs(text: string): string {
+  return text.replace(
+    /→\s*([A-Za-z0-9._/-]+\.md)(#([^\s]+))?/g,
+    (_m, file: string, _anchorPart: string | undefined, anchor: string | undefined) =>
+      anchor !== undefined ? `see: ${file}#${anchor}` : `see: ${file}`,
+  );
+}
+
+/** Extract the `<head><title>` text (XML-decoded). `cans export` writes the
+ *  SOURCE SPEC FILENAME there (e.g. `02-authentication.md`), so import can
+ *  match the merge target and preserve file identity instead of renumbering
+ *  from the first node (QA-09 D12). null when the document has no title. */
+export function parseOpmlTitle(source: string): string | null {
+  const m = source.match(/<title[^>]*>([\s\S]*?)<\/title\s*>/i);
+  return m ? decodeXmlEntity(m[1]).trim() : null;
+}
+
 function readAttr(attrs: string, name: string): string | undefined {
   const m =
     attrs.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*"([^"]*)"`, 'i')) ??

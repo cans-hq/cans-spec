@@ -1,6 +1,9 @@
 import { join, basename, relative } from 'path';
 import type { ExportResult, ExportFormat, OutlineNode, ExternalNode } from '../types';
-import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, mkdirp, dirExists } from '../core/fs';
+import {
+  resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, discoverAdrs,
+  mkdirp, dirExists, exists,
+} from '../core/fs';
 import { parseOutline } from '../core/outline';
 import { serializeOpml } from '../converters/opml';
 import { serializeLogseq } from '../converters/logseq';
@@ -125,6 +128,17 @@ export async function run(args: string[]): Promise<ExportResult> {
     };
   }
 
+  // §37/§19 (QA-05 F15 / QA-10 #9): a --from that does not name an existing
+  // directory is user-correctable — fail with a stated reason, never
+  // success-shaped nothing (ok:true, filesExported: 0).
+  if (opts.from !== null && !dirExists(opts.from)) {
+    return {
+      ok: false, command: 'export', exitCode: 1,
+      format: fmt, outputDir: '', filesExported: 0,
+      error: `--from directory not found: ${opts.from}\n  Check the path (it must be an existing directory) and try again.`,
+    };
+  }
+
   const workspace = opts.from ?? resolveWorkspaceRoot();
   if (workspace === null) {
     return {
@@ -135,6 +149,11 @@ export async function run(args: string[]): Promise<ExportResult> {
   }
 
   const sources = discoverSpecFiles(workspace);
+  // §28: exports exclude ONLY `_collab/`, `_adr/_archive/`, `_rules.yaml`,
+  // `AGENTS.md` — active `_adr/` records are spec surface and must be exported
+  // (QA-05 F18). discoverAdrs is [] without _adr/, skips `_template.md`, and its
+  // flat `_adr/*.md` glob never matches `_archive/` subdir files.
+  sources.push(...discoverAdrs(workspace));
   if (opts.includeTasks && dirExists(join(workspace, '_tasks'))) {
     sources.push(...discoverActiveTasks(workspace));
   }
@@ -146,9 +165,23 @@ export async function run(args: string[]): Promise<ExportResult> {
   const baseDir = opts.vault ?? join(process.cwd(), 'cans-export');
   const outputDir = fmt === 'all' ? baseDir : join(baseDir, fmt);
 
+  // §37/§19 (QA-08 E14/E15): an output path occupied by a FILE is
+  // user-correctable — ✗ exit 1 with a fix hint, never a raw ENOTDIR
+  // internal error. Pre-check with stat; the write loop below also maps
+  // ENOTDIR/EEXIST from mkdir/write as a belt-and-braces net (EACCES and
+  // other unexpected errnos stay internal per QA-10 D2).
+  const notDirError = (p: string): ExportResult => ({
+    ok: false, command: 'export', exitCode: 1,
+    format: fmt, outputDir: '', filesExported: 0,
+    error: `${p} exists and is not a directory — remove/rename it or choose another output path`,
+  });
+  if (exists(baseDir) && !dirExists(baseDir)) return notDirError(baseDir);
+  if (fmt !== 'all' && exists(outputDir) && !dirExists(outputDir)) return notDirError(outputDir);
+
   let filesExported = 0;
   for (const f of formats) {
     const fmtDir = fmt === 'all' ? join(baseDir, f) : outputDir;
+    if (exists(fmtDir) && !dirExists(fmtDir)) return notDirError(fmtDir);
     for (const rel of sources) {
       let text = '';
       try {
@@ -167,8 +200,14 @@ export async function run(args: string[]): Promise<ExportResult> {
       const content = serializeFor(external, f, basename(rel));
       if (content === '') continue;
       if (!opts.dryRun) {
-        mkdirp(fmtDir);
-        await Bun.write(join(fmtDir, outputFileName(rel, f)), content);
+        try {
+          mkdirp(fmtDir);
+          await Bun.write(join(fmtDir, outputFileName(rel, f)), content);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException | null)?.code;
+          if (code === 'ENOTDIR' || code === 'EEXIST') return notDirError(fmtDir);
+          throw e; // EACCES etc. remain internal (§37: unexpected failures only)
+        }
       }
       filesExported++;
     }

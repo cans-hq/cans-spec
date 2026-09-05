@@ -14,13 +14,20 @@ export interface ParseWarning {
   message: string;
 }
 
+/** §45: normalize line terminators at the read/split boundary — CRLF (Windows)
+ *  and lone CR are line terminators just like LF. Root fix so every consumer
+ *  (check/budget/status/export/done) sees the same nodes (QA-08 B5). */
+function normalizeEol(source: string): string {
+  return source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 /** Parse markdown bullet outline into an OutlineNode tree.
  *  Indentation unit: 2 spaces (hardcoded). Tabs rejected.
  *  Non-bullet lines ignored (prose, headings, blanks are for humans only).
  *  `warnings` (optional) collects non-fatal parse diagnostics, e.g. odd
  *  (non-2-multiple) indentation that silently re-parents nodes. */
 export function parseOutline(source: string, file: string, warnings?: ParseWarning[]): OutlineNode[] {
-  const lines = source.split('\n');
+  const lines = normalizeEol(source).split('\n');
   for (const line of lines) {
     if (line.startsWith('\t')) {
       throw new Error(`${file}: tab indentation rejected (use 2 spaces)`);
@@ -201,7 +208,7 @@ export function flattenNodes(nodes: OutlineNode[]): OutlineNode[] {
 
 export function extractBackPointers(source: string, file: string): BackPointer[] {
   const out: BackPointer[] = [];
-  const lines = source.split('\n');
+  const lines = normalizeEol(source).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(REF_BY_RE);
     if (!m) continue;

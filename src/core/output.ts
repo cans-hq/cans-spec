@@ -86,8 +86,16 @@ export function printHuman(result: CommandResult, refsOnly?: boolean): void {
     case 'status': {
       const r = result as StatusResult;
       if (!r.ok) {
-        console.log('✗ No cans workspace found.');
-        console.log('  Run `cans init` or cd into a project with a cans/ directory.');
+        // §37: say what actually happened. Arg/usage failures carry the real
+        // diagnosis in `error` — surface it verbatim (QA-10 M1: a rejected flag
+        // must never be re-diagnosed as a missing workspace). The genuine
+        // missing-workspace case also reports through `error`.
+        if (r.error) {
+          console.log(`✗ ${r.error}`);
+        } else {
+          console.log('✗ No cans workspace found.');
+          console.log('  Run `cans init` or cd into a project with a cans/ directory.');
+        }
         break;
       }
       if (r.filter === 'owners') {
@@ -199,16 +207,12 @@ export function printHuman(result: CommandResult, refsOnly?: boolean): void {
 }
 
 function printCheckHuman(r: CheckResult, refsOnly?: boolean): void {
-  // Workspace-level errors (e.g. no cans workspace) print standalone,
-  // not nested under a section header with a bogus ":0" location.
-  const wsErrors = (r.issues ?? []).filter(i => i.file === '' && i.line === 0);
-  if (wsErrors.length > 0) {
-    for (const e of wsErrors) {
-      console.log(`✗ ${e.message}`);
-      if (e.suggestion) console.log(`  ${e.suggestion}`);
-    }
-    console.log('');
-    console.log(`${r.errorCount} errors, ${r.warningCount} warnings.`);
+  // §37: check-level failures (unknown flag, no cans workspace, invalid
+  // _rules.yaml, unmatched file filter) carry their diagnosis in `error` —
+  // print it standalone, never inside a report-shaped body.
+  const failure = (r as { error?: string }).error;
+  if (failure) {
+    console.log(`✗ ${failure}`);
     return;
   }
 
@@ -283,10 +287,10 @@ Commands:
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]
   status [--unclaimed] [--blocked] [--owners] [--json]
-  budget read <concept> [--limit <tokens>] [--json]
+  budget read <concept> [--limit <tokens>] [--change <name>] [--json]
   budget write <concept> [--json]
-  import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>]
-  export <format> [--from <path>] [--vault <path>] [--dry-run]
+  import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [--json]
+  export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
   help
   version
 

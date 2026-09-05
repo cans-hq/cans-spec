@@ -77,14 +77,18 @@ describe('Obsidian', () => {
   test('converts wiki-links', () => {
     const nodes = parseObsidian(src);
     const flat = JSON.stringify(nodes);
-    expect(flat).toContain('see:');
+    // §4/§27 canonical ref form carries the `.md` suffix.
+    expect(flat).toContain('see: 02-authentication.md#Sessions');
     expect(flat).not.toContain('[[');
   });
 
   test('handles embeds', () => {
     const nodes = parseObsidian(src);
     const flat = JSON.stringify(nodes);
-    expect(flat).toContain('see:');
+    // §27/§31 + QA-08 E7: `![[embeds]]` convert to `see:` with the canonical
+    // `.md` suffix (same as wiki-links) — a `.md`-less ref is guaranteed broken.
+    expect(flat).toContain('see: error-codes.md');
+    expect(flat).not.toMatch(/see:\s+error-codes(?!\.md)/);
   });
 
   test('preserves checkboxes', () => {
@@ -104,7 +108,10 @@ describe('shared', () => {
   });
 
   test('convertWikiLinks', () => {
-    expect(convertWikiLinks('[[02-auth#Sessions]]')).toBe('see: 02-auth#Sessions');
-    expect(convertWikiLinks('[[02-auth#Sessions|label]]')).toBe('see: 02-auth#Sessions');
+    // §4/§27 canonical ref form carries the `.md` suffix (QA-08 E7 — the old
+    // `.md`-less expectation pinned a guaranteed-broken ref and was a band-aid).
+    expect(convertWikiLinks('[[02-auth#Sessions]]')).toBe('see: 02-auth.md#Sessions');
+    expect(convertWikiLinks('[[02-auth#Sessions|label]]')).toBe('see: 02-auth.md#Sessions');
+    expect(convertWikiLinks('[[02-auth]]')).toBe('see: 02-auth.md');
   });
 });

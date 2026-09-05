@@ -45,53 +45,70 @@ export interface Issue {
 
 // ── Rules ──
 
+/** §18 delete-key semantics: a check whose mapping key is deleted (or whose
+ *  section is deleted) is OFF. Off is encoded as `null` members — engines MUST
+ *  skip the corresponding check when a member is null/false (never compare
+ *  against null, which would coerce to 0 and flag everything). */
+export interface LengthRange {
+  min: number | null;
+  max: number | null;
+}
+
 export interface StructureRules {
-  node_length: { min: number; max: number };
-  siblings: { min: number; max: number };
-  depth: { min: number; max: number };
+  node_length: LengthRange;
+  siblings: LengthRange;
+  depth: LengthRange;
   single_child_collapse: boolean;
   empty_nodes: boolean;
 }
 
 export interface StyleRules {
-  prefer: 'sibling' | 'nested';
-  force_nested_above: number;
-  force_sibling_below: number;
+  /** Deleted `prefer` disables prefer-driven style guidance (§18). */
+  prefer: 'sibling' | 'nested' | null;
+  force_nested_above: number | null;
+  force_sibling_below: number | null;
   shared_prefix_detection: boolean;
 }
 
 export interface ContentRules {
   tbd_allowed: boolean;
-  max_tbd_per_file: number;
+  max_tbd_per_file: number | null;
 }
 
 export interface ReferenceRules {
+  /** Parameter (not a check): keeps its default when deleted (§18). */
   mode: 'pointer';
   back_pointers: boolean;
-  max_hops: number;
+  /** Deleted → deep-hop check off (null = skip detectDeepHops, §18 strict). */
+  max_hops: number | null;
   orphan_check: boolean;
   duplicate_home_check: boolean;
 }
 
 export interface RedundancyRules {
   enabled: boolean;
-  word_frequency_threshold: number;
-  phrase_overlap_threshold: number;
-  cross_file_threshold: number;
+  word_frequency_threshold: number | null;
+  phrase_overlap_threshold: number | null;
+  cross_file_threshold: number | null;
+  /** Parameters (not checks): keep their defaults when deleted (§18). */
   stopwords: string[];
   synonyms: string[][];
 }
 
 export interface TokenBudgetRules {
   enabled: boolean;
+  /** Parameters (not checks): budget planning keeps defaults when deleted (§18). */
   default_limit: number;
   estimate_chars_per_token: number;
-  warn_threshold: number;
+  /** Deleted → usage warning off (null = never warn). */
+  warn_threshold: number | null;
 }
 
 export interface OverflowRules {
-  max_node_chars: number;
-  force_file_for: string[];
+  /** Deleted → char-length check off (§18). */
+  max_node_chars: number | null;
+  /** Deleted → nothing is forced into files → no content-type flags (§16/§18). */
+  force_file_for: string[] | null;
 }
 
 export interface Rules {

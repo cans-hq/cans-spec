@@ -4,9 +4,6 @@ import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types';
 import { flattenNodes, parseOutline } from './outline';
 import { resolveSpecFile, toRelative, isFile } from './fs';
 
-/** Spec-file naming contract (§8): `NN-name.md`. Mirrors fs.ts's SPEC_FILE_RE. */
-const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
-
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
   back: BackPointer[];
@@ -104,44 +101,16 @@ export function checkRefs(
 
       const key = loadedKeyFor(files, root, ref.file);
       if (key === null && resolveSpecFile(root, ref.file) === null) {
-        // §12: "File not found → Broken ref error."
-        // Narrow arbitration between frozen contracts (qa-02 F2 red test + the
-        // broken-refs fixture vs the flat/folder-project baseline fixtures):
-        // the ONLY downgraded case is a spec-numbered hole strictly INSIDE the
-        // loaded numeric span that lies BEHIND the referencing file (e.g. the
-        // §34 flat-project tutorial's 06 → 03 placeholder). Holes below the
-        // first loaded spec, ahead of the referencing file, or outside the
-        // span are hard broken-ref errors.
-        const tgtNum = SPEC_FILE_RE.test(ref.file) ? Number(ref.file.slice(0, 2)) : null;
-        const srcNum = SPEC_FILE_RE.test(file) ? Number(file.slice(0, 2)) : null;
-        const specNums: number[] = [];
-        for (const k of files.keys()) {
-          const m = /^(\d{2})-/.exec(k);
-          if (m !== null) specNums.push(Number(m[1]));
-        }
-        const spanMin = specNums.length > 0 ? Math.min(...specNums) : null;
-        const spanMax = specNums.length > 0 ? Math.max(...specNums) : null;
-        const unwrittenBackwardSlot =
-          tgtNum !== null &&
-          srcNum !== null &&
-          spanMin !== null &&
-          spanMax !== null &&
-          tgtNum < srcNum &&
-          tgtNum >= spanMin &&
-          tgtNum <= spanMax;
-        if (unwrittenBackwardSlot) {
-          issues.push({
-            file, line: ref.line, level: 'warning', category: 'refs',
-            message: `unwritten spec slot: see ${ref.file} — file not created yet`,
-            suggestion: `create ${ref.file} or re-point the ref`,
-          });
-        } else {
-          issues.push({
-            file, line: ref.line, level: 'error', category: 'refs',
-            message: `broken ref: see ${ref.file} — file not found`,
-            suggestion: `create ${ref.file} or fix the ref target`,
-          });
-        }
+        // §12 edge cases: "File not found → Broken ref error." There is NO
+        // span/direction exemption — forward or backward, inside or outside the
+        // loaded numeric span, a missing file is always a level:error broken
+        // ref. (The former "unwritten spec slot" backward in-span downgrade
+        // violated §12 and masked real holes as warnings — removed.)
+        issues.push({
+          file, line: ref.line, level: 'error', category: 'refs',
+          message: `broken ref: see ${ref.file} — file not found`,
+          suggestion: `create ${ref.file} or fix the ref target`,
+        });
         continue;
       }
 
@@ -182,8 +151,11 @@ export function checkRefs(
 /** Deep-hop detection: a file that both receives refs and issues them extends
  *  the ref chain. `maxHops` (§18 references.max_hops, default 1) is the number
  *  of allowed hops: a chain whose hop count through `b` exceeds it is flagged.
- *  Hop count for file `b` with outgoing refs = (longest incoming chain into b) + 1. */
-export function detectDeepHops(graph: RefGraph, maxHops = 1): Issue[] {
+ *  Hop count for file `b` with outgoing refs = (longest incoming chain into b) + 1.
+ *  §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
+ *  skipped entirely. */
+export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
+  if (maxHops === null) return [];
   const issues: Issue[] = [];
   const keys = [...graph.forward.keys()];
 

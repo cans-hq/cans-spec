@@ -3,6 +3,12 @@ import { join, relative, dirname, basename } from 'path';
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
 
+/** Tool-specific instruction artifacts (§21 `--tool <name>`, §32): emitted
+ *  beside the specs as agent-facing instructions, never spec content — same
+ *  exclusion class as AGENTS.md (QA-09 F4: CLAUDE.md must not be discovered
+ *  as a spec file, counted by status, or exported). */
+const TOOL_ARTIFACTS = new Set(['AGENTS.md', 'CLAUDE.md', '.cursorrules']);
+
 export function exists(p: string): boolean {
   return existsSync(p);
 }
@@ -26,12 +32,13 @@ export function globFiles(dir: string, pattern: string): string[] {
   return out.sort();
 }
 
-/** Spec files: root-level *.md (excluding _-prefixed and AGENTS.md) plus per-folder index.md. */
+/** Spec files: root-level *.md (excluding _-prefixed, AGENTS.md and other tool
+ *  artifacts) plus per-folder index.md. */
 export function discoverSpecFiles(root: string): string[] {
   const out: string[] = [];
   if (!dirExists(root)) return out;
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name.startsWith('_') || entry.name === 'AGENTS.md') continue;
+    if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
     if (entry.isFile() && entry.name.endsWith('.md')) {
       out.push(entry.name);
     } else if (entry.isDirectory()) {
@@ -53,7 +60,7 @@ export function detectFlatFolderConflicts(root: string): Array<[string, string]>
   const folderDirs = new Set<string>();
 
   for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name.startsWith('_') || entry.name === 'AGENTS.md') continue;
+    if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
     if (entry.isFile() && SPEC_FILE_RE.test(entry.name)) {
       flatFiles.add(entry.name);
     } else if (entry.isDirectory() && exists(join(root, entry.name, 'index.md'))) {
@@ -99,7 +106,7 @@ export function discoverOverflowTargets(root: string): string[] {
       return;
     }
     for (const entry of entries) {
-      if (entry.name.startsWith('_') || entry.name === 'AGENTS.md') continue;
+      if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
       const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
       if (entry.isFile() && entry.name.endsWith('.md')) {
         // `*/index.md` is a folder-mode spec file, not an overflow target.

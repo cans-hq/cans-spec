@@ -1,6 +1,5 @@
 import { join } from 'path';
 import type { BudgetReadResult, BudgetWriteResult, OutlineNode, Rules } from '../types';
-import { parseArgs, type FlagSpec } from '../core/args';
 import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists, isFile } from '../core/fs';
 import { parseOutline } from '../core/outline';
 import { loadRules } from '../core/rules';
@@ -9,39 +8,95 @@ import { buildReadPlan, buildWritePlan } from '../core/token-budget';
 
 export interface BudgetArgs {
   mode: 'read' | 'write';
+  /** The subcommand candidate found at the first non-flag position
+   *  ('' when absent, or the offending token for unknown-subcommand errors). */
+  sub: string;
   concept: string;
   limit: number | null;
   change: string | null;
   json: boolean;
-  /** §20/§37: malformed flags (--flag=value, unknown, missing value) — user errors. */
+  /** §20/§37: malformed flags (--flag=value, unknown, missing value, invalid
+   *  --limit value) — user errors, never silently ignored. */
   argErrors: string[];
 }
 
-const BUDGET_FLAGS: FlagSpec[] = [
-  { name: 'limit', boolean: false },
-  { name: 'change', boolean: false },
-  { name: 'json', boolean: true },
-];
-
+/** §20 flag-position flexibility: budget's known flags (`--json` bool,
+ *  `--limit`/`--change` value flags) are recognized anywhere on the line —
+ *  including BEFORE the subcommand — so `budget --json read Sessions` ≡
+ *  `budget read Sessions --json`. Values following value-flags are consumed
+ *  even in the pre-scan; leftover tokens decide subcommand + concept.
+ *  Error wording mirrors the shared parser (§20: `--flag value` only). */
 export function parseBudgetArgs(args: string[]): BudgetArgs {
-  // §37: unknown subcommands must error, never silently run as `read`.
-  const sub = args[0] === 'read' || args[0] === 'write' ? args[0] : '';
-  const parsed = parseArgs(args.slice(1), BUDGET_FLAGS);
-  const concept = parsed.positional[0] ?? '';
-  let limit: number | null = null;
-  const limitRaw = parsed.flags.get('limit');
-  if (typeof limitRaw === 'string') {
-    const n = Number(limitRaw);
-    if (Number.isFinite(n)) limit = n;
+  const rest: string[] = [];
+  const flagErrors: string[] = [];
+  let json = false;
+  let limitRaw: string | null = null;
+  let change: string | null = null;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+
+    // Reject --flag=value form
+    if (a.startsWith('--') && a.includes('=')) {
+      flagErrors.push(`invalid flag form "${a}" — use "--${a.slice(2).split('=')[0]} <value>"`);
+      continue;
+    }
+
+    // Reject short flags / combined flags
+    if (/^-[a-zA-Z]/.test(a) && !a.startsWith('--')) {
+      flagErrors.push(`unknown flag "${a}" — no short flags supported`);
+      continue;
+    }
+
+    if (a.startsWith('--')) {
+      const name = a.slice(2);
+      if (name === 'json') {
+        json = true;
+        continue;
+      }
+      if (name === 'limit' || name === 'change') {
+        const val = args[i + 1];
+        if (val === undefined || val.startsWith('--')) {
+          flagErrors.push(`flag "--${name}" requires a value`);
+          continue;
+        }
+        if (name === 'limit') limitRaw = val;
+        else change = val;
+        i++; // consume value
+        continue;
+      }
+      flagErrors.push(`unknown flag "--${name}"`);
+      continue;
+    }
+
+    rest.push(a);
   }
-  const change = typeof parsed.flags.get('change') === 'string' ? (parsed.flags.get('change') as string) : null;
+
+  // §37: unknown subcommands must error, never silently run as `read`.
+  const sub = rest[0] === 'read' || rest[0] === 'write' ? rest[0] : (rest[0] ?? '');
+  const concept = rest[1] ?? '';
+
+  // §37: a malformed --limit value is a user error, not a silent default.
+  // 0 stays a valid (degenerate) limit; negative / non-numeric / non-integer
+  // values are rejected with the offending value named.
+  let limit: number | null = null;
+  if (limitRaw !== null) {
+    const n = Number(limitRaw);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+      flagErrors.push(`invalid --limit value "${limitRaw}" — pass a positive integer`);
+    } else {
+      limit = n;
+    }
+  }
+
   return {
     mode: sub === 'write' ? 'write' : 'read',
+    sub,
     concept,
     limit,
     change,
-    json: parsed.flags.get('json') === true,
-    argErrors: parsed.errors,
+    json,
+    argErrors: flagErrors,
   };
 }
 
@@ -72,12 +127,11 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
   const opts = parseBudgetArgs(args);
 
   // §37: reject unknown subcommands with a usage error (never success-shaped).
-  const sub = args[0] ?? '';
-  if (sub !== 'read' && sub !== 'write') {
-    const error = sub === ''
+  if (opts.sub !== 'read' && opts.sub !== 'write') {
+    const error = opts.sub === ''
       ? 'usage: cans budget <read|write> <concept>'
-      : `unknown subcommand "${sub}" — valid: read, write`;
-    return readFail(sub, error);
+      : `unknown subcommand "${opts.sub}" — valid: read, write`;
+    return readFail(opts.sub, error);
   }
 
   // §20: `--flag value` only — malformed flags are user errors, not silently ignored.
@@ -140,14 +194,32 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
       activeTaskPaths,
     );
     if (result.plan.length === 0) {
+      // §37 truthfulness: distinguish "the concept matches nothing" from
+      // "the limit is smaller than the cheapest matching item" — a limit
+      // problem must never be reported as a spelling problem (QA-10 M2b).
+      if (opts.limit !== null) {
+        const unbounded = buildReadPlan(
+          opts.concept, files, graph.back, rules.token_budget,
+          undefined, taskFile, activeTaskPaths,
+        );
+        if (unbounded.plan.length > 0) {
+          const cheapest = Math.min(...unbounded.plan.map(p => p.estTokens));
+          return readFail(
+            opts.concept,
+            `plan empty: --limit ${opts.limit} is below the cheapest item (${cheapest} tok) — raise the limit`,
+          );
+        }
+      }
       return { ...result, ok: false, exitCode: 1, error: noMatchError(opts.concept) };
     }
-    // §18 token_budget.warn_threshold: warn when plan usage reaches the threshold.
-    const thresholdPct = rules.token_budget.warn_threshold * 100;
-    if (result.usagePercent >= thresholdPct) {
+    // §18 token_budget.warn_threshold: warn when plan usage reaches the
+    // threshold. A deleted key (null) turns the warning off — never compare
+    // against null (it would coerce to 0 and warn on every plan).
+    const threshold = rules.token_budget.warn_threshold;
+    if (threshold !== null && result.usagePercent >= threshold * 100) {
       console.error(
         `  ⚠ warning: plan usage ${result.usagePercent}% of ${result.budgetLimit} tokens ` +
-        `exceeds token_budget.warn_threshold (${thresholdPct}%) — trim the plan or raise default_limit in _rules.yaml`,
+        `exceeds token_budget.warn_threshold (${threshold * 100}%) — trim the plan or raise default_limit in _rules.yaml`,
       );
     }
     return result;
