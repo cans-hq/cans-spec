@@ -1,0 +1,7 @@
+- Data
+  - Storage
+    - Primary datastore
+    - Blob attachments
+  - Retention
+    - 30 days hot
+    - 1 year cold archive
