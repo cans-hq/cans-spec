@@ -379,7 +379,7 @@ export function loadRules(root: string): Rules {
     if (has(section, key)) return false;
     if (deleteMode) return true;
     const s = parsed[section];
-    const covered = SECTION_KEYS[section].filter(k => k in s).length;
+    const covered = isPlainObject(s) ? SECTION_KEYS[section].filter(k => k in s).length : 0;
     return covered * 2 >= SECTION_KEYS[section].length;
   };
 
