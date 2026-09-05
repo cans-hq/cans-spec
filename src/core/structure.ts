@@ -1,4 +1,5 @@
-import type { OutlineNode, Issue, StructureRules } from '../types';
+import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types';
+import { flattenNodes } from './outline';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
@@ -83,4 +84,43 @@ export function checkStructure(
 
   walk(nodes);
   return issues;
+}
+
+/** §18 content rules — TBD policy per file (QA-13 F4: the knobs were inert).
+ *  `tbd_allowed: false` → any TBD node is flagged; otherwise `max_tbd_per_file`
+ *  caps the number of TBD nodes per file (deleted key → null → no cap). One
+ *  warning per file: §4 keeps TBDs first-class, so exceeding the policy is
+ *  advisory and never affects the exit code (§19). */
+export function checkTbdPolicy(
+  nodes: OutlineNode[],
+  file: string,
+  rules: ContentRules,
+): Issue[] {
+  const tbdNodes = flattenNodes(nodes).filter(n => /\bTBD\b/i.test(n.text));
+  if (tbdNodes.length === 0) return [];
+  if (!rules.tbd_allowed) {
+    return [
+      {
+        file,
+        line: tbdNodes[0]!.line,
+        level: 'warning',
+        category: 'structure',
+        message: 'TBD used but content.tbd_allowed is false',
+        suggestion: 'resolve the TBD nodes or set content.tbd_allowed: true',
+      },
+    ];
+  }
+  if (rules.max_tbd_per_file !== null && tbdNodes.length > rules.max_tbd_per_file) {
+    return [
+      {
+        file,
+        line: tbdNodes[0]!.line,
+        level: 'warning',
+        category: 'structure',
+        message: `${tbdNodes.length} TBD nodes exceed content.max_tbd_per_file (${rules.max_tbd_per_file})`,
+        suggestion: 'resolve the TBD nodes or raise content.max_tbd_per_file',
+      },
+    ];
+  }
+  return [];
 }

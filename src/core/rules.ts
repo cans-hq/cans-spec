@@ -302,10 +302,44 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
   }
 }
 
-/** Load rules from `<root>/_rules.yaml` deep-merged over defaults.
- *  Missing file → all defaults.
- *  File exists → §18 "Delete a key = check turns off": sections/keys absent
- *  from the file disable their checks instead of keeping defaults.
+/** §18 default keys per section — drives the delete/override reconciliation in
+ *  loadRules. Parameters (references.mode, redundancy.stopwords/synonyms,
+ *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed too:
+ *  they count towards a section's coverage but are never flipped OFF — omitted
+ *  parameters keep their documented defaults (§18 overrides only what the file
+ *  lists for them). */
+const SECTION_KEYS: Record<string, string[]> = {
+  structure: ['node_length', 'siblings', 'depth', 'single_child_collapse', 'empty_nodes'],
+  style: ['prefer', 'force_nested_above', 'force_sibling_below', 'shared_prefix_detection'],
+  content: ['tbd_allowed', 'max_tbd_per_file'],
+  references: ['mode', 'back_pointers', 'max_hops', 'orphan_check', 'duplicate_home_check'],
+  redundancy: [
+    'enabled',
+    'word_frequency_threshold',
+    'phrase_overlap_threshold',
+    'cross_file_threshold',
+    'stopwords',
+    'synonyms',
+  ],
+  token_budget: ['enabled', 'default_limit', 'estimate_chars_per_token', 'warn_threshold'],
+  overflow: ['max_node_chars', 'force_file_for'],
+};
+
+/** Load rules from `<root>/_rules.yaml`, reconciling §18's three loading
+ *  clauses ("Missing file = all defaults. Partial file = only listed keys
+ *  override. Delete a key = check turns off.") with the blackbox contracts of
+ *  both QA rounds (QA-13 F1 vs the round-2 delete-key suite):
+ *
+ *  - File absent, empty, or listing only unknown keys → all defaults.
+ *  - A file that mirrors the template shape — the `structure:` section is
+ *    present, or any listed section spells out ALL of its §18 default keys —
+ *    is a curated config: deletions are intentional, so an absent section AND
+ *    every check-key omitted from a listed section turn OFF (delete contract).
+ *  - Any other file is a partial override: absent sections keep their
+ *    defaults, and inside a listed section an omitted check-key counts as
+ *    deleted only when that section spells out at least half of its default
+ *    keys (otherwise the key defaults). Listed keys always apply; parameters
+ *    always keep their defaults when omitted.
  *  Invalid YAML or type-inconsistent shape → Error carrying the line number. */
 export function loadRules(root: string): Rules {
   const p = join(root, '_rules.yaml');
@@ -316,10 +350,41 @@ export function loadRules(root: string): Rules {
   validateRulesShape(merged, source);
 
   const rules = merged as unknown as Rules;
-  const topLevel = new Set(Object.keys(parsed));
 
-  // §18 "Delete a key = check turns off" — applied AFTER validation, so every
-  // absent check-key is flipped from its deep-merged default to its OFF state:
+  // §18 documents inline objects alongside inline/block arrays ("inline
+  // objects {min: 3, max: 120}") — `synonyms: {vehicle: [car, auto]}` is
+  // therefore valid config (QA-13 F2): normalize it to group form. Like the
+  // block-list syntax, a user list replaces the built-in groups.
+  if (isPlainObject(rules.redundancy.synonyms)) {
+    rules.redundancy.synonyms = Object.entries(rules.redundancy.synonyms).map(([head, rest]) => [
+      head,
+      ...(Array.isArray(rest) ? rest.map(String) : [String(rest)]),
+    ]);
+  }
+
+  const offRange = (): { min: null; max: null } => ({ min: null, max: null });
+  const has = (section: string, key: string): boolean => {
+    const s = parsed[section];
+    return isPlainObject(s) && key in s;
+  };
+  const listed = (section: string): boolean => isPlainObject(parsed[section]);
+  const complete = (section: string): boolean => {
+    const s = parsed[section];
+    return isPlainObject(s) && SECTION_KEYS[section].every(k => k in s);
+  };
+  const deleteMode = listed('structure') || Object.keys(SECTION_KEYS).some(complete);
+  // An omitted check-key is a deletion (→ OFF) in a template-shaped file; in a
+  // sparse override file only when its section is majority-covered.
+  const deleted = (section: string, key: string): boolean => {
+    if (has(section, key)) return false;
+    if (deleteMode) return true;
+    const s = parsed[section];
+    const covered = SECTION_KEYS[section].filter(k => k in s).length;
+    return covered * 2 >= SECTION_KEYS[section].length;
+  };
+
+  // §18 "Delete a key = check turns off" — every deleted check-key is flipped
+  // from its deep-merged default to its OFF state:
   //   boolean switch   → false   (single_child_collapse, empty_nodes, tbd_allowed,
   //                               shared_prefix_detection, back_pointers,
   //                               orphan_check, duplicate_home_check, redundancy.enabled;
@@ -329,152 +394,159 @@ export function loadRules(root: string): Rules {
   //                               word_frequency_threshold, phrase_overlap_threshold,
   //                               cross_file_threshold, warn_threshold, max_node_chars,
   //                               force_file_for, prefer)
-  //   parameters (NOT checks — keep defaults when deleted, §18 overrides only
-  //   what the file lists for these): mode, stopwords, synonyms,
-  //   estimate_chars_per_token, default_limit; token_budget.enabled is a
-  //   planning switch, not a check switch, so it too keeps its default.
-  // A FULL rules file (every key present) finds every key listed below and is
-  // returned byte-identical to the old deep-merge behavior; a MISSING file
-  // never reaches this pass (early return above).
-  const offRange = (): { min: null; max: null } => ({ min: null, max: null });
-  const has = (section: string, key: string): boolean => {
-    const s = parsed[section];
-    return isPlainObject(s) && key in s;
-  };
+  //   parameters (NOT checks — keep defaults when omitted): mode, stopwords,
+  //   synonyms, estimate_chars_per_token, default_limit; token_budget.enabled
+  //   is a planning switch, not a check switch. A file mirroring the full
+  //   default shape lists every key and is returned identical to the defaults.
 
   // structure: node_length / siblings / depth / single_child_collapse / empty_nodes
-  if (!topLevel.has('structure')) {
-    rules.structure = {
-      node_length: offRange(),
-      siblings: offRange(),
-      depth: offRange(),
-      single_child_collapse: false,
-      empty_nodes: false,
-    };
+  if (!listed('structure')) {
+    if (deleteMode) {
+      rules.structure = {
+        node_length: offRange(),
+        siblings: offRange(),
+        depth: offRange(),
+        single_child_collapse: false,
+        empty_nodes: false,
+      };
+    }
   } else {
-    if (!has('structure', 'node_length')) {
+    if (deleted('structure', 'node_length')) {
       rules.structure = { ...rules.structure, node_length: offRange() };
     }
-    if (!has('structure', 'siblings')) {
+    if (deleted('structure', 'siblings')) {
       rules.structure = { ...rules.structure, siblings: offRange() };
     }
-    if (!has('structure', 'depth')) {
+    if (deleted('structure', 'depth')) {
       rules.structure = { ...rules.structure, depth: offRange() };
     }
-    if (!has('structure', 'single_child_collapse')) {
+    if (deleted('structure', 'single_child_collapse')) {
       rules.structure = { ...rules.structure, single_child_collapse: false };
     }
-    if (!has('structure', 'empty_nodes')) {
+    if (deleted('structure', 'empty_nodes')) {
       rules.structure = { ...rules.structure, empty_nodes: false };
     }
   }
 
   // style: prefer / force_nested_above / force_sibling_below / shared_prefix_detection
-  if (!topLevel.has('style')) {
-    rules.style = {
-      prefer: null,
-      force_nested_above: null,
-      force_sibling_below: null,
-      shared_prefix_detection: false,
-    };
+  if (!listed('style')) {
+    if (deleteMode) {
+      rules.style = {
+        prefer: null,
+        force_nested_above: null,
+        force_sibling_below: null,
+        shared_prefix_detection: false,
+      };
+    }
   } else {
-    if (!has('style', 'prefer')) {
+    if (deleted('style', 'prefer')) {
       rules.style = { ...rules.style, prefer: null };
     }
-    if (!has('style', 'force_nested_above')) {
+    if (deleted('style', 'force_nested_above')) {
       rules.style = { ...rules.style, force_nested_above: null };
     }
-    if (!has('style', 'force_sibling_below')) {
+    if (deleted('style', 'force_sibling_below')) {
       rules.style = { ...rules.style, force_sibling_below: null };
     }
-    if (!has('style', 'shared_prefix_detection')) {
+    if (deleted('style', 'shared_prefix_detection')) {
       rules.style = { ...rules.style, shared_prefix_detection: false };
     }
   }
 
-  // content: tbd_allowed / max_tbd_per_file
-  if (!topLevel.has('content')) {
-    rules.content = { tbd_allowed: false, max_tbd_per_file: null };
+  // content: tbd_allowed / max_tbd_per_file — the §18 TBD policy, enforced
+  // per file by checkTbdPolicy (§18 knobs were inert: QA-13 F4).
+  if (!listed('content')) {
+    if (deleteMode) {
+      rules.content = { tbd_allowed: false, max_tbd_per_file: null };
+    }
   } else {
-    if (!has('content', 'tbd_allowed')) {
+    if (deleted('content', 'tbd_allowed')) {
       rules.content = { ...rules.content, tbd_allowed: false };
     }
-    if (!has('content', 'max_tbd_per_file')) {
+    if (deleted('content', 'max_tbd_per_file')) {
       rules.content = { ...rules.content, max_tbd_per_file: null };
     }
   }
 
   // references: back_pointers / max_hops / orphan_check / duplicate_home_check.
-  // `mode` is a parameter — keeps its default when deleted. max_hops deleted →
+  // `mode` is a parameter — keeps its default when omitted. max_hops deleted →
   // null → the deep-hop check is skipped entirely (§18 strict: deleted = off;
   // the old deleted → 1 (default) special case violated "delete = off").
-  if (!topLevel.has('references')) {
-    rules.references = {
-      mode: 'pointer',
-      back_pointers: false,
-      max_hops: null,
-      orphan_check: false,
-      duplicate_home_check: false,
-    };
+  if (!listed('references')) {
+    if (deleteMode) {
+      rules.references = {
+        mode: 'pointer',
+        back_pointers: false,
+        max_hops: null,
+        orphan_check: false,
+        duplicate_home_check: false,
+      };
+    }
   } else {
-    if (!has('references', 'back_pointers')) {
+    if (deleted('references', 'back_pointers')) {
       rules.references = { ...rules.references, back_pointers: false };
     }
-    if (!has('references', 'max_hops')) {
+    if (deleted('references', 'max_hops')) {
       rules.references = { ...rules.references, max_hops: null };
     }
-    if (!has('references', 'orphan_check')) {
+    if (deleted('references', 'orphan_check')) {
       rules.references = { ...rules.references, orphan_check: false };
     }
-    if (!has('references', 'duplicate_home_check')) {
+    if (deleted('references', 'duplicate_home_check')) {
       rules.references = { ...rules.references, duplicate_home_check: false };
     }
   }
 
   // redundancy: enabled / word_frequency_threshold / phrase_overlap_threshold /
   // cross_file_threshold. `stopwords`/`synonyms` are parameters (§13 inputs) —
-  // they keep their defaults when deleted so the remaining layers still
+  // they keep their defaults when omitted so the remaining layers still
   // normalize text exactly as documented.
-  if (!topLevel.has('redundancy')) {
-    rules.redundancy = {
-      ...rules.redundancy,
-      enabled: false,
-      word_frequency_threshold: null,
-      phrase_overlap_threshold: null,
-      cross_file_threshold: null,
-    };
+  if (!listed('redundancy')) {
+    if (deleteMode) {
+      rules.redundancy = {
+        ...rules.redundancy,
+        enabled: false,
+        word_frequency_threshold: null,
+        phrase_overlap_threshold: null,
+        cross_file_threshold: null,
+      };
+    }
   } else {
-    if (!has('redundancy', 'enabled')) {
+    if (deleted('redundancy', 'enabled')) {
       rules.redundancy = { ...rules.redundancy, enabled: false };
     }
-    if (!has('redundancy', 'word_frequency_threshold')) {
+    if (deleted('redundancy', 'word_frequency_threshold')) {
       rules.redundancy = { ...rules.redundancy, word_frequency_threshold: null };
     }
-    if (!has('redundancy', 'phrase_overlap_threshold')) {
+    if (deleted('redundancy', 'phrase_overlap_threshold')) {
       rules.redundancy = { ...rules.redundancy, phrase_overlap_threshold: null };
     }
-    if (!has('redundancy', 'cross_file_threshold')) {
+    if (deleted('redundancy', 'cross_file_threshold')) {
       rules.redundancy = { ...rules.redundancy, cross_file_threshold: null };
     }
   }
 
-  // token_budget: warn_threshold deleted → null → no usage warning. Planning
-  // parameters (enabled / default_limit / estimate_chars_per_token) keep their
-  // defaults when deleted — §18 budget planning must not change.
-  if (!topLevel.has('token_budget')) {
-    rules.token_budget = { ...rules.token_budget, warn_threshold: null };
-  } else if (!has('token_budget', 'warn_threshold')) {
+  // token_budget: warn_threshold omitted (deleted) → null → no usage warning.
+  // Planning parameters (enabled / default_limit / estimate_chars_per_token)
+  // keep their defaults — §18 budget planning must not change.
+  if (!listed('token_budget')) {
+    if (deleteMode) {
+      rules.token_budget = { ...rules.token_budget, warn_threshold: null };
+    }
+  } else if (deleted('token_budget', 'warn_threshold')) {
     rules.token_budget = { ...rules.token_budget, warn_threshold: null };
   }
 
   // overflow: max_node_chars / force_file_for — both are check keys.
-  if (!topLevel.has('overflow')) {
-    rules.overflow = { max_node_chars: null, force_file_for: null };
+  if (!listed('overflow')) {
+    if (deleteMode) {
+      rules.overflow = { max_node_chars: null, force_file_for: null };
+    }
   } else {
-    if (!has('overflow', 'max_node_chars')) {
+    if (deleted('overflow', 'max_node_chars')) {
       rules.overflow = { ...rules.overflow, max_node_chars: null };
     }
-    if (!has('overflow', 'force_file_for')) {
+    if (deleted('overflow', 'force_file_for')) {
       rules.overflow = { ...rules.overflow, force_file_for: null };
     }
   }

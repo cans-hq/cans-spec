@@ -9,7 +9,7 @@ import {
   type ParseWarning,
 } from '../core/outline';
 import { loadRules } from '../core/rules';
-import { checkStructure } from '../core/structure';
+import { checkStructure, checkTbdPolicy } from '../core/structure';
 import { checkStyle } from '../core/style';
 import { checkOverflow, checkNoChaining } from '../core/overflow';
 import { checkRedundancy } from '../core/redundancy';
@@ -251,6 +251,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
     for (const key of checkable) {
       issues.push(...checkStyle(specFiles.get(key)!, key, rules.style));
+    }
+    // §18 content policy: TBD nodes per file (QA-13 F4 — the knobs were inert).
+    for (const key of checkable) {
+      issues.push(...checkTbdPolicy(specFiles.get(key)!, key, rules.content));
     }
   }
 
