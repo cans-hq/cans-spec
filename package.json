@@ -1,16 +1,25 @@
 {
   "name": "cans-spec",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Canonical Agent-Native Spec — the outline is the spec, the state, and the task board",
-  "bin": { "cans": "./src/cli.ts" },
+  "bin": {
+    "cans": "./src/cli.ts"
+  },
   "type": "module",
-  "engines": { "bun": ">=1.0.0" },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
     "prepublishOnly": "bun run typecheck && bun test"
   },
-  "files": ["src/", "templates/", "README.md", "LICENSE"],
+  "files": [
+    "src/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "cans",
     "spec",
