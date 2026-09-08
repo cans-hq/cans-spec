@@ -2,9 +2,10 @@
 
 import type { CommandResult } from './types';
 import { emit } from './core/output';
+import pkg from '../package.json';
 
-/** §44: version line. Keep in sync with package.json. */
-const VERSION = '0.1.0';
+/** §44: version line — derived from package.json so it can never drift. */
+const VERSION: string = pkg.version;
 
 const [cmd, ...args] = Bun.argv.slice(2);
 
