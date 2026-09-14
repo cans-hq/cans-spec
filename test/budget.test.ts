@@ -1,10 +1,10 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline } from '../src/core/outline';
-import { buildRefGraph } from '../src/core/refs';
-import { buildReadPlan, buildWritePlan, estimateTokens, findCanonicalHome } from '../src/core/token-budget';
-import { defaultRules } from '../src/core/rules';
-import { outputFixture } from './helpers';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline } from '../src/core/outline.ts';
+import { buildRefGraph } from '../src/core/refs.ts';
+import { buildReadPlan, buildWritePlan, estimateTokens, findCanonicalHome } from '../src/core/token-budget.ts';
+import { defaultRules } from '../src/core/rules.ts';
+import { outputFixture } from './helpers.ts';
+import { readFixture } from './helpers.ts';
 
 const rules = defaultRules().token_budget;
 

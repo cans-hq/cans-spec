@@ -1,8 +1,8 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline } from '../src/core/outline';
-import { checkRedundancy, normalizeWord, wordFrequency, phraseOverlap } from '../src/core/redundancy';
-import { defaultRules } from '../src/core/rules';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline } from '../src/core/outline.ts';
+import { checkRedundancy, normalizeWord, wordFrequency, phraseOverlap } from '../src/core/redundancy.ts';
+import { defaultRules } from '../src/core/rules.ts';
+import { readFixture } from './helpers.ts';
 
 const rules = defaultRules().redundancy;
 

@@ -1,7 +1,8 @@
 import { join } from 'path';
-import { mkdirSync, rmSync, cpSync, readFileSync, existsSync } from 'fs';
+import { mkdirSync, rmSync, cpSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { REPO } from './runtime.ts';
 
-export const FIXTURES = join(import.meta.dir, 'fixtures');
+export const FIXTURES = join(REPO, 'test', 'fixtures');
 export const OUTPUT_FIXTURES = join(FIXTURES, 'output');
 
 export function fixturePath(...parts: string[]): string {
@@ -17,7 +18,7 @@ export function readFixture(...parts: string[]): string {
 }
 
 export function makeTmpDir(name: string): string {
-  const p = join(import.meta.dir, '..', '.tmp', name);
+  const p = join(REPO, '.tmp', name);
   mkdirSync(p, { recursive: true });
   return p;
 }
@@ -39,7 +40,7 @@ export function makeCansWorkspace(tmpDir: string, files: Record<string, string>)
   for (const [name, content] of Object.entries(files)) {
     const p = join(root, name);
     mkdirSync(join(p, '..'), { recursive: true });
-    Bun.write(p, content);
+    writeFileSync(p, content, 'utf8'); // was fire-and-forget Bun.write (issue #12)
   }
   return root;
 }

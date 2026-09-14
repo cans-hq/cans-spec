@@ -102,7 +102,7 @@ such).
 
 ## Method notes
 
-- Tests are blackbox: they spawn `src/cli.ts` via `Bun.spawnSync` from isolated
+- Tests are blackbox: they spawn `src/cli.ts` via `spawnCli` (test/runtime.ts) from isolated
   scratch workspaces under `.tmp/qa-verify/` (gitignored), asserting on exit
   codes, stdout/stderr, file trees and `--json` payloads — the same surface the
   QA cycle exercised.

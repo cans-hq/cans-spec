@@ -1,12 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from './testing.ts';
 import { join } from 'path';
-import { makeTmpDir, cleanTmpDir, outputFixture, copyFixtureToTmp } from './helpers';
+import { makeTmpDir, cleanTmpDir, outputFixture, copyFixtureToTmp } from './helpers.ts';
 
 describe('cans init', () => {
   test('creates workspace skeleton', async () => {
     const tmp = makeTmpDir('cmd-init');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const result = await run(['--flat']);
       expect(result.ok).toBe(true);
       expect(result.command).toBe('init');
@@ -21,7 +21,7 @@ describe('cans init', () => {
     const expected = outputFixture('init.json');
     const tmp = makeTmpDir('cmd-init-fixture');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const result = await run(['--flat']);
       expect(result.created.length).toBe((expected as any).created.length);
     } finally {
@@ -35,7 +35,7 @@ describe('cans check', () => {
     const tmp = makeTmpDir('cmd-check-clean');
     try {
       copyFixtureToTmp('flat-project', tmp);
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const result = await run([]);
       expect(result.ok).toBe(true);
       expect(result.errorCount).toBe(0);
@@ -48,7 +48,7 @@ describe('cans check', () => {
     const tmp = makeTmpDir('cmd-check-deephop');
     try {
       copyFixtureToTmp('deep-hop-project', tmp);
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const result = await run([]);
       expect(result.ok).toBe(false);
       expect(result.refs.deepHops).toBe(1);
@@ -61,7 +61,7 @@ describe('cans check', () => {
     const tmp = makeTmpDir('cmd-check-broken');
     try {
       copyFixtureToTmp('broken-refs-project', tmp);
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const result = await run([]);
       expect(result.ok).toBe(false);
       expect(result.refs.broken).toBeGreaterThanOrEqual(2);
@@ -75,7 +75,7 @@ describe('cans new', () => {
   test('creates task file', async () => {
     const tmp = makeTmpDir('cmd-new-task');
     try {
-      const { run } = await import('../src/commands/new');
+      const { run } = await import('../src/commands/new.ts');
       const result = await run(['task', 'add-dark-mode']);
       expect(result.ok).toBe(true);
       expect(result.file).toContain('add-dark-mode');
@@ -85,7 +85,7 @@ describe('cans new', () => {
   });
 
   test('slugifies title', async () => {
-    const { slugify } = await import('../src/commands/new');
+    const { slugify } = await import('../src/commands/new.ts');
     expect(slugify('Add Dark Mode!')).toBe('add-dark-mode');
     expect(slugify("What's Next?")).toBe('what-s-next');
   });
@@ -96,7 +96,7 @@ describe('cans done', () => {
     const tmp = makeTmpDir('cmd-done-blocked');
     try {
       copyFixtureToTmp('flat-project', tmp);
-      const { run } = await import('../src/commands/done');
+      const { run } = await import('../src/commands/done.ts');
       const result = await run(['add-dark-mode']);
       expect(result.ok).toBe(false);
       expect(result.gates.humanOpen).toBeGreaterThan(0);
@@ -111,7 +111,7 @@ describe('cans status', () => {
     const tmp = makeTmpDir('cmd-status');
     try {
       copyFixtureToTmp('flat-project', tmp);
-      const { run } = await import('../src/commands/status');
+      const { run } = await import('../src/commands/status.ts');
       const result = await run([]);
       expect(result.ok).toBe(true);
       expect(result.command).toBe('status');
@@ -127,7 +127,7 @@ describe('cans budget', () => {
     const tmp = makeTmpDir('cmd-budget-read');
     try {
       copyFixtureToTmp('budget-project', tmp);
-      const { run } = await import('../src/commands/budget');
+      const { run } = await import('../src/commands/budget.ts');
       const result = await run(['read', 'sessions']);
       expect(result.ok).toBe(true);
       expect(result.command).toBe('budget-read');

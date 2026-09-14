@@ -22,25 +22,19 @@
  * deliberately avoid words that double as assertion keywords (e.g. "dry-run",
  * "concept") because some CLI outputs embed cwd paths.
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const SCRATCH_BASE = join(REPO, '.tmp', 'qa-verify');
 
 /** Neutralize any ambient CANS_ROOT so workspace resolution is purely cwd-driven. */
 const SPAWN_ENV: Record<string, string | undefined> = { ...process.env, CANS_ROOT: '' };
 
 function runCli(args: string[], cwd: string): { exit: number | null; out: string; err: string } {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    env: SPAWN_ENV,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  return spawnCli(args, cwd, SPAWN_ENV);
 }
 
 const created: string[] = [];

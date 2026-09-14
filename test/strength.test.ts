@@ -1,17 +1,18 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect } from './testing.ts';
 import { join } from 'path';
 import { mkdirSync, existsSync, writeFileSync, renameSync } from 'fs';
-import { makeTmpDir, cleanTmpDir, copyFixtureToTmp, readFixture, fixturePath } from './helpers';
-import { parseOutline, extractBackPointers, flattenNodes, countNodes, maxDepth } from '../src/core/outline';
+import { makeTmpDir, cleanTmpDir, copyFixtureToTmp, readFixture, fixturePath } from './helpers.ts';
+import { readTextSync, writeTextSync } from './runtime.ts';
+import { parseOutline, extractBackPointers, flattenNodes, countNodes, maxDepth } from '../src/core/outline.ts';
 import {
   resolveSpecFile, discoverSpecFiles, discoverActiveTasks,
   discoverArchivedTasks, discoverAdrs, globFiles,
-} from '../src/core/fs';
-import { buildRefGraph, detectOrphans, rebuildBackPointers, detectDeepHops } from '../src/core/refs';
-import { normalizeWord, phraseOverlap, wordFrequency } from '../src/core/redundancy';
-import { estimateTokens } from '../src/core/token-budget';
-import { defaultRules } from '../src/core/rules';
-import { slugify, nextAdrNumber } from '../src/commands/new';
+} from '../src/core/fs.ts';
+import { buildRefGraph, detectOrphans, rebuildBackPointers, detectDeepHops } from '../src/core/refs.ts';
+import { normalizeWord, phraseOverlap, wordFrequency } from '../src/core/redundancy.ts';
+import { estimateTokens } from '../src/core/token-budget.ts';
+import { defaultRules } from '../src/core/rules.ts';
+import { slugify, nextAdrNumber } from '../src/commands/new.ts';
 
 const redundancyRules = defaultRules().redundancy;
 
@@ -214,7 +215,7 @@ describe('cans init variants', () => {
   test('--folders creates NN/index.md layout', async () => {
     const tmp = makeTmpDir('init-folders');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const result = await run(['--folders']);
       expect(result.ok).toBe(true);
       expect(result.created).toContain('02-authentication/index.md');
@@ -229,7 +230,7 @@ describe('cans init variants', () => {
   test('--bare creates only 3 entries', async () => {
     const tmp = makeTmpDir('init-bare');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const result = await run(['--bare']);
       expect(result.ok).toBe(true);
       expect(result.created.sort()).toEqual(['00-overview.md', 'AGENTS.md', '_rules.yaml']);
@@ -241,7 +242,7 @@ describe('cans init variants', () => {
   test('init is idempotent: second run skips all 14 files at same root', async () => {
     const tmp = makeTmpDir('init-idem');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const first = await run(['--flat']);
       const second = await run(['--flat']);
       expect(first.ok).toBe(true);
@@ -261,7 +262,7 @@ describe('cans init variants', () => {
   test('--force re-creates files but keeps existing dirs as skipped', async () => {
     const tmp = makeTmpDir('init-force');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       await run(['--flat']);
       const forced = await run(['--flat', '--force']);
       expect(forced.ok).toBe(true);
@@ -276,12 +277,12 @@ describe('cans init variants', () => {
   test('--tool claude emits CLAUDE.md from AGENTS.md', async () => {
     const tmp = makeTmpDir('init-tool');
     try {
-      const { run } = await import('../src/commands/init');
+      const { run } = await import('../src/commands/init.ts');
       const result = await run(['--flat', '--tool', 'claude']);
       expect(result.ok).toBe(true);
       expect(result.created).toContain('CLAUDE.md');
-      const agents = await Bun.file(join(result.root, 'AGENTS.md')).text();
-      const claude = await Bun.file(join(result.root, 'CLAUDE.md')).text();
+      const agents = readTextSync(join(result.root, 'AGENTS.md'));
+      const claude = readTextSync(join(result.root, 'CLAUDE.md'));
       expect(claude).toBe(agents);
     } finally {
       cleanTmpDir(tmp);
@@ -291,8 +292,8 @@ describe('cans init variants', () => {
   test('init templates are check-clean (all engines pass)', async () => {
     const tmp = makeTmpDir('init-clean');
     try {
-      const { run: initRun } = await import('../src/commands/init');
-      const { run: checkRun } = await import('../src/commands/check');
+      const { run: initRun } = await import('../src/commands/init.ts');
+      const { run: checkRun } = await import('../src/commands/check.ts');
       const init = await initRun(['--flat']);
       const check = await checkRun([]);
       expect(init.ok).toBe(true);
@@ -311,11 +312,11 @@ describe('cans check --fix and folder mode', () => {
     const tmp = makeTmpDir('check-fix');
     try {
       copyFixtureToTmp('flat-project', tmp);
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const fixed = await run(['--fix']);
       expect(fixed.ok).toBe(true);
       expect(fixed.backPointersUpdated).toBeGreaterThanOrEqual(1);
-      const content = await Bun.file(join(tmp, 'flat-project', '02-authentication.md')).text();
+      const content = readTextSync(join(tmp, 'flat-project', '02-authentication.md'));
       expect(content.split('\n')[0]).toContain('ref-by: 04-api.md');
       expect(content.split('\n')[0]).not.toContain('05-frontend.md');
       // re-check: no stale back-pointers remain
@@ -331,7 +332,7 @@ describe('cans check --fix and folder mode', () => {
     const tmp = makeTmpDir('check-folder');
     try {
       copyFixtureToTmp('folder-project', tmp);
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const result = await run([]);
       expect(result.ok).toBe(true);
       expect(result.errorCount).toBe(0);
@@ -347,7 +348,7 @@ describe('cans check --fix and folder mode', () => {
     try {
       mkdirSync(join(tmp, 'empty-ws'), { recursive: true });
       writeFileSync(join(tmp, 'empty-ws', '_rules.yaml'), 'structure:\n  node_length: { min: 3, max: 120 }\n');
-      const { run } = await import('../src/commands/check');
+      const { run } = await import('../src/commands/check.ts');
       const result = await run([]);
       expect(result.ok).toBe(true);
       expect(result.files).toBe(0);
@@ -362,7 +363,7 @@ describe('cans check --fix and folder mode', () => {
 
 describe('cans done gate enforcement', () => {
   async function loadDone() {
-    return (await import('../src/commands/done')).run;
+    return (await import('../src/commands/done.ts')).run;
   }
 
   test('human gate blocks even with --allow-incomplete (never skippable)', async () => {
@@ -384,7 +385,7 @@ describe('cans done gate enforcement', () => {
     try {
       copyFixtureToTmp('flat-project', tmp);
       const taskPath = join(tmp, 'flat-project', '_tasks', 'add-dark-mode.md');
-      let task = await Bun.file(taskPath).text();
+      let task = readTextSync(taskPath);
       task = task.replace(/- \[ \]/g, '- [x]');
       writeFileSync(taskPath, task);
       const done = await loadDone();
@@ -406,7 +407,7 @@ describe('cans done gate enforcement', () => {
     try {
       copyFixtureToTmp('flat-project', tmp);
       const taskPath = join(tmp, 'flat-project', '_tasks', 'add-dark-mode.md');
-      let task = await Bun.file(taskPath).text();
+      let task = readTextSync(taskPath);
       task = task.replace('- [ ] Spec approved ← @human', '- [x] Spec approved ← @human'); // only gate checked
       writeFileSync(taskPath, task);
       const done = await loadDone();
@@ -444,13 +445,13 @@ describe('cans import / export', () => {
     try {
       const out = join(tmp, 'out');
       mkdirSync(out, { recursive: true });
-      const { run } = await import('../src/commands/import');
+      const { run } = await import('../src/commands/import.ts');
       const result = await run(['opml', fixturePath('import-fixtures', 'dynalist-export.opml'), '--out', out]);
       expect(result.ok).toBe(true);
       expect(result.format).toBe('opml');
       expect(result.newFiles.length).toBe(1);
       expect(result.newFiles[0]).toMatch(/^\d{2}-.+\.md$/);
-      const written = await Bun.file(join(out, result.newFiles[0])).text();
+      const written = readTextSync(join(out, result.newFiles[0]));
       expect(written).toContain('- Authentication');
       expect(written).toContain('  - Sign up');
       expect(written).toContain('    - Email');
@@ -464,7 +465,7 @@ describe('cans import / export', () => {
     const tmp = makeTmpDir('import-dry');
     try {
       const out = join(tmp, 'out');
-      const { run } = await import('../src/commands/import');
+      const { run } = await import('../src/commands/import.ts');
       const result = await run(['logseq', fixturePath('import-fixtures', 'logseq-page.md'), '--out', out, '--dry-run']);
       expect(result.ok).toBe(true);
       expect(result.newFiles.length).toBe(1);
@@ -478,13 +479,13 @@ describe('cans import / export', () => {
     const tmp = makeTmpDir('export-obsidian');
     try {
       const vault = join(tmp, 'vault');
-      const { run } = await import('../src/commands/export');
+      const { run } = await import('../src/commands/export.ts');
       const result = await run(['obsidian', '--from', fixturePath('flat-project'), '--vault', vault]);
       expect(result.ok).toBe(true);
       // 4 spec files: 02-authentication, 03-data (fixture self-consistency, §34
       // — 06-operations.md holds `see: 03-data.md`), 04-api, 06-operations.
       expect(result.filesExported).toBe(4);
-      const api = await Bun.file(join(vault, 'obsidian', '04-api.md')).text();
+      const api = readTextSync(join(vault, 'obsidian', '04-api.md'));
       expect(api).toContain('[[02-authentication#Sessions]]');
       expect(api).not.toContain('see 02-authentication.md');
     } finally {
@@ -496,7 +497,7 @@ describe('cans import / export', () => {
     const tmp = makeTmpDir('export-dry');
     try {
       const vault = join(tmp, 'vault');
-      const { run } = await import('../src/commands/export');
+      const { run } = await import('../src/commands/export.ts');
       const result = await run(['logseq', '--from', fixturePath('flat-project'), '--vault', vault, '--dry-run']);
       expect(result.ok).toBe(true);
       // 4 spec files — includes 03-data.md (see obsidian-export comment above).

@@ -8,17 +8,17 @@
  * assertion failure demonstrating the finding. No assertion encodes current
  * buggy behavior; no try/catch swallows failures; nothing is skipped.
  *
- * Method: blackbox CLI spawn (Bun.spawnSync) against scratch workspaces under
+ * Method: blackbox CLI spawn (test/runtime.ts spawnCli) against scratch workspaces under
  * repo/.tmp/qa-verify/qa-05 (gitignored). Fixtures are read-only and copied in.
  */
-import { describe, expect, test, afterAll } from 'bun:test';
+import { describe, expect, test, afterAll } from '../testing.ts';
 import { join, dirname } from 'path';
 import {
   mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync,
 } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const IMPORT_FIXTURES = join(REPO, 'test', 'fixtures', 'import-fixtures');
 const FLAT_PROJECT = join(REPO, 'test', 'fixtures', 'flat-project');
 const BASE = join(REPO, '.tmp', 'qa-verify', 'qa-05');
@@ -26,8 +26,7 @@ const BASE = join(REPO, '.tmp', 'qa-verify', 'qa-05');
 function runCli(args: string[], cwd: string): { exit: number | null; out: string; err: string } {
   const env = { ...process.env } as Record<string, string>;
   delete env.CANS_ROOT; // isolation: the scratch cwd decides the workspace
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], { cwd, env, stdout: 'pipe', stderr: 'pipe' });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  return spawnCli(args, cwd, env);
 }
 
 /** Fresh `cans init --bare` workspace under BASE/<name>. */

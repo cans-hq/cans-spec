@@ -1,9 +1,9 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOpml, serializeOpml, encodeXmlEntity, decodeXmlEntity } from '../src/converters/opml';
-import { parseLogseq, serializeLogseq } from '../src/converters/logseq';
-import { parseObsidian, serializeObsidian, stripFrontmatter } from '../src/converters/obsidian';
-import { parseCheckbox, convertWikiLinks, serializeToCans } from '../src/converters/shared';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOpml, serializeOpml, encodeXmlEntity, decodeXmlEntity } from '../src/converters/opml.ts';
+import { parseLogseq, serializeLogseq } from '../src/converters/logseq.ts';
+import { parseObsidian, serializeObsidian, stripFrontmatter } from '../src/converters/obsidian.ts';
+import { parseCheckbox, convertWikiLinks, serializeToCans } from '../src/converters/shared.ts';
+import { readFixture } from './helpers.ts';
 
 describe('OPML', () => {
   const src = readFixture('import-fixtures', 'dynalist-export.opml');
