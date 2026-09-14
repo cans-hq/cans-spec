@@ -1,12 +1,13 @@
 import { join, basename } from 'path';
-import type { NewResult } from '../types';
-import { resolveWorkspaceRoot, resolveWorkspaceOrCreate, mkdirp, discoverAdrs, dirExists, isFile } from '../core/fs';
-import { parseArgs, type FlagSpec } from '../core/args';
+import type { NewResult } from '../types.ts';
+import { readText, writeText, dirFromUrl } from '../core/runtime.ts';
+import { resolveWorkspaceRoot, resolveWorkspaceOrCreate, mkdirp, discoverAdrs, dirExists, isFile } from '../core/fs.ts';
+import { parseArgs, type FlagSpec } from '../core/args.ts';
 
-const TEMPLATES_DIR = join(import.meta.dir, '..', '..', 'templates');
+const TEMPLATES_DIR = join(dirFromUrl(import.meta.url), '..', '..', 'templates');
 
 async function readTemplate(name: string): Promise<string> {
-  return await Bun.file(join(TEMPLATES_DIR, name)).text();
+  return await readText(join(TEMPLATES_DIR, name));
 }
 
 /** lowercase → strip double quotes → non-alphanumeric runs → hyphens → trim hyphens.
@@ -58,7 +59,7 @@ async function existingContentGuard(
   change: string,
 ): Promise<NewResult | null> {
   if (!isFile(abs)) return null;
-  const existing = await Bun.file(abs).text();
+  const existing = await readText(abs);
   if (existing === content) {
     return { ok: true, command: 'new', exitCode: 0, change, file };
   }
@@ -116,7 +117,7 @@ export async function run(args: string[]): Promise<NewResult> {
     const file = join('_tasks', `${slug}.md`);
     const guard = await existingContentGuard(join(workspace, file), file, content, slug);
     if (guard !== null) return guard;
-    await Bun.write(join(workspace, file), content);
+    await writeText(join(workspace, file), content);
     return { ok: true, command: 'new', exitCode: 0, change: slug, file };
   }
 
@@ -133,6 +134,6 @@ export async function run(args: string[]): Promise<NewResult> {
   const file = join('_adr', `${NNN}-${slug}.md`);
   const guard = await existingContentGuard(join(workspace, file), file, content, slug);
   if (guard !== null) return guard;
-  await Bun.write(join(workspace, file), content);
+  await writeText(join(workspace, file), content);
   return { ok: true, command: 'new', exitCode: 0, change: slug, file };
 }

@@ -1,7 +1,7 @@
 import type {
   CommandResult, CheckResult, Issue, InitResult, NewResult, DoneResult, StatusResult,
   BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, VersionResult,
-} from '../types';
+} from '../types.ts';
 
 /** Single emission point. Commands never console.log or process.exit directly.
  *  `refsOnly` (check only, §22/§36): human output is scoped to the References

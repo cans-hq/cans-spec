@@ -1,24 +1,28 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
-import type { CommandResult } from './types';
-import { emit } from './core/output';
-import pkg from '../package.json';
+import type { CommandResult } from './types.ts';
+import { emit } from './core/output.ts';
+import { argv, readText, dirFromUrl } from './core/runtime.ts';
+import { join } from 'node:path';
 
-/** §44: version line — derived from package.json so it can never drift. */
-const VERSION: string = pkg.version;
+/** §44: version line — derived from package.json so it can never drift.
+ *  Read through the runtime shim (issue #12): a bare JSON import has no
+ *  import attributes and is therefore not portable to the Node fallback. */
+const PKG_FILE = join(dirFromUrl(import.meta.url), '..', 'package.json');
+const VERSION: string = (JSON.parse(await readText(PKG_FILE)) as { version: string }).version;
 
-const [cmd, ...args] = Bun.argv.slice(2);
+const [cmd, ...args] = argv();
 
 async function dispatch(): Promise<CommandResult> {
   switch (cmd) {
-    case 'init':    return (await import('./commands/init')).run(args);
-    case 'check':   return (await import('./commands/check')).run(args);
-    case 'new':     return (await import('./commands/new')).run(args);
-    case 'done':    return (await import('./commands/done')).run(args);
-    case 'status':  return (await import('./commands/status')).run(args);
-    case 'budget':  return (await import('./commands/budget')).run(args);
-    case 'import':  return (await import('./commands/import')).run(args);
-    case 'export':  return (await import('./commands/export')).run(args);
+    case 'init':    return (await import('./commands/init.ts')).run(args);
+    case 'check':   return (await import('./commands/check.ts')).run(args);
+    case 'new':     return (await import('./commands/new.ts')).run(args);
+    case 'done':    return (await import('./commands/done.ts')).run(args);
+    case 'status':  return (await import('./commands/status.ts')).run(args);
+    case 'budget':  return (await import('./commands/budget.ts')).run(args);
+    case 'import':  return (await import('./commands/import.ts')).run(args);
+    case 'export':  return (await import('./commands/export.ts')).run(args);
     case 'help':
     case '-h':      // §20/§44: conventional help shortcuts
     case '--help':

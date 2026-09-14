@@ -1,5 +1,6 @@
 import { statSync, readdirSync, existsSync, mkdirSync, type Stats } from 'fs';
 import { join, relative, dirname, basename } from 'path';
+import { globFiles as runtimeGlobFiles } from './runtime.ts';
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
 
@@ -26,10 +27,8 @@ export function mkdirp(p: string): void {
 }
 
 export function globFiles(dir: string, pattern: string): string[] {
-  if (!dirExists(dir)) return [];
-  const g = new Bun.Glob(pattern);
-  const out = [...g.scanSync({ cwd: dir, onlyFiles: true })] as string[];
-  return out.sort();
+  // Delegated to the runtime shim (issue #12): Bun fast path, node:fs fallback.
+  return runtimeGlobFiles(dir, pattern);
 }
 
 /** Spec files: root-level *.md (excluding _-prefixed, AGENTS.md and other tool

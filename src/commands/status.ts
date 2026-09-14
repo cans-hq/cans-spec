@@ -1,12 +1,13 @@
 import { join, basename } from 'path';
 import { readFileSync } from 'fs';
-import type { StatusResult, OutlineNode } from '../types';
+import type { StatusResult, OutlineNode } from '../types.ts';
+import { readText } from '../core/runtime.ts';
 import {
   resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks,
   discoverArchivedTasks, discoverAdrs, dirExists,
-} from '../core/fs';
-import { parseOutline, flattenNodes } from '../core/outline';
-import { parseArgs, type FlagSpec } from '../core/args';
+} from '../core/fs.ts';
+import { parseOutline, flattenNodes } from '../core/outline.ts';
+import { parseArgs, type FlagSpec } from '../core/args.ts';
 
 export interface StatusArgs {
   unclaimed: boolean;
@@ -100,7 +101,7 @@ export async function run(args: string[]): Promise<StatusResult> {
   for (const rel of activeTasks) {
     let flat: OutlineNode[] = [];
     try {
-      flat = flattenNodes(parseOutline(await Bun.file(join(workspace, rel)).text(), rel));
+      flat = flattenNodes(parseOutline(await readText(join(workspace, rel)), rel));
     } catch {
       // unparsable task file: contributes nothing but its existence
     }

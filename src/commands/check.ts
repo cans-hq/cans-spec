@@ -1,23 +1,24 @@
 import { join } from 'path';
-import type { CheckResult, Issue, OutlineNode } from '../types';
+import type { CheckResult, Issue, OutlineNode } from '../types.ts';
+import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
-} from '../core/fs';
+} from '../core/fs.ts';
 import {
   parseOutline, extractBackPointers, flattenNodes, maxDepth as outlineMaxDepth,
   type ParseWarning,
-} from '../core/outline';
-import { loadRules } from '../core/rules';
-import { checkStructure, checkTbdPolicy } from '../core/structure';
-import { checkStyle } from '../core/style';
-import { checkOverflow, checkNoChaining } from '../core/overflow';
-import { checkRedundancy } from '../core/redundancy';
+} from '../core/outline.ts';
+import { loadRules } from '../core/rules.ts';
+import { checkStructure, checkTbdPolicy } from '../core/structure.ts';
+import { checkStyle } from '../core/style.ts';
+import { checkOverflow, checkNoChaining } from '../core/overflow.ts';
+import { checkRedundancy } from '../core/redundancy.ts';
 import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey,
-} from '../core/refs';
-import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args';
+} from '../core/refs.ts';
+import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args.ts';
 
 export interface CheckArgs {
   fix: boolean;
@@ -181,7 +182,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   for (const rel of specRel) {
     let text = '';
     try {
-      text = await Bun.file(join(root, rel)).text();
+      text = await readText(join(root, rel));
     } catch (e) {
       issues.push({
         file: rel, line: 0, level: 'error', category: 'structure',
@@ -212,7 +213,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   const auxFiles = new Map<string, OutlineNode[]>();
   for (const rel of [...safeActiveTasks(root), ...safeAdrs(root)]) {
     try {
-      const text = await Bun.file(join(root, rel)).text();
+      const text = await readText(join(root, rel));
       auxFiles.set(rel, parseOutline(text, rel));
     } catch {
       // unreadable/unparseable aux file: its refs are simply not counted
@@ -308,7 +309,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     const targetFiles = new Map<string, OutlineNode[]>();
     for (const rel of discoverOverflowTargets(root)) {
       try {
-        targetFiles.set(rel, parseOutline(await Bun.file(join(root, rel)).text(), rel));
+        targetFiles.set(rel, parseOutline(await readText(join(root, rel)), rel));
       } catch {
         // unreadable overflow target: skipped
       }
@@ -326,7 +327,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       const body = desired.get(rel) ?? null;
       const rewritten = rewriteRefBy(source, body);
       if (rewritten !== source) {
-        await Bun.write(join(root, rel), rewritten);
+        await writeText(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         backPointersUpdated++;
       }

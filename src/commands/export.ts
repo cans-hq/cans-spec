@@ -1,13 +1,14 @@
 import { join, basename, relative } from 'path';
-import type { ExportResult, ExportFormat, OutlineNode, ExternalNode } from '../types';
+import type { ExportResult, ExportFormat, OutlineNode, ExternalNode } from '../types.ts';
+import { readText, writeText } from '../core/runtime.ts';
 import {
   resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, discoverAdrs,
   mkdirp, dirExists, exists,
-} from '../core/fs';
-import { parseOutline } from '../core/outline';
-import { serializeOpml } from '../converters/opml';
-import { serializeLogseq } from '../converters/logseq';
-import { serializeObsidian } from '../converters/obsidian';
+} from '../core/fs.ts';
+import { parseOutline } from '../core/outline.ts';
+import { serializeOpml } from '../converters/opml.ts';
+import { serializeLogseq } from '../converters/logseq.ts';
+import { serializeObsidian } from '../converters/obsidian.ts';
 
 export interface ExportArgs {
   format: ExportFormat;
@@ -185,7 +186,7 @@ export async function run(args: string[]): Promise<ExportResult> {
     for (const rel of sources) {
       let text = '';
       try {
-        text = await Bun.file(join(workspace, rel)).text();
+        text = await readText(join(workspace, rel));
       } catch {
         continue;
       }
@@ -202,7 +203,7 @@ export async function run(args: string[]): Promise<ExportResult> {
       if (!opts.dryRun) {
         try {
           mkdirp(fmtDir);
-          await Bun.write(join(fmtDir, outputFileName(rel, f)), content);
+          await writeText(join(fmtDir, outputFileName(rel, f)), content);
         } catch (e) {
           const code = (e as NodeJS.ErrnoException | null)?.code;
           if (code === 'ENOTDIR' || code === 'EEXIST') return notDirError(fmtDir);

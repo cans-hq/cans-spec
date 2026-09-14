@@ -1,8 +1,8 @@
-import type { ExternalNode } from '../types';
+import type { ExternalNode } from '../types.ts';
 import {
   convertOwnerMarkers, convertWikiLinks, parseCheckbox, parseIndent,
   reverseWikiLinks, stripMetadata,
-} from './shared';
+} from './shared.ts';
 
 /** Remove a leading YAML frontmatter block (`---` fences at very top), fences included. */
 export function stripFrontmatter(source: string): string {

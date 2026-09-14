@@ -1,8 +1,8 @@
-import type { ExternalNode } from '../types';
+import type { ExternalNode } from '../types.ts';
 import {
   convertOwnerMarkers, convertWikiLinks, logseqSlashLinks, parseCheckbox,
   parseIndent, reverseWikiLinks, stripMetadata,
-} from './shared';
+} from './shared.ts';
 
 /** Logseq page → flat ExternalNode list (document order; hierarchy via `indent`).
  *  Drops pure `key:: value` property lines (keys may contain spaces — only `::`

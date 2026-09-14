@@ -3,9 +3,9 @@ import { basename, relative } from 'path';
 import type {
   OutlineNode, BackPointer, TokenBudgetRules,
   BudgetReadPlanItem, BudgetReadResult, BudgetWriteResult,
-} from '../types';
-import { flattenNodes, parseOutline } from './outline';
-import { targetMatchesKey } from './refs';
+} from '../types.ts';
+import { flattenNodes, parseOutline } from './outline.ts';
+import { targetMatchesKey } from './refs.ts';
 
 export function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil(text.length / charsPerToken);

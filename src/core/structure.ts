@@ -1,5 +1,5 @@
-import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types';
-import { flattenNodes } from './outline';
+import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.ts';
+import { flattenNodes } from './outline.ts';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the

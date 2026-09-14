@@ -1,5 +1,5 @@
-import type { OutlineNode, Issue, RedundancyRules } from '../types';
-import { flattenNodes } from './outline';
+import type { OutlineNode, Issue, RedundancyRules } from '../types.ts';
+import { flattenNodes } from './outline.ts';
 
 interface NodeRef {
   text: string;
