@@ -1,4 +1,4 @@
-import type { ExternalNode } from '../types';
+import type { ExternalNode } from '../types.ts';
 
 /** Escape the five XML entities. `&` first so output is never double-encoded. */
 export function encodeXmlEntity(s: string): string {

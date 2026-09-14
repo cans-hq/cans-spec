@@ -14,7 +14,8 @@
  *   #7  UNDOCUMENTED --tool <unknown> silently ignored (§21/§37 spirit)
  *   #8  UX          refusal inside cans/ prints empty reason (§21/§37)
  */
-import { describe, test, expect, afterEach, afterAll } from 'bun:test';
+import { describe, test, expect, afterEach, afterAll } from '../testing.ts';
+import { createHash } from 'node:crypto';
 import { join } from 'path';
 import {
   mkdirSync,
@@ -24,17 +25,13 @@ import {
   readFileSync,
 } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
 
-/** Blackbox CLI spawn: captures exit code + both streams. */
+
+/** Blackbox CLI spawn: captures exit code + both streams (runtime-aware, issue #12). */
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  return { exit: p.exitCode ?? -1, out: p.stdout.toString(), err: p.stderr.toString() };
+  const r = spawnCli(args, cwd);
+  return { exit: r.exit ?? -1, out: r.out, err: r.err };
 }
 
 /** Unique scratch workspace per test, under repo/.tmp/qa-verify (gitignored). */
@@ -70,9 +67,8 @@ function listFiles(root: string): string[] {
 }
 
 function sha256File(p: string): string {
-  const h = new Bun.CryptoHasher('sha256');
-  h.update(readFileSync(p));
-  return h.digest('hex');
+  // node:crypto — portable across Bun and Node (was Bun.CryptoHasher, issue #12)
+  return createHash('sha256').update(readFileSync(p)).digest('hex');
 }
 
 /** §35 output/init.json fixture: `created` entries (relative to cans/). */

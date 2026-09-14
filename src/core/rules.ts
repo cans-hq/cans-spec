@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Rules } from '../types';
+import type { Rules } from '../types.ts';
 
 interface YLine {
   lineNo: number;

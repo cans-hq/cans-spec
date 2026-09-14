@@ -2,15 +2,16 @@ import { join, basename, dirname } from 'path';
 import { readdirSync } from 'fs';
 import type {
   ImportResult, ImportFormat, ImportConflict, MergeStrategy, ExternalNode,
-} from '../types';
-import { resolveWorkspaceRoot, discoverSpecFiles, mkdirp, isFile, dirExists } from '../core/fs';
-import { convertArrowRefs, parseOpml, parseOpmlTitle } from '../converters/opml';
-import { parseLogseq } from '../converters/logseq';
-import { parseObsidian, stripFrontmatter } from '../converters/obsidian';
+} from '../types.ts';
+import { readText, writeText } from '../core/runtime.ts';
+import { resolveWorkspaceRoot, discoverSpecFiles, mkdirp, isFile, dirExists } from '../core/fs.ts';
+import { convertArrowRefs, parseOpml, parseOpmlTitle } from '../converters/opml.ts';
+import { parseLogseq } from '../converters/logseq.ts';
+import { parseObsidian, stripFrontmatter } from '../converters/obsidian.ts';
 import {
   serializeToCans, parseFromCans, stripMetadata, parseCheckbox,
   extractOverflowContent, type OverflowExtraction,
-} from '../converters/shared';
+} from '../converters/shared.ts';
 
 export interface ImportArgs {
   format: ImportFormat;
@@ -325,7 +326,7 @@ async function findExistingByRootText(targetDir: string, imported: ExternalNode[
   for (const rel of discoverSpecFiles(targetDir)) {
     let text = '';
     try {
-      text = await Bun.file(join(targetDir, rel)).text();
+      text = await readText(join(targetDir, rel));
     } catch {
       continue;
     }
@@ -400,7 +401,7 @@ export async function run(args: string[]): Promise<ImportResult> {
   for (const src of files) {
     let text = '';
     try {
-      text = await Bun.file(src).text();
+      text = await readText(src);
     } catch {
       continue;
     }
@@ -454,7 +455,7 @@ export async function run(args: string[]): Promise<ImportResult> {
     if (existingRel !== null) {
       const absTarget = join(workspace, existingRel);
       const outcome = mergeInto(
-        await Bun.file(absTarget).text(),
+        await readText(absTarget),
         imported,
         opts.mergeStrategy,
         existingRel,
@@ -462,11 +463,11 @@ export async function run(args: string[]): Promise<ImportResult> {
       conflicts.push(...outcome.conflicts);
       if (outcome.content !== null) {
         if (!opts.dryRun) {
-          await Bun.write(absTarget, canonicalizeRefTargets(outcome.content));
+          await writeText(absTarget, canonicalizeRefTargets(outcome.content));
           for (const ovf of overflow) {
             const ovfAbs = join(workspace, ovf.overflowFile);
             mkdirp(dirname(ovfAbs));
-            await Bun.write(ovfAbs, `${ovf.content}\n`);
+            await writeText(ovfAbs, `${ovf.content}\n`);
           }
         }
         merged.push(existingRel);
@@ -485,11 +486,11 @@ export async function run(args: string[]): Promise<ImportResult> {
     const cansText = canonicalizeRefTargets(serializeToCans(imported));
     if (!opts.dryRun) {
       mkdirp(dirname(absTarget));
-      await Bun.write(absTarget, cansText);
+      await writeText(absTarget, cansText);
       for (const ovf of overflow) {
         const ovfAbs = join(workspace, ovf.overflowFile);
         mkdirp(dirname(ovfAbs));
-        await Bun.write(ovfAbs, `${ovf.content}\n`);
+        await writeText(ovfAbs, `${ovf.content}\n`);
       }
     }
     newFiles.push(relName);

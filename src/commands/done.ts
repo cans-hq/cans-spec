@@ -1,10 +1,11 @@
 import { join } from 'path';
 import { renameSync } from 'fs';
-import type { DoneResult, OutlineNode } from '../types';
-import { resolveWorkspaceRoot, mkdirp, isFile, dirExists, globFiles } from '../core/fs';
-import { parseOutline, flattenNodes } from '../core/outline';
-import { checkWorkspace, type CheckArgs } from './check';
-import { parseArgs, type FlagSpec } from '../core/args';
+import type { DoneResult, OutlineNode } from '../types.ts';
+import { readText } from '../core/runtime.ts';
+import { resolveWorkspaceRoot, mkdirp, isFile, dirExists, globFiles } from '../core/fs.ts';
+import { parseOutline, flattenNodes } from '../core/outline.ts';
+import { checkWorkspace, type CheckArgs } from './check.ts';
+import { parseArgs, type FlagSpec } from '../core/args.ts';
 
 export interface DoneArgs {
   name: string;
@@ -105,7 +106,7 @@ export async function run(args: string[]): Promise<DoneResult> {
   let taskNodes: OutlineNode[] = [];
   let flat: OutlineNode[] = [];
   try {
-    taskNodes = parseOutline(await Bun.file(taskFile).text(), `_tasks/${name}.md`);
+    taskNodes = parseOutline(await readText(taskFile), `_tasks/${name}.md`);
     flat = flattenNodes(taskNodes);
   } catch {
     return failResult(name, `cannot parse _tasks/${name}.md — check for tab indentation or malformed content`);

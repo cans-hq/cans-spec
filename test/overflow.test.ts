@@ -1,8 +1,8 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline } from '../src/core/outline';
-import { checkOverflow } from '../src/core/overflow';
-import { defaultRules } from '../src/core/rules';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline } from '../src/core/outline.ts';
+import { checkOverflow } from '../src/core/overflow.ts';
+import { defaultRules } from '../src/core/rules.ts';
+import { readFixture } from './helpers.ts';
 
 const rules = defaultRules().overflow;
 

@@ -1,7 +1,7 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline } from '../src/core/outline';
-import { checkStructure } from '../src/core/structure';
-import { defaultRules } from '../src/core/rules';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline } from '../src/core/outline.ts';
+import { checkStructure } from '../src/core/structure.ts';
+import { defaultRules } from '../src/core/rules.ts';
 
 const rules = defaultRules().structure;
 

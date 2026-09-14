@@ -1,6 +1,7 @@
-import { describe, test, expect } from 'bun:test';
-import { loadRules, defaultRules, parseMinimalYaml } from '../src/core/rules';
-import { makeTmpDir, cleanTmpDir } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { writeTextSync } from './runtime.ts';
+import { loadRules, defaultRules, parseMinimalYaml } from '../src/core/rules.ts';
+import { makeTmpDir, cleanTmpDir } from './helpers.ts';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 
@@ -58,7 +59,7 @@ describe('loadRules', () => {
     const tmp = makeTmpDir('rules-partial');
     try {
       mkdirSync(tmp, { recursive: true });
-      Bun.write(join(tmp, '_rules.yaml'), 'structure:\n  node_length: { min: 5, max: 200 }\n');
+      writeTextSync(join(tmp, '_rules.yaml'), 'structure:\n  node_length: { min: 5, max: 200 }\n');
       const rules = loadRules(tmp);
       // listed key overrides
       expect(rules.structure.node_length.min).toBe(5);
@@ -129,7 +130,7 @@ describe('loadRules', () => {
         '  force_file_for: [code_block, table, diagram]',
         '',
       ].join('\n');
-      Bun.write(join(tmp, '_rules.yaml'), yaml);
+      writeTextSync(join(tmp, '_rules.yaml'), yaml);
       const rules = loadRules(tmp);
       expect(rules).toEqual(d);
     } finally {

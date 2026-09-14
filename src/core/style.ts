@@ -1,4 +1,4 @@
-import type { OutlineNode, Issue, StyleRules } from '../types';
+import type { OutlineNode, Issue, StyleRules } from '../types.ts';
 
 /** Style checks: shared-prefix nesting hint + unnecessary-nesting collapse hint.
  *  SEVERITY NOTE (arbitration, same class as the refs-severity decision): §14/§36

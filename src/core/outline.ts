@@ -1,4 +1,4 @@
-import type { OutlineNode, BackPointer, RefTarget } from '../types';
+import type { OutlineNode, BackPointer, RefTarget } from '../types.ts';
 
 const BULLET_RE = /^(\s*)-\s+(.*)$/;
 const CHECKBOX_RE = /^\[( |x|X)\]\s+/;

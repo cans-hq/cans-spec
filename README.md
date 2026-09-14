@@ -169,7 +169,15 @@ This is the most important section.
 
 ## Install
 
-Requires [Bun](https://bun.sh) ≥ 1.0 on your PATH (the CLI runs on the Bun runtime). No build step. Source IS distribution.
+No build step. Source IS distribution. Two runtimes are supported — Bun is the
+primary, Node.js is the fallback (issue #12):
+
+- **Bun ≥ 1.0 (recommended, primary)** — fastest path, used automatically when
+  Bun is on your PATH.
+- **Node.js ≥ 23.2 (fallback)** — for Termux / Android harnesses and any
+  environment without Bun. Termux: `pkg install nodejs` (ships Node 26.x ✓).
+  Node's builtin TypeScript stripping runs the sources directly; running from
+  a source checkout also works on Node ≥ 22.6 via `--experimental-strip-types`.
 
 **npm**
 
@@ -187,6 +195,8 @@ bun install -g cans-spec
 
 ```bash
 npx -p cans-spec cans init
+# or, with Bun installed:
+bunx cans-spec init
 ```
 
 All three give you the same `cans` command:
@@ -315,19 +325,21 @@ cans/
 
 ## Requirements
 
-- [Bun](https://bun.sh) ≥ 1.0
+- [Bun](https://bun.sh) ≥ 1.0 (primary) **or** Node.js ≥ 23.2 (fallback, no Bun needed — Termux: `pkg install nodejs`)
 - Git (for coordination; not required by CANS itself)
 - An AI agent that can read markdown (all of them)
 
-No Node.js. No Python. No `package-lock.json`. No `node_modules`. The `dependencies` field in `package.json` does not exist.
+No Python. No `package-lock.json`. No build step. The `dependencies` field in `package.json` does not exist — zero runtime dependencies on both runtimes.
 
 ---
 
 ## Contributing
 
-The entire codebase is ~1080 lines of TypeScript across 20 files. Read it in an afternoon.
+The entire codebase is ~1100 lines of TypeScript across 20 files. Read it in an afternoon.
 
-- `bun test` runs the suite (~95 tests)
+- `bun test` runs the suite on the primary runtime; `npm run test:node` runs the same suite on the Node fallback (node:test via a tiny bun:test compat shim in `test/node-compat.ts`)
+- CI runs both (`test-bun` + `test-node` matrix on Node 22/24)
+- All runtime-sensitive IO goes through one shim, `src/core/runtime.ts` — the only file allowed to touch Bun APIs; a self-audit test keeps it that way
 - No build step. Edit `src/`, run `bun test`, done.
 - PRs that add features get closed. PRs that delete code get merged.
 - If you want a new command, open an issue and justify it. Most get rejected. That's the point.

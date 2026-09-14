@@ -16,14 +16,14 @@
  *   F10 .......... finding 10 (done never updates back-pointers; §24/§35 done-success)
  *   control ...... harness pin (gate order: human gate blocks done; §24 r1)
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
 import {
   cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync,
 } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const FIXTURE_PROJECT = join(REPO, 'test', 'fixtures', 'flat-project');
 const SCRATCH = join(REPO, '.tmp', 'qa-verify', 'qa-04');
 
@@ -59,16 +59,10 @@ function initWs(name: string): Ws {
   return ws;
 }
 
-/** Blackbox CLI spawn — primary verification method. */
+/** Blackbox CLI spawn — primary verification method (runtime-aware, issue #12). */
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
-    env: { ...process.env, CANS_ROOT: '' },
-  });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
+  return spawnCli(args, cwd, { ...process.env, CANS_ROOT: '' });
 }
 
 /** JSON-mode output must be a single JSON document; a parse failure is itself an assertion failure. */

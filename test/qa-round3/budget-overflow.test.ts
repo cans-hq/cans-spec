@@ -26,12 +26,12 @@
  * full-file overrides behave correctly at HEAD (QA-13), so a red here can only be
  * the mapped finding — not the partial-merge bug (R3-R1a family, rules-config file).
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const SCRATCH = join(REPO, '.tmp', 'qa-round3', 'budget-overflow');
 
 interface Ws { root: string; cans: string }
@@ -47,13 +47,7 @@ function makeWs(name: string): Ws {
 }
 
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: { ...process.env, CANS_ROOT: '' },
-  });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  return spawnCli(args, cwd, { ...process.env, CANS_ROOT: '' });
 }
 
 function parseJsonOut(out: string): any {

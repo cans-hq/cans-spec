@@ -19,12 +19,12 @@
  *   F10 (MINOR) §16 no-chaining rule (see: inside overflow target) not enforced
  *   F11 (MINOR) §18 token_budget.warn_threshold is inert
  */
-import { describe, test, expect, afterEach, afterAll } from 'bun:test';
+import { describe, test, expect, afterEach, afterAll } from '../testing.ts';
 import { join } from 'path';
-import { mkdirSync, rmSync, writeFileSync, cpSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, cpSync } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const SCRATCH = join(REPO, '.tmp', 'qa-verify', 'qa-03');
 const FIXTURES = join(REPO, 'test', 'fixtures');
 
@@ -40,8 +40,7 @@ function spawnEnv(): Record<string, string> {
 }
 
 function runCli(args: string[], cwd: string): { exit: number | null; out: string; err: string } {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], { cwd, env: spawnEnv(), stdout: 'pipe', stderr: 'pipe' });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  return spawnCli(args, cwd, spawnEnv());
 }
 
 /** Unique scratch workspace per test: <SCRATCH>/<name>/cans/ (gitignored .tmp). */
@@ -378,7 +377,7 @@ describe('QA-03 F10 — §16 no-chaining rule for overflow targets', () => {
     // Append a see: ref INSIDE an extracted overflow target. §16: "Overflow
     // target files must NOT contain their own see: refs (no chaining)."
     const target = join(ws, 'cans', '04-api', 'request-schema.md');
-    const src = require('fs').readFileSync(target, 'utf-8');
+    const src = readFileSync(target, 'utf-8');
     writeFileSync(target, src + '- Schema source: see 04-api.md\n');
 
     const r = runCli(['check', '--json'], ws);

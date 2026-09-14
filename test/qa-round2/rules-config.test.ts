@@ -28,14 +28,14 @@
  *                  write ref-by comments — proves the fix mechanism works, so R2a/R2b
  *                  red can only be caused by the rules key being ignored.
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
 import {
   mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync,
 } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const SCRATCH = join(REPO, '.tmp', 'qa-round2', 'rules-config');
 
 interface Ws { root: string; cans: string }
@@ -51,16 +51,10 @@ function makeWs(name: string): Ws {
   return { root, cans: join(root, 'cans') };
 }
 
-/** Blackbox CLI spawn — primary verification method. */
+/** Blackbox CLI spawn — primary verification method (runtime-aware, issue #12). */
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
-    env: { ...process.env, CANS_ROOT: '' },
-  });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
+  return spawnCli(args, cwd, { ...process.env, CANS_ROOT: '' });
 }
 
 /** JSON-mode output must be a single JSON document; a parse failure is itself an assertion failure. */

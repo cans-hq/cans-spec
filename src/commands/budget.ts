@@ -1,10 +1,11 @@
 import { join, basename } from 'path';
-import type { BudgetReadResult, BudgetWriteResult, OutlineNode, Rules } from '../types';
-import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists } from '../core/fs';
-import { parseOutline } from '../core/outline';
-import { loadRules } from '../core/rules';
-import { buildRefGraph } from '../core/refs';
-import { buildReadPlan, buildWritePlan } from '../core/token-budget';
+import type { BudgetReadResult, BudgetWriteResult, OutlineNode, Rules } from '../types.ts';
+import { readText } from '../core/runtime.ts';
+import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists } from '../core/fs.ts';
+import { parseOutline } from '../core/outline.ts';
+import { loadRules } from '../core/rules.ts';
+import { buildRefGraph } from '../core/refs.ts';
+import { buildReadPlan, buildWritePlan } from '../core/token-budget.ts';
 
 export interface BudgetArgs {
   mode: 'read' | 'write';
@@ -164,7 +165,7 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
   const files = new Map<string, OutlineNode[]>();
   for (const rel of discoverSpecFiles(workspace)) {
     try {
-      files.set(rel, parseOutline(await Bun.file(join(workspace, rel)).text(), rel));
+      files.set(rel, parseOutline(await readText(join(workspace, rel)), rel));
     } catch {
       // unreadable spec file: excluded from the plan
     }

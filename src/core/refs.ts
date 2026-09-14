@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types';
-import { flattenNodes, parseOutline } from './outline';
-import { resolveSpecFile, toRelative, isFile } from './fs';
+import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
+import { flattenNodes, parseOutline } from './outline.ts';
+import { resolveSpecFile, toRelative, isFile } from './fs.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;

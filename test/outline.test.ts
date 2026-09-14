@@ -1,6 +1,6 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline, flattenNodes, countNodes, maxDepth } from '../src/core/outline';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline, flattenNodes, countNodes, maxDepth } from '../src/core/outline.ts';
+import { readFixture } from './helpers.ts';
 
 describe('parseOutline', () => {
   const src = readFixture('flat-project', '02-authentication.md');

@@ -1,7 +1,7 @@
-import { describe, test, expect } from 'bun:test';
-import { parseOutline } from '../src/core/outline';
-import { buildRefGraph, checkRefs, detectDeepHops, detectOrphans } from '../src/core/refs';
-import { readFixture } from './helpers';
+import { describe, test, expect } from './testing.ts';
+import { parseOutline } from '../src/core/outline.ts';
+import { buildRefGraph, checkRefs, detectDeepHops, detectOrphans } from '../src/core/refs.ts';
+import { readFixture } from './helpers.ts';
 
 function loadFiles(project: string, fileNames: string[]): Map<string, any[]> {
   const map = new Map();

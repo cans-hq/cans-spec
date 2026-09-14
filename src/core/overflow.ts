@@ -1,5 +1,5 @@
-import type { OutlineNode, Issue, OverflowRules } from '../types';
-import { flattenNodes } from './outline';
+import type { OutlineNode, Issue, OverflowRules } from '../types.ts';
+import { flattenNodes } from './outline.ts';
 
 /** Overflow checks: code fences, tables, over-long nodes. All errors.
  *  §18: `force_file_for` lists the content categories forced into files —

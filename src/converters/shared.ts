@@ -1,4 +1,4 @@
-import type { ExternalNode } from '../types';
+import type { ExternalNode } from '../types.ts';
 
 /** Leading whitespace → indent units. 2 spaces per level; each tab counts as 2 spaces. */
 export function parseIndent(raw: string): number {

@@ -18,14 +18,13 @@
  *                  ENOTDIR exit 2; §28/§37/§19: user-correctable → exit 1 + ✗ fix)
  *   control ...... harness pin (plain missing task name already errors correctly; §24/§37)
  */
-import { describe, test, expect, afterEach } from 'bun:test';
+import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'fs';
+import { spawnCli, REPO } from '../runtime.ts';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
 const SCRATCH = join(REPO, '.tmp', 'qa-round2', 'adversarial');
 
 interface Ws { root: string; cans: string }
@@ -51,16 +50,10 @@ function initWs(name: string): Ws {
   return { root, cans: join(root, 'cans') };
 }
 
-/** Blackbox CLI spawn — primary verification method. */
+/** Blackbox CLI spawn — primary verification method (runtime-aware, issue #12). */
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
-    env: { ...process.env, CANS_ROOT: '' },
-  });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  // Isolate from any ambient CANS_ROOT other suites might leave behind ('' is falsy → ignored).
+  return spawnCli(args, cwd, { ...process.env, CANS_ROOT: '' });
 }
 
 /** §37 errors may land on stdout (✗ user errors) or stderr (top-level catch); judge both. */

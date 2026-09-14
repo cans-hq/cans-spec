@@ -9,12 +9,12 @@
  * Method: blackbox CLI spawn (`bun run src/cli.ts check ...`) from a scratch
  * workspace containing a hand-built `cans/` dir under .tmp/qa-verify/ (gitignored).
  */
-import { describe, test, expect, afterAll } from 'bun:test';
+import { describe, test, expect, afterAll } from '../testing.ts';
 import { join, dirname } from 'path';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 
-const REPO = join(import.meta.dir, '..', '..');
-const CLI = join(REPO, 'src', 'cli.ts');
+import { spawnCli, REPO } from '../runtime.ts';
+
 const SCRATCH_ROOT = join(REPO, '.tmp', 'qa-verify', 'qa-02-refs');
 
 interface Issue {
@@ -42,8 +42,7 @@ interface CheckJson {
 }
 
 function runCli(args: string[], cwd: string) {
-  const p = Bun.spawnSync(['bun', 'run', CLI, ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
-  return { exit: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
+  return spawnCli(args, cwd);
 }
 
 /** Create a scratch workspace dir with an empty `cans/` inside. */
@@ -65,7 +64,7 @@ function copyFixtureSpec(ws: string, fixture: string, file: string): void {
   writeFileSync(join(ws, 'cans', file), readFileSync(join(REPO, 'test', 'fixtures', fixture, file)));
 }
 
-function checkJson(ws: string, extraArgs: string[] = []): { exit: number; json: CheckJson } {
+function checkJson(ws: string, extraArgs: string[] = []): { exit: number | null; json: CheckJson } {
   const res = runCli(['check', '--json', ...extraArgs], ws);
   return { exit: res.exit, json: JSON.parse(res.out) as CheckJson };
 }

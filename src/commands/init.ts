@@ -1,12 +1,13 @@
 import { basename, dirname, join, relative } from 'path';
-import type { InitResult } from '../types';
-import { resolveWorkspaceRoot, resolveInitTarget, mkdirp, exists, dirExists } from '../core/fs';
-import { parseArgs, type FlagSpec } from '../core/args';
+import type { InitResult } from '../types.ts';
+import { readText, writeText, dirFromUrl } from '../core/runtime.ts';
+import { resolveWorkspaceRoot, resolveInitTarget, mkdirp, exists, dirExists } from '../core/fs.ts';
+import { parseArgs, type FlagSpec } from '../core/args.ts';
 
-const TEMPLATES_DIR = join(import.meta.dir, '..', '..', 'templates');
+const TEMPLATES_DIR = join(dirFromUrl(import.meta.url), '..', '..', 'templates');
 
 async function readTemplate(name: string): Promise<string> {
-  return await Bun.file(join(TEMPLATES_DIR, name)).text();
+  return await readText(join(TEMPLATES_DIR, name));
 }
 
 export interface InitArgs {
@@ -168,7 +169,7 @@ export async function run(args: string[]): Promise<InitResult> {
       skipped.push(entry.path);
       continue;
     }
-    await Bun.write(abs, entry.content ?? '');
+    await writeText(abs, entry.content ?? '');
     created.push(entry.path);
   }
 
