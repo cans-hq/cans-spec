@@ -14,12 +14,29 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
 
-  test:
+  test-bun:
+    # Primary runtime: Bun fast paths in the runtime shim (issue #12).
     runs-on: ubuntu-latest
     needs: typecheck
-    continue-on-error: true   # red until implementations land
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test
+
+  test-node:
+    # Fallback runtime: the same suite spawns the CLI via Node's TypeScript
+    # type-stripping and runs on node:test through the bun:test compat shim
+    # (issue #12). Node 22 uses --experimental-strip-types; 23.6+ is native.
+    runs-on: ubuntu-latest
+    needs: typecheck
+    strategy:
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install --no-package-lock
+      - run: npm run test:node

@@ -3,18 +3,21 @@
   "version": "0.1.2",
   "description": "Canonical Agent-Native Spec — the outline is the spec, the state, and the task board",
   "bin": {
-    "cans": "./src/cli.ts"
+    "cans": "./bin/cans.js"
   },
   "type": "module",
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.0.0",
+    "node": ">=23.2.0"
   },
   "scripts": {
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "prepublishOnly": "bun run typecheck && bun test"
+    "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
+    "prepublishOnly": "npm run typecheck && bun test"
   },
   "files": [
+    "bin/",
     "src/",
     "templates/",
     "README.md",

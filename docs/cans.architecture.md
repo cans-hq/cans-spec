@@ -130,13 +130,13 @@ There is no separate "project state" to query. An agent reads the outline and kn
 
 | Layer | Choice | Why |
 |---|---|---|
-| Runtime | Bun ≥ 1.0 | Native TS execution, built-in fs/path/glob |
+| Runtime | Bun ≥ 1.0 (primary), Node.js ≥ 23.2 (fallback, issue #12) | Native TS execution on both — Bun fast paths, node: builtins fallback |
 | Language | TypeScript | Type safety without compilation ceremony |
 | Dependencies | **Zero** | No commander, no yaml parser, no zod, no chalk |
-| Config format | YAML (`_rules.yaml`) | Human-editable, Bun parses natively |
+| Config format | YAML (`_rules.yaml`) | Human-editable, minimal custom parser |
 | Spec format | Markdown outlines | Universal, git-friendly, agent-native |
 | Coordination | Git | Branch per change, merge when done |
-| CLI dispatch | Manual `Bun.argv` parsing | 10 commands don't need a framework |
+| CLI dispatch | Manual `process.argv` parsing | 10 commands don't need a framework |
 
 ---
 
@@ -498,10 +498,10 @@ cans help
 - Commands do not import each other.
 - Core logic in `core/`, not command files.
 - `checkWorkspace()` shared internally by `check` and `done`.
-- No framework. `Bun.argv` + switch.
+- No framework. `process.argv` + switch (runtime-portable via the shim, issue #12).
 
 ### Arg parsing
-Primitive. `--flag value` only. No `--flag=value`, no short flags, no combined flags. `Bun.argv` handles shell quoting.
+Primitive. `--flag value` only. No `--flag=value`, no short flags, no combined flags. `process.argv` handles shell quoting.
 
 ---
 
@@ -764,10 +764,10 @@ Strips YAML frontmatter. Converts `[[wiki-links]]` and `![[embeds]]` → `see:`.
 
 ## 32. Filesystem Helpers
 
-- `exists()`: `Bun.file(p).exists()`
+- `readText()` / `writeText()` / `globFiles()` / `argv()` / `dirFromUrl()`: **runtime shim** (`core/runtime.ts`, issue #12) — Bun fast path (`Bun.file`/`Bun.write`/`Bun.Glob`), `node:` builtins fallback. The ONLY module allowed to touch Bun APIs.
+- `exists()`: `fs.existsSync`
 - `dirExists()`: `fs.stat` + isDirectory
 - `mkdirp()`: recursive directory creation
-- `globFiles()`: `Bun.Glob` scanSync
 - `discoverSpecFiles()`: flat `*.md` + folder `*/index.md`, excluding `_` prefixed and `AGENTS.md`
 - `discoverActiveTasks()`: `_tasks/*.md`
 - `discoverArchivedTasks()`: `_tasks/_archive/*.md`
@@ -1368,7 +1368,7 @@ Never: stack traces for expected errors, "An unexpected error occurred", error c
 
 ## 38. Testing Strategy
 
-**Framework:** Bun native test runner. ~95 tests.
+**Framework:** Bun native test runner (primary); node:test via `test/node-compat.ts` (fallback, issue #12). The same suite runs green on both: `bun test` / `npm run test:node`. Blackbox suites spawn `src/cli.ts` through `test/runtime.ts spawnCli`, which picks the CURRENT runtime — so the Node job executes the real fallback path.
 
 | File | Tests | Covers |
 |---|---:|---|
@@ -1395,19 +1395,21 @@ Never: stack traces for expected errors, "An unexpected error occurred", error c
 {
   "name": "cans",
   "version": "0.1.0",
-  "bin": { "cans": "./src/cli.ts" },
+  "bin": { "cans": "./bin/cans.js" },
   "type": "module",
-  "engines": { "bun": ">=1.0.0" },
-  "scripts": { "test": "bun test", "prepublishOnly": "bun test" },
-  "files": ["src/", "templates/", "README.md", "LICENSE"]
+  "engines": { "bun": ">=1.0.0", "node": ">=23.2.0" },
+  "scripts": { "test": "bun test", "test:node": "node --test ..." },
+  "files": ["bin/", "src/", "templates/", "README.md", "LICENSE"]
 }
 ```
 
-No build step. No `dist/`. No `tsc`. Shebang: `#!/usr/bin/env bun`. Source IS distribution.
+No build step. No `dist/`. No `tsc` emit. Source IS distribution — on BOTH runtimes.
+
+`bin/cans.js` is a plain-JS launcher (issue #12): under Bun it runs the CLI in-process; with Bun on PATH it re-execs Bun; otherwise it registers `bin/ts-loader.mjs` (builtin `stripTypeScriptTypes` — Node's default stripping refuses files under `node_modules`) and runs the TS sources directly.
 
 Install: `npm install -g cans-spec` or `bun install -g cans-spec` (bin: `cans`).
 
-CI: GitHub Actions → `oven-sh/setup-bun@v2` → `bun install` → `bun test`. Nothing else.
+CI: GitHub Actions → `test-bun` (`bun install` → `bun test`) + `test-node` (Node 22/24 matrix → `npm run test:node`). Nothing else.
 
 ---
 
