@@ -150,10 +150,33 @@ export function checkRefs(
 
 /** Deep-hop detection: a file that both receives refs and issues them extends
  *  the ref chain. `maxHops` (§18 references.max_hops, default 1) is the number
- *  of allowed hops: a chain whose hop count through `b` exceeds it is flagged.
- *  Hop count for file `b` with outgoing refs = (longest incoming chain into b) + 1.
- *  §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
- *  skipped entirely. */
+ *  of allowed hops.
+ *
+ *  Semantics (issue #5):
+ *  - Nodes are the loaded file keys; an edge a → b exists when a holds a see:
+ *    ref resolving to loaded file b (targetMatchesKey, flat and folder
+ *    layouts). Self-refs never form edges — checkRefs reports those.
+ *  - Strongly-connected meshes (2-cycles, 3-cycles, any mutual back-reference
+ *    cluster — the shape the engine's own redundancy guidance encourages) are
+ *    collapsed via Tarjan's SCC. A ref from b back into b's own mesh is the
+ *    documented back-reference pattern and is never a hop; only refs LEAVING
+ *    b's mesh extend a chain, so a pure mesh can never be flagged.
+ *  - For a file b with a mesh-exiting outgoing ref, the hop count is the
+ *    longest chain of refs ending at b (counted over simple paths, so a mesh
+ *    cannot poison the count) + 1 for b's outgoing edge. Chains are counted
+ *    with a cycle-safe bounded search: nothing is memoized from a truncated
+ *    traversal (the old depthOf cached values computed under its cycle guard,
+ *    making symmetric graphs flag asymmetrically depending on iteration
+ *    order); only confirmed saturations at maxHops are cached, and those hold
+ *    for every caller. Hop count above maxHops flags b.
+ *  - The suggested fix (`add "see: <out>" directly to <from>`, where from is
+ *    the deepest direct referrer of b, ties broken by file key sort so output
+ *    is stable) is never a self-reference: from ≠ b holds because incoming
+ *    lists exclude self, and from = out would place from, b and out in one
+ *    SCC — guarded defensively anyway, so the advice can never convert a
+ *    deep-hop error into a checkRefs self-reference error.
+ *  - §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
+ *    skipped entirely. */
 export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
   if (maxHops === null) return [];
   const issues: Issue[] = [];
@@ -175,31 +198,109 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     }
   }
 
-  // depth(x) = length of the longest incoming chain ending at x (0 = no incoming).
-  const depth = new Map<string, number>();
-  const visiting = new Set<string>();
-  const depthOf = (x: string): number => {
-    const memo = depth.get(x);
-    if (memo !== undefined) return memo;
-    if (visiting.has(x)) return 0; // cycle guard
-    visiting.add(x);
-    let d = 0;
-    for (const a of incoming.get(x) ?? []) {
-      if (a === x) continue;
-      d = Math.max(d, depthOf(a) + 1);
+  // Tarjan's SCC over exactly the edges `incoming` encodes (adjacency is
+  // derived from it, so classification and cycle detection cannot disagree).
+  // Recursive is fine: spec workspaces are tiny, and traversal depth is
+  // bounded by the file count either way.
+  const sccId = new Map<string, number>();
+  {
+    const adj = new Map<string, string[]>();
+    for (const [b, referrers] of incoming) {
+      for (const a of referrers) {
+        const list = adj.get(a) ?? [];
+        if (!list.includes(b)) list.push(b);
+        adj.set(a, list);
+      }
     }
-    visiting.delete(x);
-    depth.set(x, d);
+    const index = new Map<string, number>();
+    const low = new Map<string, number>();
+    const onStack = new Set<string>();
+    const stack: string[] = [];
+    let counter = 0;
+    let components = 0;
+    const strongconnect = (v: string): void => {
+      index.set(v, counter);
+      low.set(v, counter);
+      counter += 1;
+      stack.push(v);
+      onStack.add(v);
+      for (const w of adj.get(v) ?? []) {
+        if (!index.has(w)) {
+          strongconnect(w);
+          low.set(v, Math.min(low.get(v)!, low.get(w)!));
+        } else if (onStack.has(w)) {
+          low.set(v, Math.min(low.get(v)!, index.get(w)!));
+        }
+      }
+      if (low.get(v) === index.get(v)) {
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          sccId.set(w, components);
+        } while (w !== v);
+        components += 1;
+      }
+    };
+    for (const v of [...keys].sort()) {
+      if (!index.has(v)) strongconnect(v);
+    }
+  }
+
+  // First loaded key a raw ref target matches — the same first-match loop the
+  // incoming map uses, so ref classification and edge building always agree.
+  const resolveKey = (name: string): string | null => {
+    for (const key of keys) {
+      if (targetMatchesKey(name, key)) return key;
+    }
+    return null;
+  };
+
+  // depth(x) = longest chain of refs ending at x, over simple paths (no file
+  // repeats), saturated at maxHops — the flag decision only ever needs to know
+  // whether the chain reaches maxHops. Values are computed per query with a
+  // fresh path-visited set; ONLY confirmed saturations are cached, and a
+  // saturation is a graph property that holds for every caller.
+  const saturated = new Set<string>();
+  const explore = (x: string, visited: Set<string>, len: number): number => {
+    let best = len;
+    if (best >= maxHops) return best;
+    for (const u of incoming.get(x) ?? []) {
+      if (visited.has(u)) continue;
+      visited.add(u);
+      best = Math.max(best, explore(u, visited, len + 1));
+      visited.delete(u);
+      if (best >= maxHops) return best;
+    }
+    return best;
+  };
+  const depthOf = (x: string): number => {
+    if (saturated.has(x)) return maxHops;
+    const d = explore(x, new Set([x]), 0);
+    if (d >= maxHops) {
+      saturated.add(x);
+      return maxHops;
+    }
     return d;
   };
 
   for (const [b, outTargets] of graph.forward) {
-    const outgoing = outTargets.filter(r => r.file !== b);
+    const bScc = sccId.get(b);
+    if (bScc === undefined) continue; // unreachable: every key is a Tarjan node
+    const outgoing = outTargets.filter(r => {
+      if (r.file === b) return false; // self-reference, as before
+      const t = resolveKey(r.file);
+      if (t !== null && sccId.get(t) === bScc) return false; // back-ref into b's own mesh
+      return true;
+    });
     if (outgoing.length === 0) continue;
     if (depthOf(b) + 1 <= maxHops) continue;
+    // Deepest direct referrer names the chain; ties break by file key sort so
+    // the output never depends on map iteration order.
+    const referrers = (incoming.get(b) ?? []).slice().sort();
     let from: string | null = null;
     let best = -1;
-    for (const a of incoming.get(b) ?? []) {
+    for (const a of referrers) {
       const d = depthOf(a);
       if (d > best) {
         best = d;
@@ -208,6 +309,11 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     }
     if (from === null) continue;
     const out = outgoing[0];
+    // Defensive invariant (issue #5 defect 2): the suggested fix must never be
+    // a self-reference — checkRefs rejects those, so the advice would turn one
+    // error into another. from ≠ b holds by construction; from = out would
+    // put from, b and out in one SCC. Skip rather than emit a broken fix.
+    if (from === b || from === out.file) continue;
     const anchor = out.anchor !== null ? `#${out.anchor}` : '';
     issues.push({
       file: b, line: out.line, level: 'error', category: 'refs',
