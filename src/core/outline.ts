@@ -170,20 +170,29 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
         top.children.push(node);
         stack.push(node);
       } else {
-        // shallower: pop until we find the parent level
-        while (stack.length > 1 && stack[stack.length - 1].indent > indent) {
+        // shallower: pop until we find the parent level — all the way to an
+        // empty stack, not just down to stack[0] (issue #7). The stack bottom
+        // is only a real parent when the file's first bullet sits at column
+        // 0; when it opens indented (e.g. under a `#` heading) its indent
+        // must not swallow bullets that dedent past it, or the whole tree
+        // silently re-parents under that first node.
+        while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
           stack.pop();
         }
-        const candidate = stack[stack.length - 1];
-        if (candidate.indent === indent) {
+        if (stack.length === 0) {
+          // dedented past every open node: a root sibling
+          roots.push(node);
+          stack.push(node);
+        } else if (stack[stack.length - 1].indent === indent) {
+          // sibling of the deepest open node at this level
           stack.pop();
           const parent = stack[stack.length - 1];
           if (parent) parent.children.push(node);
           else roots.push(node);
           stack.push(node);
         } else {
-          // indented jump deeper than expected under candidate
-          candidate.children.push(node);
+          // indented jump deeper than expected under that node
+          stack[stack.length - 1].children.push(node);
           stack.push(node);
         }
       }
