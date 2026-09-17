@@ -90,6 +90,8 @@ export interface RedundancyRules {
   word_frequency_threshold: number | null;
   phrase_overlap_threshold: number | null;
   cross_file_threshold: number | null;
+  /** Layer 3 switch: deleted → false (§18 delete-key semantics). */
+  fuzzy: boolean;
   /** Parameters (not checks): keep their defaults when deleted (§18). */
   stopwords: string[];
   synonyms: string[][];
