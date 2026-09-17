@@ -209,8 +209,18 @@ export function flattenNodes(nodes: OutlineNode[]): OutlineNode[] {
 export function extractBackPointers(source: string, file: string): BackPointer[] {
   const out: BackPointer[] = [];
   const lines = normalizeEol(source).split('\n');
+  // Issue #6: fence awareness — a `<!-- ref-by: ... -->` quoted inside a fenced
+  // example is documentation, not a real back-pointer. Same toggle rule as
+  // parseOutline (trimmed line starts with ```); the marker line itself is
+  // fence infrastructure and never carries a counted comment either.
+  let fenceOpen = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(REF_BY_RE);
+    if (FENCE_RE.test(lines[i]!.trim())) {
+      fenceOpen = !fenceOpen;
+      continue;
+    }
+    if (fenceOpen) continue;
+    const m = lines[i]!.match(REF_BY_RE);
     if (!m) continue;
     const entries = m[1].split(',').map(s => s.trim()).filter(Boolean);
     for (const e of entries) {

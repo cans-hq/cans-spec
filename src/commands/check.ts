@@ -42,6 +42,10 @@ const CHECK_FLAGS: FlagSpec[] = [
 ];
 
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
+// Fence marker rule, mirrored from src/core/outline.ts (issue #6): a line whose
+// trimmed form starts with ``` toggles fence state. Kept as a regex to reuse
+// the outline.ts FENCE_RE convention; the two must never diverge.
+const FENCE_RE = /^```/;
 
 // globFiles throws ENOENT on missing dirs — guard the optional ones.
 function safeActiveTasks(root: string): string[] {
@@ -111,15 +115,56 @@ function refTargetKey(name: string, keys: Iterable<string>): string | null {
   return null;
 }
 
+/** Issue #6: remove ONLY the ref-by comment substring from a non-bullet line,
+ *  keeping the surrounding prose. Collapses the double space left where the
+ *  comment sat (one seam space absorbed) and trims trailing whitespace. The
+ *  caller drops the line only when nothing but the comment remains. */
+function stripRefByKeepProse(raw: string): string {
+  const m = raw.match(REF_BY_RE);
+  if (m === null || m.index === undefined) return raw;
+  let out = raw.slice(0, m.index) + raw.slice(m.index + m[0].length);
+  if (out.charAt(m.index - 1) === ' ' && out.charAt(m.index) === ' ') {
+    out = out.slice(0, m.index - 1) + out.slice(m.index);
+  }
+  return out.replace(/[ \t]+$/, '');
+}
+
 /** Rewrite `<!-- ref-by: ... -->` comments in one spec file source.
- *  Replaces the first existing comment's content, drops duplicates/stale ones,
- *  or inserts a fresh comment line right after the first root bullet. */
-function rewriteRefBy(source: string, body: string | null): string {
+ *  Fence-aware and prose-preserving (issue #6):
+ *  - Lines inside ``` fences (and the fence markers themselves) are preserved
+ *    byte-for-byte: never scanned as hits, never rewritten, never dropped, and
+ *    fenced "- fake bullets" are never insertion anchors.
+ *  - Replaces the first existing comment's content; duplicates/stale hits keep
+ *    their line — bullets are stripped as before, non-bullet prose loses only
+ *    the comment substring (the line is dropped only when bare).
+ *  - With no hits and a desired body, inserts a fresh comment line right after
+ *    the first root bullet outside any fence, appended at end when none exists
+ *    — unless the file ends inside an unterminated fence, in which case the
+ *    comment is inserted before the fence opener (never inside a fence).
+ *  Exported for regression tests (issue #6); behavior lives in this module. */
+export function rewriteRefBy(source: string, body: string | null): string {
   const lines: Array<string | null> = source.split('\n');
   const comment = body !== null && body !== '' ? `<!-- ref-by: ${body} -->` : null;
   const hits: number[] = [];
+  let fenceOpen = false;
+  let fenceOpener = -1;
+  const inFence: boolean[] = new Array(lines.length).fill(false);
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i] !== null && REF_BY_RE.test(lines[i]!)) hits.push(i);
+    const raw = lines[i]!;
+    if (FENCE_RE.test(raw.trim())) {
+      // Fence marker: toggles state; never a hit, never an anchor, never touched.
+      inFence[i] = true;
+      if (fenceOpen) {
+        fenceOpen = false;
+      } else {
+        fenceOpen = true;
+        fenceOpener = i;
+      }
+      continue;
+    }
+    inFence[i] = fenceOpen;
+    if (fenceOpen) continue;
+    if (REF_BY_RE.test(raw)) hits.push(i);
   }
   if (hits.length > 0) {
     for (let j = 0; j < hits.length; j++) {
@@ -129,17 +174,27 @@ function rewriteRefBy(source: string, body: string | null): string {
         lines[i] = raw.replace(REF_BY_RE, comment);
       } else {
         const isBullet = /^\s*-\s/.test(raw);
-        lines[i] = isBullet ? raw.replace(REF_BY_RE, '').replace(/[ \t]+$/, '') : null;
+        if (isBullet) {
+          lines[i] = raw.replace(REF_BY_RE, '').replace(/[ \t]+$/, '');
+        } else {
+          // Issue #6: never delete a prose line whole — strip the comment only.
+          const stripped = stripRefByKeepProse(raw);
+          lines[i] = stripped.trim() === '' ? null : stripped;
+        }
       }
     }
   } else if (comment !== null) {
     let insertAt = lines.length;
     for (let i = 0; i < lines.length; i++) {
+      if (inFence[i]) continue; // fenced `- fake bullets` are not anchors
       if (/^- /.test(lines[i]!)) {
         insertAt = i + 1;
         break;
       }
     }
+    // Issue #6: never insert inside an open fence — appending at EOF while a
+    // fence is unterminated would corrupt the fenced region.
+    if (insertAt >= lines.length && fenceOpen) insertAt = fenceOpener;
     lines.splice(insertAt, 0, comment);
   }
   return lines.filter((l): l is string => l !== null).join('\n');
