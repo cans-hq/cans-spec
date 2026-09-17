@@ -209,7 +209,13 @@ describe('issue #8: structure/style checks do not report the phantom root', () =
       '',
     ].join('\n');
     const nodes = parseOutline(src, 'i.md');
-    const issues = checkStyle(nodes, 'i.md', STYLE_RULES);
+    // Merge reconciliation: issue #2 wired style.prefer into checkStyle, and the
+    // default (prefer: 'sibling') now suppresses the shared-prefix grouping hint.
+    // This control verifies the SYNTHETIC-NODE exclusion, not the prefer
+    // modulation — so run it with the modulation off (prefer: null = documented
+    // "both base hints fire" mode) where a real parent must warn.
+    const controlRules = { ...STYLE_RULES, prefer: null as typeof STYLE_RULES.prefer };
+    const issues = checkStyle(nodes, 'i.md', controlRules);
     expect(issues.some(i => i.message.includes('share prefix "report"'))).toBe(true);
   });
 });
