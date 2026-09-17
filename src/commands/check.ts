@@ -85,6 +85,7 @@ function zeroedCounts(): Omit<CheckResult, 'ok' | 'command' | 'exitCode'> {
     errorCount: 0,
     warningCount: 0,
     backPointersUpdated: 0,
+    backPointersUpdatedFiles: [],
   };
 }
 
@@ -320,21 +321,33 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.
   // §18/§17: with the back-pointer check off (back_pointers false or deleted),
   // --fix must not write anything — backPointersUpdated stays 0, no file touched.
+  // Issue #11: a [file] filter scopes the WRITES to the matched files (refs
+  // stay global) — ref-by comments in non-matched spec files are never touched.
   let backPointersUpdated = 0;
+  const backPointersUpdatedFiles: string[] = [];
   if (opts.fix && backPointersOn) {
     const desired = rebuildBackPointers(allFiles, graph);
-    for (const [rel, source] of specSources) {
+    // Filtered run → only the checkable (filter-matched) spec files; unfiltered
+    // run (and `cans done`, which fixes with file: null) → every spec source.
+    const fixable: string[] = opts.file !== null ? checkable : [...specSources.keys()];
+    for (const rel of fixable) {
+      const source = specSources.get(rel);
+      if (source === undefined) continue;
       const body = desired.get(rel) ?? null;
       const rewritten = rewriteRefBy(source, body);
       if (rewritten !== source) {
         await writeText(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         backPointersUpdated++;
+        backPointersUpdatedFiles.push(rel);
       }
     }
 
     // §35 check-fix.json reports the POST-fix state: recompute back-pointer
     // counts from the rewritten sources and drop now-fixed stale issues.
+    // Issue #11: only a file the run ACTUALLY rewrote can have its stale
+    // warnings dropped — files outside a [file] filter keep theirs (the
+    // comment is still on disk, so it is still stale).
     bpTotal = 0;
     bpCurrent = 0;
     bpStale = 0;
@@ -354,8 +367,13 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         }
       }
     }
+    const rewrittenSet = new Set(backPointersUpdatedFiles);
     for (let i = issues.length - 1; i >= 0; i--) {
-      if (issues[i]!.category === 'refs' && issues[i]!.message.startsWith('stale back-pointer:')) {
+      if (
+        issues[i]!.category === 'refs' &&
+        issues[i]!.message.startsWith('stale back-pointer:') &&
+        rewrittenSet.has(issues[i]!.file)
+      ) {
         issues.splice(i, 1);
       }
     }
@@ -390,6 +408,8 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     errorCount,
     warningCount,
     backPointersUpdated,
+    // Issue #11: the report names the files --fix rewrote (sorted, spec-relative).
+    backPointersUpdatedFiles: [...backPointersUpdatedFiles].sort(),
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
     // §18 delete-key semantics: a deleted range key shows as "off", never a raw null.
     rulesSummary:

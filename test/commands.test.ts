@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from './testing.ts';
 import { join } from 'path';
+import { mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { makeTmpDir, cleanTmpDir, outputFixture, copyFixtureToTmp } from './helpers.ts';
 
 describe('cans init', () => {
@@ -65,6 +66,32 @@ describe('cans check', () => {
       const result = await run([]);
       expect(result.ok).toBe(false);
       expect(result.refs.broken).toBeGreaterThanOrEqual(2);
+    } finally {
+      cleanTmpDir(tmp);
+    }
+  });
+
+  // Issue #11 (engine level, same repro as test/issues-11.test.ts but driving
+  // checkWorkspace directly the way done.ts does): a [file] filter scopes the
+  // --fix writes — non-matched files keep their content and their stale
+  // warnings; only the matched file is rewritten.
+  test('scoped --fix rewrites only the filtered file (issue #11)', async () => {
+    const tmp = makeTmpDir('cmd-check-fix-scoped');
+    try {
+      const ws = join(tmp, 'cans');
+      mkdirSync(ws, { recursive: true });
+      writeFileSync(join(ws, '01-a.md'), '- File A\n  - see: 02-b.md\n');
+      writeFileSync(join(ws, '02-b.md'), '- File B\n  - Intro\n');
+      writeFileSync(join(ws, '03-c.md'), '- File C\n  - see: 01-a.md\n');
+      const { checkWorkspace, parseCheckArgs } = await import('../src/commands/check.ts');
+      const opts = parseCheckArgs(['02-b.md', '--fix']); // positional + flag, any order (§20)
+      expect(opts.errors).toEqual([]);
+      expect(opts.file).toBe('02-b.md');
+      const result = await checkWorkspace(ws, opts);
+      expect(result.backPointersUpdated).toBe(1);
+      expect(result.backPointersUpdatedFiles).toEqual(['02-b.md']);
+      expect(readFileSync(join(ws, '01-a.md'), 'utf-8')).toBe('- File A\n  - see: 02-b.md\n');
+      expect(readFileSync(join(ws, '03-c.md'), 'utf-8')).toBe('- File C\n  - see: 01-a.md\n');
     } finally {
       cleanTmpDir(tmp);
     }

@@ -1,7 +1,159 @@
 {
-  "ok": true, "command": "check", "exitCode": 0,
-  "files": 6, "nodes": 84, "maxDepth": 4,
-  "refs": { "total": 12, "broken": 0, "deepHops": 0 },
-  "backPointers": { "total": 12, "current": 12, "stale": 0 },
-  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 3
+  "ok": true,
+  "command": "check",
+  "exitCode": 0,
+  "files": 4,
+  "nodes": 45,
+  "maxDepth": 4,
+  "refs": {
+    "total": 2,
+    "broken": 0,
+    "deepHops": 0
+  },
+  "backPointers": {
+    "total": 2,
+    "current": 2,
+    "stale": 0
+  },
+  "issues": [
+    {
+      "file": "02-authentication.md",
+      "line": 6,
+      "level": "warning",
+      "category": "structure",
+      "message": "\"Google\" has exactly 1 child. Collapse."
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 3,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Email\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 8,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Sessions\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 11,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Passwords\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "03-data.md",
+      "line": 2,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Storage\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "03-data.md",
+      "line": 5,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Retention\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "04-api.md",
+      "line": 2,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Authentication\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "04-api.md",
+      "line": 5,
+      "level": "warning",
+      "category": "style",
+      "message": "\"POST /users\" has 3 children. Collapse to sibling style."
+    },
+    {
+      "file": "04-api.md",
+      "line": 9,
+      "level": "warning",
+      "category": "style",
+      "message": "\"GET /users/:id\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "04-api.md",
+      "line": 12,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Rate limiting\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "06-operations.md",
+      "line": 2,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Data protection\" has 3 children. Collapse to sibling style."
+    },
+    {
+      "file": "06-operations.md",
+      "line": 6,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Backups\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "06-operations.md",
+      "line": 9,
+      "level": "warning",
+      "category": "style",
+      "message": "\"Deployment\" has 2 children. Collapse to sibling style."
+    },
+    {
+      "file": "04-api.md",
+      "line": 6,
+      "level": "warning",
+      "category": "redundancy",
+      "message": "\"returns\" × 5 nodes (threshold: 4)",
+      "suggestion": "pick one canonical home for \"returns\" and see: it from the others"
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 1,
+      "level": "warning",
+      "category": "redundancy",
+      "message": "100% overlap: 02-authentication.md:1 ↔ 04-api.md:2",
+      "suggestion": "merge the duplicated bullets or see: the canonical one"
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 8,
+      "level": "warning",
+      "category": "redundancy",
+      "message": "possible typo: \"sessions\" (02-authentication.md:8) ↔ \"session\" (04-api.md:3) — Levenshtein 1",
+      "suggestion": "unify the spelling or map the variant as a synonym"
+    },
+    {
+      "file": "02-authentication.md",
+      "line": 12,
+      "level": "warning",
+      "category": "redundancy",
+      "message": "possible typo: \"never\" (02-authentication.md:12) ↔ \"every\" (06-operations.md:7) — Levenshtein 2",
+      "suggestion": "unify the spelling or map the variant as a synonym"
+    },
+    {
+      "file": "06-operations.md",
+      "line": 2,
+      "level": "warning",
+      "category": "redundancy",
+      "message": "possible typo: \"protection\" (06-operations.md:2) ↔ \"production\" (06-operations.md:3) — Levenshtein 2",
+      "suggestion": "unify the spelling or map the variant as a synonym"
+    }
+  ],
+  "errorCount": 0,
+  "warningCount": 18,
+  "backPointersUpdated": 2,
+  "backPointersUpdatedFiles": [
+    "02-authentication.md",
+    "03-data.md"
+  ],
+  "rulesSummary": "node_length: 3–120 | siblings: 1–12 | depth: 1–5"
 }

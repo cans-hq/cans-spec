@@ -234,6 +234,11 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean): void {
   console.log('References');
   console.log(`  ${r.refs.total} see: refs, ${r.refs.broken} broken, ${r.refs.deepHops} deep hops`);
   console.log(`  back-pointers: ${r.backPointers.current}/${r.backPointers.total} current`);
+  // Issue #11: name the files --fix actually rewrote (empty without --fix
+  // or when nothing needed a write — never printed as an empty list).
+  if (r.backPointersUpdatedFiles.length > 0) {
+    console.log(`  --fix updated ref-by in: ${r.backPointersUpdatedFiles.join(', ')}`);
+  }
   printIssues(byCategory.get('refs'));
 
   if (!refsOnly) {
@@ -283,6 +288,7 @@ Usage: cans <command> [args]
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
   check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
+        --fix + [file] rewrites ref-by comments in matching files only
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]
