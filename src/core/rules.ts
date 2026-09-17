@@ -298,6 +298,21 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
       ) {
         throw new Error(`${at} — "${section}.${key}" must be a mapping like { min: 3, max: 120 }`);
       }
+      // Issue #2: style.prefer / references.mode are validated reserved values.
+      // The merged object always carries the (valid) defaults, so an invalid
+      // value can only come from the user's _rules.yaml. `null` (an empty
+      // `prefer:` / `mode:`) is accepted and means the documented default; a
+      // non-string (e.g. `prefer: 42`) fails the same got-value convention.
+      if (section === 'style' && key === 'prefer') {
+        if (v !== null && (typeof v !== 'string' || (v !== 'sibling' && v !== 'nested'))) {
+          throw new Error(`${at} — "style.prefer" must be "sibling" or "nested", got "${String(v)}"`);
+        }
+      }
+      if (section === 'references' && key === 'mode') {
+        if (v !== null && (typeof v !== 'string' || v !== 'pointer')) {
+          throw new Error(`${at} — "references.mode" must be "pointer", got "${String(v)}"`);
+        }
+      }
     }
   }
 }
@@ -307,7 +322,10 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
  *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed too:
  *  they count towards a section's coverage but are never flipped OFF — omitted
  *  parameters keep their documented defaults (§18 overrides only what the file
- *  lists for them). */
+ *  lists for them). references.mode is additionally a VALIDATED reserved
+ *  parameter: validateRulesShape rejects any value other than 'pointer' (or a
+ *  deleted/empty null) with a line-numbered error, and style.prefer is
+ *  validated the same way against 'sibling' | 'nested'. */
 const SECTION_KEYS: Record<string, string[]> = {
   structure: ['node_length', 'siblings', 'depth', 'single_child_collapse', 'empty_nodes'],
   style: ['prefer', 'force_nested_above', 'force_sibling_below', 'shared_prefix_detection'],
