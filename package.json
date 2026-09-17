@@ -1,7 +1,7 @@
 {
   "name": "cans-spec",
-  "version": "0.2.0",
-  "description": "Canonical Agent-Native Spec \u2014 the outline is the spec, the state, and the task board",
+  "version": "0.3.0",
+  "description": "Canonical Agent-Native Spec — the outline is the spec, the state, and the task board",
   "bin": {
     "cans": "./bin/cans.js"
   },
