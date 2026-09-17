@@ -4,7 +4,7 @@ import type {
   OutlineNode, BackPointer, TokenBudgetRules,
   BudgetReadPlanItem, BudgetReadResult, BudgetWriteResult,
 } from '../types.ts';
-import { flattenNodes, parseOutline } from './outline.ts';
+import { flattenNodes, parseOutline, isSyntheticNode } from './outline.ts';
 import { targetMatchesKey } from './refs.ts';
 
 export function estimateTokens(text: string, charsPerToken: number): number {
@@ -19,7 +19,10 @@ function relPath(file: string): string {
 }
 
 function serializedNodeText(nodes: OutlineNode[]): string {
-  return flattenNodes(nodes).map(n => n.text).join('\n');
+  // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not content —
+  // including them inflated every token estimate for files opening with a
+  // table/fence.
+  return flattenNodes(nodes).filter(n => !isSyntheticNode(n)).map(n => n.text).join('\n');
 }
 
 /** Token estimate for a workspace key (loaded nodes) or a raw file path (content read). */
@@ -53,6 +56,8 @@ export function findCanonicalHome(
   const candidates: Array<{ file: string; node: OutlineNode }> = [];
   for (const [file, nodes] of allFiles) {
     for (const node of flattenNodes(nodes)) {
+      // Issue #8: a synthetic placeholder must never be the canonical home.
+      if (isSyntheticNode(node)) continue;
       if (node.text.toLowerCase().includes(lc)) candidates.push({ file, node });
     }
   }

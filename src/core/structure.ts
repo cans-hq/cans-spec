@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.ts';
-import { flattenNodes } from './outline.ts';
+import { flattenNodes, isSyntheticNode } from './outline.ts';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
@@ -14,68 +14,73 @@ export function checkStructure(
 
   const walk = (list: OutlineNode[]): void => {
     for (const node of list) {
-      const len = node.text.length;
-      const nl = rules.node_length;
-      if (nl !== null && nl.max !== null && len > nl.max) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'error',
-          category: 'structure',
-          message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
-        });
-      } else if (nl !== null && nl.min !== null && len < nl.min) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `Node too short (${len} < ${nl.min}).`,
-        });
-      }
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not user
+      // structure — never flagged themselves (their children, if any, still
+      // are: the walk recurses below regardless).
+      if (!isSyntheticNode(node)) {
+        const len = node.text.length;
+        const nl = rules.node_length;
+        if (nl !== null && nl.max !== null && len > nl.max) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'error',
+            category: 'structure',
+            message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
+          });
+        } else if (nl !== null && nl.min !== null && len < nl.min) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `Node too short (${len} < ${nl.min}).`,
+          });
+        }
 
-      const depth = node.indent + 1;
-      const depthMax = rules.depth !== null ? rules.depth.max : null;
-      if (depthMax !== null && depth > depthMax) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'error',
-          category: 'structure',
-          message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
-        });
-      }
+        const depth = node.indent + 1;
+        const depthMax = rules.depth !== null ? rules.depth.max : null;
+        if (depthMax !== null && depth > depthMax) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'error',
+            category: 'structure',
+            message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
+          });
+        }
 
-      const count = node.children.length;
-      const siblingsMax = rules.siblings !== null ? rules.siblings.max : null;
-      if (siblingsMax !== null && count > siblingsMax) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
-        });
-      }
+        const count = node.children.length;
+        const siblingsMax = rules.siblings !== null ? rules.siblings.max : null;
+        if (siblingsMax !== null && count > siblingsMax) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
+          });
+        }
 
-      if (rules.single_child_collapse && count === 1) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `"${node.text}" has exactly 1 child. Collapse.`,
-        });
-      }
+        if (rules.single_child_collapse && count === 1) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `"${node.text}" has exactly 1 child. Collapse.`,
+          });
+        }
 
-      if (rules.empty_nodes && node.text.trim() === '') {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: 'Empty node.',
-        });
+        if (rules.empty_nodes && node.text.trim() === '') {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: 'Empty node.',
+          });
+        }
       }
 
       walk(node.children);

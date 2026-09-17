@@ -6,7 +6,7 @@ import {
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
 } from '../core/fs.ts';
 import {
-  parseOutline, extractBackPointers, flattenNodes, maxDepth as outlineMaxDepth,
+  parseOutline, extractBackPointers, realNodes, maxDepth as outlineMaxDepth,
   type ParseWarning,
 } from '../core/outline.ts';
 import { loadRules } from '../core/rules.ts';
@@ -364,7 +364,13 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   let nodeCount = 0;
   let depthMax = 0;
   for (const nodes of specFiles.values()) {
-    nodeCount += flattenNodes(nodes).length;
+    // Issue #8: report REAL nodes only — synthetic "(table)"/"(code fence)"
+    // placeholders (leading table/fence before the first bullet) are not
+    // user content and inflated the header count and budget estimates.
+    nodeCount += realNodes(nodes).length;
+    // Depth keeps the full tree: a synthetic root sits at indent 0, so it can
+    // never raise depthMax; a workspace containing only phantoms now has
+    // nodeCount 0 and correctly reports maxDepth 0 (§35 empty-workspace case).
     depthMax = Math.max(depthMax, outlineMaxDepth(nodes));
   }
   const refsTotal = [...graph.forward.values()].reduce((a, ts) => a + ts.length, 0);
