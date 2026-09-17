@@ -4,7 +4,12 @@ import { checkStyle } from '../src/core/style.ts';
 import { defaultRules } from '../src/core/rules.ts';
 import { readFixture } from './helpers.ts';
 
-const rules = defaultRules().style;
+// Issue #2 wired style.prefer into checkStyle: under the default `prefer: sibling`
+// the shared-prefix "Group under nested style." hint is suppressed BY DESIGN (it
+// contradicts the declared preference). These tests pin the base guidance rules
+// themselves — with `prefer: null` (deleted key) no prefer-driven modulation
+// applies and BOTH hints fire, which is the behavior this file always tested.
+const rules = { ...defaultRules().style, prefer: null };
 
 describe('style enforcement', () => {
   test('flags siblings needing nested grouping', () => {
