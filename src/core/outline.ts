@@ -7,7 +7,6 @@ const OWNER_RE = /←\s*(@?\S+)/;
 // The alternation keeps the no-colon form whitespace-required so words like "seed" never match.
 const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
-const FENCE_RE = /^```/;
 
 export interface ParseWarning {
   line: number;
@@ -39,8 +38,13 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
   let lastNode: OutlineNode | null = null;
   let fenceOpen = false;
   let fenceStartLine = 0;
-  let fencePending = false; // saw a fence; mark next close
   let tableRunOpen = false;
+  // Issue #8: a table/fence opened BEFORE any bullet has no node to attach to.
+  // No phantom "(table)"/"(code fence)" node is synthesized — the flag parks
+  // here and lands on the first real node that follows (same provenance as the
+  // mid-file case, which attaches to the nearest preceding node).
+  let pendingHasTable = false;
+  let pendingHasCodeFence = false;
 
   const makeNode = (text: string, line: number, indent: number): OutlineNode => ({
     text,
@@ -61,27 +65,20 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     const raw = lines[i];
     const lineNo = i + 1;
 
-    // Code fence toggling: fence content is overflow, never bullets.
-    if (FENCE_RE.test(raw.trimEnd()) && raw.trim() !== '```' + '') {
-      // treat any line whose trimmed form starts with ``` as a fence marker
-    }
+    // Code fence toggling: any line whose trimmed form starts with ``` opens or
+    // closes a fence. Fence content is overflow, never bullets.
     if (raw.trim().startsWith('```')) {
       if (!fenceOpen) {
         fenceOpen = true;
         fenceStartLine = lineNo;
-        fencePending = true;
       } else {
         fenceOpen = false;
-        // attach fence flag to last node, or synthesize a node for fence-only files
+        // attach fence flag to the last node; a leading fence (no node yet)
+        // parks the flag for the first real node that follows — never a phantom
         if (lastNode) {
           lastNode.hasCodeFence = true;
         } else {
-          const n = makeNode('(code fence)', fenceStartLine, 0);
-          n.hasCodeFence = true;
-          roots.push(n);
-          stack.length = 0;
-          stack.push(n);
-          lastNode = n;
+          pendingHasCodeFence = true;
         }
       }
       continue;
@@ -95,12 +92,7 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
         if (lastNode) {
           lastNode.hasTable = true;
         } else {
-          const n = makeNode('(table)', lineNo, 0);
-          n.hasTable = true;
-          roots.push(n);
-          stack.length = 0;
-          stack.push(n);
-          lastNode = n;
+          pendingHasTable = true;
         }
       }
       continue;
@@ -153,6 +145,17 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     node.isHumanGate = owner === '@human';
     node.refs = refs;
 
+    // Issue #8: apply parked leading-table/fence provenance onto this first
+    // real node, then reset — the flags describe content that preceded it.
+    if (pendingHasCodeFence) {
+      node.hasCodeFence = true;
+      pendingHasCodeFence = false;
+    }
+    if (pendingHasTable) {
+      node.hasTable = true;
+      pendingHasTable = false;
+    }
+
     // stack-based attachment
     if (stack.length === 0) {
       roots.push(node);
@@ -190,7 +193,17 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     }
     lastNode = node;
   }
-  void fencePending;
+
+  // Issue #9: an unclosed fence silently swallowed the rest of the file in
+  // every check — surface it on the ParseWarning channel (check.ts converts
+  // these into structure warnings; callers without a warnings array are
+  // unaffected). The swallowing parse behavior itself is §11-correct.
+  if (fenceOpen && warnings !== undefined) {
+    warnings.push({
+      line: fenceStartLine,
+      message: `unclosed code fence opened at line ${fenceStartLine} — content after it is excluded from all checks`,
+    });
+  }
   return roots;
 }
 

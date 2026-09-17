@@ -60,3 +60,40 @@ describe('cross-file canonicality', () => {
     expect(crossIssue).toBeDefined();
   });
 });
+
+// ── Issue #8: phantom "(table)" nodes must not poison the redundancy layers ──
+
+describe('leading tables do not leak into redundancy (issue #8)', () => {
+  test('two files opening with tables: no "(table)" issues, no overlap/canonical-home warnings', () => {
+    const fileA = [
+      '| Field | Value |',
+      '|---|---|',
+      '| alpha | xray |',
+      '',
+      '- Alpha renderer streams delta packets',
+      '- Zephyr cache warms quickly',
+    ].join('\n');
+    const fileB = [
+      '| Field | Value |',
+      '|---|---|',
+      '| beta | yankee |',
+      '',
+      '- Orchard logistics tracks cranes',
+      '- Quartz vault hums nightly',
+    ].join('\n');
+    const files = new Map();
+    files.set('01-a.md', parseOutline(fileA, '01-a.md'));
+    files.set('02-b.md', parseOutline(fileB, '02-b.md'));
+
+    const issues = checkRedundancy(files, rules);
+
+    // No issue may mention the phantom "(table)" node text.
+    expect(issues.filter(i => i.message.includes('(table)'))).toEqual([]);
+    // No 100% overlap pair between the two files (previously the two phantoms matched).
+    expect(issues.filter(i => i.message.includes('100% overlap'))).toEqual([]);
+    // No canonical-home warning naming "(table)".
+    expect(issues.filter(i => i.suggestion?.includes('(table)'))).toEqual([]);
+    // The unrelated real bullets must not be flagged either — the files are clean.
+    expect(issues).toEqual([]);
+  });
+});
