@@ -1,6 +1,22 @@
 import type { OutlineNode, Issue, StyleRules } from '../types.ts';
 
-/** Style checks: shared-prefix nesting hint + unnecessary-nesting collapse hint.
+/** Style checks: shared-prefix nesting hint + unnecessary-nesting collapse hint,
+ *  modulated by `style.prefer` (issue #2 — the key was parsed and reconciled but
+ *  never read, so `prefer: nested` still advised "Collapse to sibling style.").
+ *
+ *  Prefer semantics:
+ *    - `prefer: 'sibling'` — the author prefers flat sibling lists: the
+ *      shared-prefix "Group under nested style." hint is suppressed (it argues
+ *      against the declared preference); the collapse-to-sibling hint still
+ *      fires (it agrees with it).
+ *    - `prefer: 'nested'` — the author prefers grouped outlines: the
+ *      "Collapse to sibling style." hint is suppressed; the shared-prefix
+ *      grouping hint still fires.
+ *    - `prefer: null` (key deleted, §18) — NO prefer-driven modulation: both
+ *      base hints fire exactly as they did before the prefer wiring existed.
+ *      "Deleted `prefer` disables prefer-driven style guidance" therefore means
+ *      the prefer-driven MODULATION is off, not that the base guidance is off.
+ *
  *  SEVERITY NOTE (arbitration, same class as the refs-severity decision): §14/§36
  *  show ✗ for style flags, but the frozen §35/§18 fixtures (flat-project,
  *  folder-project, init templates) structurally trigger the ≤N-leaf rule and the
@@ -8,8 +24,9 @@ import type { OutlineNode, Issue, StyleRules } from '../types.ts';
  *  findings stay `warning`-level. Changing test fixtures is out of bounds
  *  (test/ is frozen).
  *  §18 delete-key semantics: a style rule whose key is null/false no longer
- *  fires (deleted force_nested_above / force_sibling_below / prefer or
- *  shared_prefix_detection: false skip their rules entirely). */
+ *  fires — deleted force_nested_above / force_sibling_below or
+ *  shared_prefix_detection: false skip their rules entirely (deleted `prefer`
+ *  is the modulation-off case documented above; it skips nothing). */
 export function checkStyle(
   nodes: OutlineNode[],
   file: string,
@@ -22,7 +39,14 @@ export function checkStyle(
       const children = node.children;
 
       const nestedAbove = rules.force_nested_above;
-      if (rules.shared_prefix_detection && nestedAbove !== null && children.length >= nestedAbove) {
+      // prefer: 'sibling' declares a flat-list preference — the grouping hint
+      // contradicts it and is suppressed ('nested'/null keep it firing).
+      if (
+        rules.shared_prefix_detection &&
+        rules.prefer !== 'sibling' &&
+        nestedAbove !== null &&
+        children.length >= nestedAbove
+      ) {
         const groups = new Map<string, number>();
         for (const child of children) {
           const word = child.text.split(/\s+/)[0] ?? '';
@@ -48,8 +72,11 @@ export function checkStyle(
       // not unnecessary nesting. A single child is reported by the structure
       // engine ("exactly 1 child"); don't double-report it here.
       const siblingBelow = rules.force_sibling_below;
+      // prefer: 'nested' declares a grouped-outline preference — the collapse
+      // hint contradicts it and is suppressed ('sibling'/null keep it firing).
       if (
         siblingBelow !== null &&
+        rules.prefer !== 'nested' &&
         node.indent > 0 &&
         children.length >= 2 &&
         children.length <= siblingBelow &&

@@ -63,7 +63,9 @@ export interface StructureRules {
 }
 
 export interface StyleRules {
-  /** Deleted `prefer` disables prefer-driven style guidance (§18). */
+  /** Style-guide selector: `sibling` suppresses the nested-grouping hint,
+   *  `nested` suppresses the sibling-collapse hint; null (deleted, §18) → no
+   *  prefer-driven modulation — both base style hints fire unchanged. */
   prefer: 'sibling' | 'nested' | null;
   force_nested_above: number | null;
   force_sibling_below: number | null;
