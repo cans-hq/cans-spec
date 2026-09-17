@@ -20,6 +20,13 @@ export interface OutlineNode {
   refs: RefTarget[];
   hasCodeFence: boolean;
   hasTable: boolean;
+  /** Issue #8: true ONLY for parser-created placeholder nodes (text "(table)"
+   *  or "(code fence)") that represent a table/fence appearing BEFORE the
+   *  first bullet of a file. They carry the hasTable/hasCodeFence signal but
+   *  are not user content — consumers that count nodes or compare node text
+   *  as content must exclude them (isSyntheticNode). Never set on nodes
+   *  parsed from real bullets. */
+  synthetic?: boolean;
 }
 
 export interface BackPointer {
