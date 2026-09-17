@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, RedundancyRules } from '../types.ts';
-import { flattenNodes } from './outline.ts';
+import { flattenNodes, isSyntheticNode } from './outline.ts';
 
 interface NodeRef {
   text: string;
@@ -251,6 +251,10 @@ export function crossFileCanonicality(
   const concepts = new Map<string, { files: Set<string>; first: NodeRef }>();
   for (const [key, nodes] of allFiles) {
     for (const node of flattenNodes(nodes)) {
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not
+      // concepts — comparing them across files fabricated "canonical home"
+      // warnings with nonsense advice.
+      if (isSyntheticNode(node)) continue;
       if (node.indent > 1) continue;
       const text = node.text.trim().toLowerCase();
       if (text.length === 0) continue;
@@ -294,6 +298,11 @@ export function checkRedundancy(
   const nodes: NodeRef[] = [];
   for (const [file, tree] of allFiles) {
     for (const node of flattenNodes(tree)) {
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not
+      // content — excluded from all three text-comparison layers (they made
+      // any two table-opening files 100%-overlapping and inflated the
+      // "table"/"code"/"fence" word-frequency counts).
+      if (isSyntheticNode(node)) continue;
       nodes.push({ text: node.text, file, line: node.line });
     }
   }

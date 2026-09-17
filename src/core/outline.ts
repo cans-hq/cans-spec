@@ -55,6 +55,9 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     refs: [],
     hasCodeFence: false,
     hasTable: false,
+    // Issue #8: real bullets are never synthetic; the two placeholder
+    // synthesis sites below flip this to true after makeNode.
+    synthetic: false,
   });
 
   for (let i = 0; i < lines.length; i++) {
@@ -78,6 +81,7 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
         } else {
           const n = makeNode('(code fence)', fenceStartLine, 0);
           n.hasCodeFence = true;
+          n.synthetic = true; // issue #8: placeholder, not user content
           roots.push(n);
           stack.length = 0;
           stack.push(n);
@@ -97,6 +101,7 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
         } else {
           const n = makeNode('(table)', lineNo, 0);
           n.hasTable = true;
+          n.synthetic = true; // issue #8: placeholder, not user content
           roots.push(n);
           stack.length = 0;
           stack.push(n);
@@ -170,20 +175,29 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
         top.children.push(node);
         stack.push(node);
       } else {
-        // shallower: pop until we find the parent level
-        while (stack.length > 1 && stack[stack.length - 1].indent > indent) {
+        // shallower: pop until we find the parent level — all the way to an
+        // empty stack, not just down to stack[0] (issue #7). The stack bottom
+        // is only a real parent when the file's first bullet sits at column
+        // 0; when it opens indented (e.g. under a `#` heading) its indent
+        // must not swallow bullets that dedent past it, or the whole tree
+        // silently re-parents under that first node.
+        while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
           stack.pop();
         }
-        const candidate = stack[stack.length - 1];
-        if (candidate.indent === indent) {
+        if (stack.length === 0) {
+          // dedented past every open node: a root sibling
+          roots.push(node);
+          stack.push(node);
+        } else if (stack[stack.length - 1].indent === indent) {
+          // sibling of the deepest open node at this level
           stack.pop();
           const parent = stack[stack.length - 1];
           if (parent) parent.children.push(node);
           else roots.push(node);
           stack.push(node);
         } else {
-          // indented jump deeper than expected under candidate
-          candidate.children.push(node);
+          // indented jump deeper than expected under that node
+          stack[stack.length - 1].children.push(node);
           stack.push(node);
         }
       }
@@ -192,6 +206,12 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
   }
   void fencePending;
   return roots;
+}
+
+/** Issue #8: true only for parser-created placeholder nodes ("(table)" /
+ *  "(code fence)") representing a leading table/fence — never user content. */
+export function isSyntheticNode(n: OutlineNode): boolean {
+  return n.synthetic === true;
 }
 
 export function flattenNodes(nodes: OutlineNode[]): OutlineNode[] {
@@ -209,8 +229,18 @@ export function flattenNodes(nodes: OutlineNode[]): OutlineNode[] {
 export function extractBackPointers(source: string, file: string): BackPointer[] {
   const out: BackPointer[] = [];
   const lines = normalizeEol(source).split('\n');
+  // Issue #6: fence awareness — a `<!-- ref-by: ... -->` quoted inside a fenced
+  // example is documentation, not a real back-pointer. Same toggle rule as
+  // parseOutline (trimmed line starts with ```); the marker line itself is
+  // fence infrastructure and never carries a counted comment either.
+  let fenceOpen = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(REF_BY_RE);
+    if (FENCE_RE.test(lines[i]!.trim())) {
+      fenceOpen = !fenceOpen;
+      continue;
+    }
+    if (fenceOpen) continue;
+    const m = lines[i]!.match(REF_BY_RE);
     if (!m) continue;
     const entries = m[1].split(',').map(s => s.trim()).filter(Boolean);
     for (const e of entries) {
@@ -218,6 +248,14 @@ export function extractBackPointers(source: string, file: string): BackPointer[]
     }
   }
   return out;
+}
+
+/** Flattened tree WITHOUT synthetic placeholder nodes — the view every
+ *  node-count and content-comparison consumer should use (issue #8).
+ *  flattenNodes itself is unchanged: the tree shape keeps the placeholders
+ *  (they carry hasTable/hasCodeFence for the overflow engine). */
+export function realNodes(nodes: OutlineNode[]): OutlineNode[] {
+  return flattenNodes(nodes).filter(n => !isSyntheticNode(n));
 }
 
 export function countNodes(nodes: OutlineNode[]): number {
