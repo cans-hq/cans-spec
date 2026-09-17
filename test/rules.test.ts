@@ -120,6 +120,7 @@ describe('loadRules', () => {
         '  word_frequency_threshold: 4',
         '  phrase_overlap_threshold: 0.7',
         '  cross_file_threshold: 2',
+        '  fuzzy: true',
         'token_budget:',
         '  enabled: true',
         '  default_limit: 4096',

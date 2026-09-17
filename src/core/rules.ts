@@ -221,6 +221,7 @@ export function defaultRules(): Rules {
       word_frequency_threshold: 4,
       phrase_overlap_threshold: 0.7,
       cross_file_threshold: 2,
+      fuzzy: true,
       stopwords: ['the', 'a', 'an', 'of', 'to', 'in', 'for', 'and', 'or', 'with', 'must', 'shall', 'requires'],
       synonyms: [
         ['postgres', 'postgresql', 'pg'],
@@ -336,6 +337,7 @@ const SECTION_KEYS: Record<string, string[]> = {
     'word_frequency_threshold',
     'phrase_overlap_threshold',
     'cross_file_threshold',
+    'fuzzy',
     'stopwords',
     'synonyms',
   ],
@@ -405,7 +407,8 @@ export function loadRules(root: string): Rules {
   // from its deep-merged default to its OFF state:
   //   boolean switch   → false   (single_child_collapse, empty_nodes, tbd_allowed,
   //                               shared_prefix_detection, back_pointers,
-  //                               orphan_check, duplicate_home_check, redundancy.enabled;
+  //                               orphan_check, duplicate_home_check,
+  //                               redundancy.enabled, redundancy.fuzzy;
   //                               an explicit `false` stays false — same OFF result)
   //   mapping/numeric  → null    (node_length, siblings, depth, max_tbd_per_file,
   //                               force_nested_above, force_sibling_below, max_hops,
@@ -516,9 +519,11 @@ export function loadRules(root: string): Rules {
   }
 
   // redundancy: enabled / word_frequency_threshold / phrase_overlap_threshold /
-  // cross_file_threshold. `stopwords`/`synonyms` are parameters (§13 inputs) —
-  // they keep their defaults when omitted so the remaining layers still
-  // normalize text exactly as documented.
+  // cross_file_threshold / fuzzy. `stopwords`/`synonyms` are parameters (§13
+  // inputs) — they keep their defaults when omitted so the remaining layers
+  // still normalize text exactly as documented. `fuzzy` is layer 3's own check
+  // switch (issue #3): deleted → the near-miss layer alone turns OFF while
+  // layers 1/2/4 keep running.
   if (!listed('redundancy')) {
     if (deleteMode) {
       rules.redundancy = {
@@ -527,6 +532,7 @@ export function loadRules(root: string): Rules {
         word_frequency_threshold: null,
         phrase_overlap_threshold: null,
         cross_file_threshold: null,
+        fuzzy: false,
       };
     }
   } else {
@@ -541,6 +547,9 @@ export function loadRules(root: string): Rules {
     }
     if (deleted('redundancy', 'cross_file_threshold')) {
       rules.redundancy = { ...rules.redundancy, cross_file_threshold: null };
+    }
+    if (deleted('redundancy', 'fuzzy')) {
+      rules.redundancy = { ...rules.redundancy, fuzzy: false };
     }
   }
 
