@@ -46,6 +46,25 @@ export function anchorMatches(nodeText: string, anchor: string): boolean {
   return norm(nodeText) === norm(anchor);
 }
 
+/** Does an UNRESOLVED ref target look like an intended spec reference
+ *  (broken-ref error territory) or like English prose that merely contains
+ *  the word "see" (warning territory)? (issue #4)
+ *
+ *  The §11 ref regex intentionally keeps minting refs from any `see <token>`
+ *  prose ("see the runbook", "see below") so banner counts and deep-hop/orphan
+ *  machinery stay centralized in the graph. Classification happens only at
+ *  resolution time, in checkRefs: a target that itself looks spec-shaped keeps
+ *  the documented broken-ref error; anything else is prose, not a dangling
+ *  spec pointer. */
+export function looksLikeSpecRef(target: string, hasAnchor: boolean): boolean {
+  if (hasAnchor) return true;                      // see X#anchor — explicit anchor intent
+  if (/\.md$/i.test(target)) return true;           // explicit markdown target
+  if (/^_/.test(target)) return true;               // workspace service dirs (_tasks/, _collab/, ...)
+  if (target.includes('/')) return true;            // path-like
+  if (/^\d/.test(target)) return true;              // numeric-prefix spec stems (02-auth)
+  return false;
+}
+
 export function buildRefGraph(
   files: Map<string, OutlineNode[]>,
   root: string,
@@ -106,11 +125,28 @@ export function checkRefs(
         // loaded numeric span, a missing file is always a level:error broken
         // ref. (The former "unwritten spec slot" backward in-span downgrade
         // violated §12 and masked real holes as warnings — removed.)
-        issues.push({
-          file, line: ref.line, level: 'error', category: 'refs',
-          message: `broken ref: see ${ref.file} — file not found`,
-          suggestion: `create ${ref.file} or fix the ref target`,
-        });
+        //
+        // Issue #4 prose exemption: that error contract applies to targets that
+        // THEMSELVES look like intended spec references (looksLikeSpecRef —
+        // anchored, .md, workspace-service-dir, path-like, or numeric-prefix).
+        // English prose that merely contains the word "see" ("see the runbook",
+        // "see below") mints a ref target that resolves to nothing and is not
+        // spec-shaped — downgraded to a see-like-prose warning so natural
+        // language no longer fails the run. Genuinely malformed real refs
+        // (.md targets, anchors, paths, numeric stems) keep the exact error.
+        if (looksLikeSpecRef(ref.file, ref.anchor !== null)) {
+          issues.push({
+            file, line: ref.line, level: 'error', category: 'refs',
+            message: `broken ref: see ${ref.file} — file not found`,
+            suggestion: `create ${ref.file} or fix the ref target`,
+          });
+        } else {
+          issues.push({
+            file, line: ref.line, level: 'warning', category: 'refs',
+            message: `see-like prose: "see ${ref.file}" did not resolve to a spec file — rephrase or link explicitly`,
+            suggestion: 'use "see: <file>.md" (or "see: <file>.md#<anchor>") to link a spec file, or reword the sentence',
+          });
+        }
         continue;
       }
 
