@@ -63,7 +63,9 @@ export interface StructureRules {
 }
 
 export interface StyleRules {
-  /** Deleted `prefer` disables prefer-driven style guidance (§18). */
+  /** Style-guide selector: `sibling` suppresses the nested-grouping hint,
+   *  `nested` suppresses the sibling-collapse hint; null (deleted, §18) → no
+   *  prefer-driven modulation — both base style hints fire unchanged. */
   prefer: 'sibling' | 'nested' | null;
   force_nested_above: number | null;
   force_sibling_below: number | null;
@@ -90,6 +92,8 @@ export interface RedundancyRules {
   word_frequency_threshold: number | null;
   phrase_overlap_threshold: number | null;
   cross_file_threshold: number | null;
+  /** Layer 3 switch: deleted → false (§18 delete-key semantics). */
+  fuzzy: boolean;
   /** Parameters (not checks): keep their defaults when deleted (§18). */
   stopwords: string[];
   synonyms: string[][];

@@ -126,6 +126,7 @@ const DEFAULT_RULES = [
   '  word_frequency_threshold: 4',
   '  phrase_overlap_threshold: 0.7',
   '  cross_file_threshold: 2',
+  '  fuzzy: true',
   '  stopwords: [the, a, an, of, to, in, for, and, or, with, must, shall, requires]',
   '  synonyms:',
   '    - [postgres, postgresql, pg]',
