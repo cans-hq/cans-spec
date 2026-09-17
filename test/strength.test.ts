@@ -55,6 +55,53 @@ describe('fs discovery', () => {
   });
 });
 
+// ── fs: ref-target containment (issue #10) ──
+
+describe('fs ref-target containment (issue #10)', () => {
+  test('resolveSpecFile never escapes the root, even when the outside file exists', () => {
+    const tmp = makeTmpDir('containment-escape');
+    try {
+      const root = join(tmp, 'cans');
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(tmp, 'outside.md'), '- Outside\n');
+      expect(resolveSpecFile(root, '../outside.md')).toBeNull();
+    } finally {
+      cleanTmpDir(tmp);
+    }
+  });
+
+  test('resolveSpecFile rejects absolute targets — including real ones outside the root', () => {
+    const tmp = makeTmpDir('containment-absolute');
+    try {
+      const root = join(tmp, 'cans');
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(tmp, 'outside.md'), '- Outside\n');
+      expect(resolveSpecFile(root, '/etc/hostname')).toBeNull();
+      expect(resolveSpecFile(root, join(tmp, 'outside.md'))).toBeNull();
+    } finally {
+      cleanTmpDir(tmp);
+    }
+  });
+
+  test('containment positives: flat file and folder index fallback still resolve', () => {
+    const tmp = makeTmpDir('containment-positive');
+    try {
+      const root = join(tmp, 'cans');
+      mkdirSync(join(root, '02-authentication'), { recursive: true });
+      writeFileSync(join(root, '01-a.md'), '- Root\n');
+      writeFileSync(join(root, '02-authentication', 'index.md'), '- Authentication\n');
+      const flat = resolveSpecFile(root, '01-a.md');
+      expect(flat).not.toBeNull();
+      expect(flat!.endsWith('01-a.md')).toBe(true);
+      const folder = resolveSpecFile(root, '02-authentication.md');
+      expect(folder).not.toBeNull();
+      expect(folder!.endsWith(join('02-authentication', 'index.md'))).toBe(true);
+    } finally {
+      cleanTmpDir(tmp);
+    }
+  });
+});
+
 // ── outline: back-pointers, multi-refs, line numbers ──
 
 describe('outline extras', () => {

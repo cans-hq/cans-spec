@@ -23,6 +23,12 @@ export function targetMatchesKey(name: string, key: string): boolean {
   return false;
 }
 
+/** Issue #10: does a raw see: target escape the workspace — an absolute path
+ *  or a `..` segment? Such targets can never name a workspace spec file. */
+export function refEscapesWorkspace(name: string): boolean {
+  return name.startsWith('/') || name.split('/').includes('..');
+}
+
 /** Map a raw ref target to the loaded files-map key, if the target is loaded or resolvable on disk. */
 function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: string): string | null {
   if (files.has(name)) return name;
@@ -106,11 +112,21 @@ export function checkRefs(
         // loaded numeric span, a missing file is always a level:error broken
         // ref. (The former "unwritten spec slot" backward in-span downgrade
         // violated §12 and masked real holes as warnings — removed.)
-        issues.push({
-          file, line: ref.line, level: 'error', category: 'refs',
-          message: `broken ref: see ${ref.file} — file not found`,
-          suggestion: `create ${ref.file} or fix the ref target`,
-        });
+        // Issue #10: ../ and absolute targets escape the workspace — say so,
+        // and never suggest creating a path outside it.
+        if (refEscapesWorkspace(ref.file)) {
+          issues.push({
+            file, line: ref.line, level: 'error', category: 'refs',
+            message: `broken ref: see ${ref.file} — file not found in workspace`,
+            suggestion: 'fix the ref target — see: targets must name spec files inside the workspace (no ../ or absolute paths)',
+          });
+        } else {
+          issues.push({
+            file, line: ref.line, level: 'error', category: 'refs',
+            message: `broken ref: see ${ref.file} — file not found`,
+            suggestion: `create ${ref.file} or fix the ref target`,
+          });
+        }
         continue;
       }
 

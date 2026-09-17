@@ -1,5 +1,5 @@
 import { statSync, readdirSync, existsSync, mkdirSync, type Stats } from 'fs';
-import { join, relative, dirname, basename } from 'path';
+import { join, relative, dirname, basename, isAbsolute } from 'path';
 import { globFiles as runtimeGlobFiles } from './runtime.ts';
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
@@ -138,13 +138,23 @@ export function discoverAdrs(root: string): string[] {
     .sort();
 }
 
-/** Resolve a ref target: flat file wins, then folder index.md. null when neither exists. */
+/** Containment guard (issue #10): a ref candidate must resolve INSIDE the
+ *  workspace root. `../` traversal, absolute targets and root-aliasing paths
+ *  (rel === "") are all rejected — null falls through to broken-ref reporting. */
+function isInsideRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/** Resolve a ref target: flat file wins, then folder index.md. null when neither exists.
+ *  Issue #10: the result can never point outside `root` — an escaping candidate
+ *  is rejected even when the file physically exists beyond the workspace. */
 export function resolveSpecFile(root: string, name: string): string | null {
   const direct = join(root, name);
-  if (exists(direct) && statSync(direct).isFile()) return direct;
+  if (isInsideRoot(root, direct) && exists(direct) && statSync(direct).isFile()) return direct;
   if (name.endsWith('.md')) {
     const folderIdx = join(root, name.slice(0, -3), 'index.md');
-    if (exists(folderIdx)) return folderIdx;
+    if (isInsideRoot(root, folderIdx) && exists(folderIdx)) return folderIdx;
   }
   return null;
 }
