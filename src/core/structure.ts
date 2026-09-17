@@ -2,6 +2,9 @@ import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.
 import { flattenNodes } from './outline.ts';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
+ *  Both sides of every range are enforced (issue #1 — siblings.min and depth.min
+ *  were banner-checked but never enforced): node_length, siblings and depth each
+ *  check their `min` (warning) as well as their `max`.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
  *  check is skipped entirely (never compared against null, which would coerce
  *  to 0 and flag everything). */
@@ -57,6 +60,20 @@ export function checkStructure(
           message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
         });
       }
+      // Issue #1: enforce siblings.min — a parent with 0 < count < min children
+      // is under the configured fan-out. Warning level, consistent with the
+      // siblings.max side above. The single_child_collapse advisory below is a
+      // separate check and may fire for the same node — that is acceptable.
+      const siblingsMin = rules.siblings !== null ? rules.siblings.min : null;
+      if (siblingsMin !== null && count > 0 && count < siblingsMin) {
+        issues.push({
+          file,
+          line: node.line,
+          level: 'warning',
+          category: 'structure',
+          message: `"${node.text}" has ${count} children (min ${siblingsMin}).`,
+        });
+      }
 
       if (rules.single_child_collapse && count === 1) {
         issues.push({
@@ -83,6 +100,39 @@ export function checkStructure(
   };
 
   walk(nodes);
+
+  // Issue #1: enforce depth.min at file level — a file whose deepest node is
+  // above the configured minimum is under-specified. Attached to the first
+  // root node's line (there is always at least one node when the file has
+  // nodes); an empty tree skips the check entirely.
+  // LEVEL RATIONALE: depth.min is a warning — a too-shallow file is advisory
+  // (depth.max stays an error because it protects the token budget; making
+  // shallow files hard-fail would break legitimately shallow summary files).
+  // siblings.min is a warning for the same reason: it matches the warning
+  // level of the siblings.max side. Defaults (min: 1 both) can never fire —
+  // `0 < count < 1` is impossible and any non-empty file has max depth ≥ 1 —
+  // so default-rule workspaces stay clean.
+  if (nodes.length > 0) {
+    const depthMin = rules.depth !== null ? rules.depth.min : null;
+    if (depthMin !== null) {
+      let maxNodeDepth = 0;
+      for (const n of flattenNodes(nodes)) {
+        const d = n.indent + 1; // same convention as the per-node depth check above
+        if (d > maxNodeDepth) maxNodeDepth = d;
+      }
+      if (maxNodeDepth < depthMin) {
+        issues.push({
+          file,
+          line: nodes[0]!.line,
+          level: 'warning',
+          category: 'structure',
+          message: `Max depth ${maxNodeDepth} is below min ${depthMin}. Deepen the outline.`,
+          suggestion: `add nested sub-levels until the outline reaches depth ${depthMin}, or lower structure.depth.min in _rules.yaml`,
+        });
+      }
+    }
+  }
+
   return issues;
 }
 
