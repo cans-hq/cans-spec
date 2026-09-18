@@ -59,6 +59,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 

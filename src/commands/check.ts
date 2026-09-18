@@ -27,6 +27,10 @@ export interface CheckArgs {
   noRedundancy: boolean;
   file: string | null;
   json: boolean;
+  /** issue #41: sections to render unfolded (`--show <section[,section]>`).
+   *  Emission-time concern only — the engine result is identical either way.
+   *  Optional: internal callers (done.ts's ZERO_CHECK_ARGS) never set it. */
+  show?: string[];
   /** §24 (done): the archiving task's parsed nodes, injected under their
    *  former `_tasks/<name>.md` identity so refs held by the archived task
    *  still count for the back-pointer rebuild. Never set by `check` itself. */
@@ -38,8 +42,14 @@ const CHECK_FLAGS: FlagSpec[] = [
   { name: 'strict', boolean: true },
   { name: 'refs-only', boolean: true },
   { name: 'no-redundancy', boolean: true },
+  { name: 'show', boolean: false },
   { name: 'json', boolean: true },
 ];
+
+/** issue #41: user-facing --show targets. `all` unfolds every section. */
+const SHOW_SECTIONS = new Set([
+  'structure', 'style', 'refs', 'redundancy', 'overflow', 'parse', 'content', 'io', 'other', 'all',
+]);
 
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 
@@ -50,6 +60,16 @@ function safeActiveTasks(root: string): string[] {
 
 function safeAdrs(root: string): string[] {
   return dirExists(join(root, '_adr')) ? discoverAdrs(root) : [];
+}
+
+/** issue #41: which sections `--show` unfolds — tolerant parse for the EMIT
+ *  side (cli.ts). Strict validation lives in parseCheckArgs (usage errors); a
+ *  failing run prints its diagnosis instead of a report, so the printer never
+ *  needs the show set in that case. */
+export function showSectionsFromArgs(args: string[]): Set<string> {
+  const raw = parseArgs(args, CHECK_FLAGS).flags.get('show');
+  if (typeof raw !== 'string') return new Set();
+  return new Set(raw.split(',').map(s => s.trim().toLowerCase()).filter(s => SHOW_SECTIONS.has(s)));
 }
 
 /** §20: route check's args through the shared parser — `--flag value` only,
@@ -63,12 +83,28 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
   if (positional.length > 1) {
     errors.push(`unexpected argument "${positional[1]}" — check takes a single optional [file]`);
   }
+  // issue #41: --show takes a comma-separated section list; unknown names are
+  // user errors, never silently ignored (§20 contract).
+  const show: string[] = [];
+  const rawShow = parsed.flags.get('show');
+  if (typeof rawShow === 'string') {
+    for (const part of rawShow.split(',')) {
+      const s = part.trim().toLowerCase();
+      if (s === '') continue;
+      if (!SHOW_SECTIONS.has(s)) {
+        errors.push(`unknown --show section "${s}" — use structure|style|refs|redundancy|overflow|all`);
+      } else {
+        show.push(s);
+      }
+    }
+  }
   return {
     fix: parsed.flags.has('fix'),
     strict: parsed.flags.has('strict'),
     refsOnly: parsed.flags.has('refs-only'),
     noRedundancy: parsed.flags.has('no-redundancy'),
     json: parsed.flags.has('json'),
+    show,
     file,
     errors,
   };

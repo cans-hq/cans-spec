@@ -71,6 +71,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -215,7 +224,7 @@ describe('QA-08 red verification: adversarial inputs & parser robustness', () =>
     expect(r0.exit === 0 || r0.exit === 1).toBe(true); // issue #41: setup sanity = no errors (init-skeleton warnings → exit 1)
     const j0 = parseJsonOut(r0.out);
     expect(j0.ok).toBe(true);
-    const nodes0 = j0.nodes as number; // check --json top-level node count key
+    const nodes0 = (j0.summary as { nodes: number }).nodes; // issue #41: summary.nodes
     expect(typeof nodes0).toBe('number');
 
     // Probe: same file with 3 bullets written with CRLF (\r\n) line endings.
@@ -233,7 +242,7 @@ describe('QA-08 red verification: adversarial inputs & parser robustness', () =>
     expect(r1.exit === 0 || r1.exit === 1).toBe(true); // issue #41: setup sanity = no errors (warnings-only exits 1)
     const j1 = parseJsonOut(r1.out);
     // RED: currently nodes stay at the empty-file baseline (CRLF bullets contribute 0).
-    expect(j1.nodes).toBeGreaterThanOrEqual(nodes0 + 3);
+    expect((j1.summary as { nodes: number }).nodes).toBeGreaterThanOrEqual(nodes0 + 3); // issue #41: summary.nodes
 
     // Contract 2: concepts living only in the CRLF file are findable by budget (§26).
     const b = runCli(['budget', 'read', 'zephyr', '--json'], ws.root);

@@ -1,25 +1,30 @@
 import type {
-  CommandResult, CheckResult, Issue, InitResult, NewResult, DoneResult, StatusResult,
+  CommandResult, CheckResult, InitResult, NewResult, DoneResult, StatusResult,
   BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, VersionResult,
 } from '../types.ts';
+import {
+  buildReport, topGroups, checkReportJson,
+  type IssueGroup, type SectionReport,
+} from './report.ts';
 
 /** Single emission point. Commands never console.log or process.exit directly.
- *  `refsOnly` (check only, §22/§36): human output is scoped to the References
- *  section (+ Rules + summary); JSON output is always the full result. */
-export function emit(result: CommandResult, json: boolean, refsOnly?: boolean): void {
+ *  `refsOnly` (check only): human output is scoped to the REFS section (+ Rules).
+ *  `show` (check only, issue #41): sections rendered UNFOLDED by --show.
+ *  --json: check emits the lossless structured wire shape (sections → arrays
+ *  of {file, line, rule, detail}, issue #41); other commands the raw result. */
+export function emit(result: CommandResult, json: boolean, refsOnly?: boolean, show?: Set<string>): void {
   if (json) {
-    console.log(JSON.stringify(result, null, 2));
+    const body = result.command === 'check' ? checkReportJson(result as unknown as Parameters<typeof checkReportJson>[0]) : result;
+    console.log(JSON.stringify(body, null, 2));
     return;
   }
-  printHuman(result, refsOnly);
+  printHuman(result, refsOnly, show);
 }
 
-const CATEGORY_ORDER: Array<Issue['category']> = ['structure', 'style', 'refs', 'redundancy', 'overflow'];
-
-export function printHuman(result: CommandResult, refsOnly?: boolean): void {
+export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set<string>): void {
   switch (result.command) {
     case 'check':
-      printCheckHuman(result as CheckResult, refsOnly);
+      printCheckHuman(result as CheckResult, refsOnly, show);
       break;
     case 'help':
       printHelp();
@@ -206,7 +211,23 @@ export function printHuman(result: CommandResult, refsOnly?: boolean): void {
   }
 }
 
-function printCheckHuman(r: CheckResult, refsOnly?: boolean): void {
+// ── issue #41: aggregated check report ──
+// One line per pattern (`61× <min children (2/3)`), grouped by root cause,
+// top-N + fold with --show expansion, timing on the summary line, and a
+// ≤500-token default budget for issue-scale projects.
+
+const DISPLAY_NAMES: Record<string, string> = {
+  structure: 'STRUCTURE', style: 'STYLE', refs: 'REFS', redundancy: 'REDUNDANCY',
+  overflow: 'OVERFLOW', parse: 'PARSE', content: 'CONTENT', io: 'IO', other: 'OTHER',
+};
+const SECTION_PRINT_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'parse', 'content', 'io', 'other'];
+const FOLD_TOP_GROUPS = 5;
+const FOLD_KEYWORD_ITEMS = 5;
+const FOLD_OVERLAP_ITEMS = 3;
+const FOLD_TARGETS = 8;
+const WRAP_COLS = 72;
+
+function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>): void {
   // §37: check-level failures (unknown flag, no cans workspace, invalid
   // _rules.yaml, unmatched file filter) carry their diagnosis in `error` —
   // print it standalone, never inside a report-shaped body.
@@ -216,63 +237,175 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean): void {
     return;
   }
 
-  const byCategory = new Map<string, Issue[]>();
-  for (const i of r.issues) {
-    const list = byCategory.get(i.category) ?? [];
-    list.push(i);
-    byCategory.set(i.category, list);
-  }
-  if (!refsOnly) {
-    console.log('Structure');
-    console.log(`  ${r.files} files, ${r.nodes} nodes, max depth ${r.maxDepth}`);
-    printIssues(byCategory.get('structure'));
+  const expanded = (name: string): boolean => show !== undefined && (show.has('all') || show.has(name));
 
-    console.log('Style');
-    printIssues(byCategory.get('style'));
-  }
+  // issue #41: summary line first — severity mark, workspace shape, elapsed ms.
+  const mark = r.errorCount > 0 ? '✗' : r.warningCount > 0 ? '⚠' : '✓';
+  console.log(`${mark} ${r.files} files · ${r.nodes} nodes · depth ${r.maxDepth} · ${r.elapsedMs ?? 0}ms`);
 
-  console.log('References');
-  console.log(`  ${r.refs.total} see: refs, ${r.refs.broken} broken, ${r.refs.deepHops} deep hops`);
-  console.log(`  back-pointers: ${r.backPointers.current}/${r.backPointers.total} current`);
-  printIssues(byCategory.get('refs'));
-
-  if (!refsOnly) {
-    console.log('Redundancy');
-    printIssues(byCategory.get('redundancy'));
-    if (!byCategory.get('redundancy')?.length) {
-      const none = r.issues.filter(i => i.category === 'redundancy').length === 0;
-      if (none) console.log('  ✓ no redundancy detected');
+  const report = buildReport(r.issues);
+  for (const name of SECTION_PRINT_ORDER) {
+    if (refsOnly && name !== 'refs') continue;
+    const section = report.sections[name];
+    // Compact contract: STRUCTURE/STYLE/REDUNDANCY (and the small sections)
+    // print only when they carry findings; REFS and OVERFLOW always print
+    // (they carry the ✓ healthy state, as in the issue's expected output).
+    if (section === undefined) {
+      if (name === 'overflow' && !refsOnly) {
+        console.log('');
+        console.log('OVERFLOW  ✓');
+      }
+      continue;
     }
-
-    console.log('Overflow');
-    if (!byCategory.get('overflow')?.length) {
-      console.log('  ✓ no code blocks, tables, or oversized nodes');
-    } else {
-      printIssues(byCategory.get('overflow'));
-    }
+    console.log('');
+    if (name === 'refs') printRefsSection(r, section, expanded('refs'));
+    else printSection(section, expanded(name));
   }
 
-  // §22: the fixed report order ends Structure → Style → References →
-  // Redundancy → Overflow → Rules → Summary (QA-02 F17).
   if (r.rulesSummary !== undefined) {
-    console.log('Rules (_rules.yaml)');
-    console.log(`  ✓ ${r.rulesSummary}`);
+    console.log('');
+    console.log(`RULES  ✓ ${compactRules(r.rulesSummary)}`);
   }
-
-  void CATEGORY_ORDER;
-  console.log('');
-  console.log(`${r.errorCount} errors, ${r.warningCount} warnings.`);
 }
 
-function printIssues(issues: Issue[] | undefined): void {
-  for (const i of issues ?? []) {
-    const mark = i.level === 'error' ? '✗' : '⚠';
-    // Avoid duplicating the file path when the message already carries it (parse errors)
-    const msg = i.message.startsWith(`${i.file}:`) ? i.message.slice(i.file.length + 1) : i.message;
-    const linePart = i.line > 0 ? `:${i.line}` : '';
-    console.log(`  ${mark} ${i.file}${linePart} — ${msg}`);
-    if (i.suggestion) console.log(`    ${i.suggestion}`);
+function printSection(section: SectionReport, expanded: boolean): void {
+  const mark = section.errorCount > 0 ? '✗' : '⚠';
+  console.log(`${DISPLAY_NAMES[section.name] ?? section.name.toUpperCase()}  ${mark} ${section.errorCount + section.warningCount}`);
+  const { shown, folded } = expanded ? { shown: section.groups, folded: 0 } : topGroups(section, FOLD_TOP_GROUPS);
+  for (const g of shown) printGroup(g, expanded);
+  if (folded > 0) console.log(`   … ${folded} more → cans check --show ${section.name}`);
+}
+
+function printRefsSection(r: CheckResult, section: SectionReport, expanded: boolean): void {
+  // Header: per-root-cause counts (issue #41 example: `REFS  ✗ 96 broken · ⚠ 8 stale · ⚠ 1 orphan`).
+  // Level-aware: named buckets subtract from the section totals, the residue
+  // prints as `✗ N` / `⚠ N` — no finding is ever hidden or double-counted.
+  const byRule = new Map<string, { err: number; warn: number }>();
+  for (const g of section.groups) {
+    const cur = byRule.get(g.rule) ?? { err: 0, warn: 0 };
+    if (g.level === 'error') cur.err += g.count;
+    else cur.warn += g.count;
+    byRule.set(g.rule, cur);
   }
+  const named = ['refs.broken.file', 'refs.backpointer.stale', 'refs.orphan', 'refs.deep_hop'];
+  const namedErr = named.reduce((a, rl) => a + (byRule.get(rl)?.err ?? 0), 0);
+  const namedWarn = named.reduce((a, rl) => a + (byRule.get(rl)?.warn ?? 0), 0);
+  const parts: string[] = [];
+  const broken = byRule.get('refs.broken.file');
+  if (broken !== undefined && broken.err + broken.warn > 0) parts.push(`✗ ${broken.err + broken.warn} broken`);
+  const stale = byRule.get('refs.backpointer.stale');
+  if (stale !== undefined && stale.err + stale.warn > 0) parts.push(`⚠ ${stale.err + stale.warn} stale`);
+  const orphan = byRule.get('refs.orphan');
+  if (orphan !== undefined && orphan.err + orphan.warn > 0) parts.push(`⚠ ${orphan.err + orphan.warn} orphan`);
+  const hops = byRule.get('refs.deep_hop');
+  if (hops !== undefined && hops.err > 0) parts.push(`✗ ${hops.err} deep-hop`);
+  else if (hops !== undefined && hops.warn > 0) parts.push(`⚠ ${hops.warn} deep-hop`);
+  const errOther = section.errorCount - namedErr;
+  const warnOther = section.warningCount - namedWarn;
+  if (errOther > 0) parts.push(`✗ ${errOther}`);
+  if (warnOther > 0) parts.push(`⚠ ${warnOther}`);
+  if (parts.length > 0) {
+    console.log(`REFS  ${parts.join(' · ')}`);
+  } else {
+    const bp = r.backPointers.total > 0 ? ` · ${r.backPointers.current}/${r.backPointers.total} back-ptrs` : '';
+    console.log(`REFS  ✓ ${r.refs.total} refs${bp}`);
+  }
+
+  // issue #41 design rule 2: all missing-file refs coalesce into ONE block
+  // (91 broken refs → 4 targets with per-target counts, one fix hint).
+  const brokenGroups = section.groups.filter(g => g.rule === 'refs.broken.file');
+  const rest = section.groups.filter(g => g.rule !== 'refs.broken.file');
+  if (brokenGroups.length > 0) printBrokenFileBlock(brokenGroups);
+  const { shown, folded } = expanded ? { shown: rest, folded: 0 } : topGroups({ ...section, groups: rest }, FOLD_TOP_GROUPS);
+  for (const g of shown) printGroup(g, expanded);
+  if (folded > 0) console.log(`   … ${folded} more → cans check --show refs`);
+}
+
+function printBrokenFileBlock(groups: IssueGroup[]): void {
+  const total = groups.reduce((a, g) => a + g.count, 0);
+  console.log(`  ${String(total).padStart(2)}× missing file`);
+  const targets = groups
+    .filter(g => g.key !== undefined)
+    .map(g => ({ label: g.key!, count: g.count }))
+    .sort((a, b) => b.count - a.count || (a.label < b.label ? -1 : 1));
+  const shown = targets.slice(0, FOLD_TARGETS);
+  for (const line of wrapText(shown.map(t => `${t.label} (${t.count})`).join(' · '), WRAP_COLS, 6)) console.log(line);
+  if (targets.length > shown.length) console.log(`      ↳ ${targets.length - shown.length} more targets → cans check --show refs`);
+  const hint = groups.map(g => g.suggestion).find(s => s !== undefined);
+  if (hint !== undefined) console.log(`      ↳ ${hint}`);
+}
+
+function printGroup(g: IssueGroup, expanded: boolean): void {
+  console.log(`  ${String(g.count).padStart(2)}× ${g.pattern}`);
+  switch (g.rule) {
+    case 'redundancy.keyword': {
+      const items = g.items ?? [];
+      const shownItems = expanded ? items : items.slice(0, FOLD_KEYWORD_ITEMS);
+      // issue #41: `artifacts:105  db:74` — keyword:nodeCount, metric-ranked.
+      for (const line of wrapText(shownItems.map(it => `${it.label}:${it.metric ?? it.count}`).join('  '), WRAP_COLS, 6)) console.log(line);
+      const hidden = items.slice(FOLD_KEYWORD_ITEMS).reduce((a, it) => a + it.count, 0);
+      if (!expanded && hidden > 0) console.log(`      ↳ ${hidden} more → cans check --show redundancy`);
+      else if (g.suggestion !== undefined) console.log(`      ↳ ${g.suggestion}`);
+      return;
+    }
+    case 'redundancy.overlap.exact':
+    case 'redundancy.overlap.fuzzy': {
+      const items = g.items ?? [];
+      const shownItems = expanded ? items : items.slice(0, FOLD_OVERLAP_ITEMS);
+      if (shownItems.length > 0) {
+        for (const line of wrapText(`worst: ${shownItems.map(it => it.label).join(' · ')}`, WRAP_COLS, 6)) console.log(line);
+      }
+      const hidden = items.length - shownItems.length;
+      if (!expanded && hidden > 0) console.log(`      ↳ ${hidden} more pairs → cans check --show redundancy`);
+      else if (g.suggestion !== undefined) console.log(`      ↳ ${g.suggestion}`);
+      return;
+    }
+    case 'refs.backpointer.stale': {
+      // `budget:2  ← agent, effect, interface` — target lines + referrers.
+      const referrers = (g.items ?? []).map(it => it.label).join(', ');
+      const line = referrers !== '' ? `${g.locations.join(' ')}  ← ${referrers}` : g.locations.join(' ');
+      for (const l of wrapText(line, WRAP_COLS, 6)) console.log(l);
+      break;
+    }
+    case 'refs.broken.anchor': {
+      const details = (expanded ? (g.items ?? []).map(it => it.label) : (g.detail !== undefined ? [g.detail] : (g.items ?? []).slice(0, FOLD_OVERLAP_ITEMS).map(it => it.label)));
+      for (const d of details) console.log(`      ${d}`);
+      break;
+    }
+    default: {
+      for (const line of wrapText(g.locations.join('  '), WRAP_COLS, 6)) console.log(line);
+    }
+  }
+  if (g.suggestion !== undefined) console.log(`      ↳ ${g.suggestion}`);
+}
+
+/** Greedy two-space-separator wrap (location lists), fixed indent. */
+function wrapText(text: string, cols: number, indent: number): string[] {
+  const pad = ' '.repeat(indent);
+  const budget = Math.max(cols - indent, 20);
+  if (text.length <= budget) return text === '' ? [] : [pad + text];
+  const pieces = text.split('  ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const p of pieces) {
+    const candidate = cur === '' ? p : `${cur}  ${p}`;
+    if (cur === '' || candidate.length <= budget) cur = candidate;
+    else {
+      lines.push(pad + cur);
+      cur = p;
+    }
+  }
+  if (cur !== '') lines.push(pad + cur);
+  return lines;
+}
+
+/** `node_length: 3–120 | siblings: 3–12 | depth: 5–7` → `len 3–120 · sib 3–12 · depth 5–7`. */
+function compactRules(s: string): string {
+  return s
+    .replace('node_length: ', 'len ')
+    .replaceAll('siblings: ', 'sib ')
+    .replace('depth: ', 'depth ')
+    .replaceAll(' | ', ' · ');
 }
 
 function printHelp(): void {
@@ -282,7 +415,7 @@ Usage: cans <command> [args]
 
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
-  check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
+  check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]

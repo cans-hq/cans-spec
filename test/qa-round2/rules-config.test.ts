@@ -67,6 +67,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -199,7 +208,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
     // §18 delete-key contract: the node-length check is OFF → zero errors, exit 0 (§19).
     expect(r.exit).toBe(0);
     expect(j.exitCode).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(j.counts.errors).toBe(0); // issue #41: counts.errors
     const nodeLengthIssues = j.issues.filter((i: any) => i.message.includes('Node too long'));
     expect(nodeLengthIssues).toEqual([]);
   });
@@ -226,7 +235,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
     const j = parseJsonOut(r.out);
     expect(r.exit).toBe(0);
     expect(j.exitCode).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(j.counts.errors).toBe(0); // issue #41: counts.errors
     const nodeLengthIssues = j.issues.filter((i: any) => i.message.includes('Node too long'));
     expect(nodeLengthIssues).toEqual([]);
   });

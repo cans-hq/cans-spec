@@ -52,6 +52,10 @@ export interface GroupItem {
   label: string;
   count: number;
   locations?: string[];
+  /** issue #41 integration: semantic size when the message carries one —
+   *  keyword sprawl's node count (`"artifacts" × 105 nodes` → 105). Ranking
+   *  and display use the metric; `count` stays the raw occurrence count. */
+  metric?: number;
 }
 
 export interface IssueGroup {
@@ -158,9 +162,9 @@ interface Normalized {
   key?: string;
   detail?: string;
   /** Per-member item (merged by label across the group). */
-  item?: { label: string; sort: number };
+  item?: { label: string; sort: number; metric?: number };
   /** How the merged items are ranked: by item count, by metric, or input order. */
-  itemSort?: 'count' | 'pct' | 'appearance';
+  itemSort?: 'count' | 'pct' | 'metric' | 'appearance';
   /** refs.broken.file: single item {label: key, count: group count} at finalize. */
   targetItem?: boolean;
 }
@@ -219,8 +223,15 @@ function normalizeMessage(issue: IssueLike): Normalized {
 
   // ── redundancy ──
   if ((mt = m.match(RE_KEYWORD)) !== null) {
-    // issue #41: ONE group — items = keywords ranked by node count desc.
-    return { rule: 'redundancy.keyword', pattern: 'keyword sprawl', item: { label: mt[1]!, sort: 0 }, itemSort: 'count' };
+    // issue #41: ONE group — items = keywords ranked by NODE count desc (the
+    // message's ×N), so the engine's one-issue-per-keyword shape renders
+    // `artifacts:105  db:74 …` exactly as the issue specifies.
+    return {
+      rule: 'redundancy.keyword',
+      pattern: 'keyword sprawl',
+      item: { label: mt[1]!, sort: 0, metric: Number(mt[2]) },
+      itemSort: 'metric',
+    };
   }
   if ((mt = m.match(RE_OVERLAP)) !== null) {
     const pct = Number(mt[1]);
@@ -355,8 +366,8 @@ interface Acc {
   firstIndex: number;
   entries: Array<{ file: string; line: number }>;
   seenLoc: Set<string>;
-  itemMap: Map<string, { label: string; count: number; sort: number; order: number; locations: string[] }> | null;
-  itemSort: 'count' | 'pct' | 'appearance';
+  itemMap: Map<string, { label: string; count: number; sort: number; order: number; locations: string[]; metric?: number }> | null;
+  itemSort: 'count' | 'pct' | 'metric' | 'appearance';
   wantsTargetItem: boolean;
 }
 
@@ -367,10 +378,12 @@ function finalizeGroup(acc: Acc): IssueGroup {
     const items = [...acc.itemMap.values()];
     if (acc.itemSort === 'count') items.sort((a, b) => b.count - a.count || a.order - b.order);
     else if (acc.itemSort === 'pct') items.sort((a, b) => b.sort - a.sort || a.order - b.order);
+    else if (acc.itemSort === 'metric') items.sort((a, b) => (b.metric ?? 0) - (a.metric ?? 0) || b.count - a.count || a.order - b.order);
     else items.sort((a, b) => a.order - b.order);
     group.items = items.map((it) => ({
       label: it.label,
       count: it.count,
+      ...(it.metric !== undefined ? { metric: it.metric } : {}),
       ...(it.locations.length > 0 ? { locations: it.locations } : {}),
     }));
   } else if (acc.wantsTargetItem && group.key !== undefined) {
@@ -500,10 +513,13 @@ export function estimateTokens(text: string): number {
 }
 
 /** issue #41: lossless `--json` wire shape. One entry per raw issue in source
- *  order (detail = the full original message, rule = explicit ?? derived);
- *  unknown engine categories land in `other`; no folding. */
+ *  order. Each entry is `{file, line, rule, detail}` (the acceptance shape)
+ *  plus `level` and `suggestion` — agents must be able to filter errors from
+ *  warnings and read fix hints without re-deriving them, so the wire format
+ *  is a strict superset of the acceptance shape. Unknown engine categories
+ *  land in `other`; no folding. */
 export function checkReportJson(result: CheckResultLike): unknown {
-  const sections: Record<string, Array<{ file: string; line: number; rule: string; detail: string }>> = {};
+  const sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>> = {};
   for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow', 'other']) {
     sections[name] = [];
   }
@@ -512,8 +528,10 @@ export function checkReportJson(result: CheckResultLike): unknown {
     sections[bucket]!.push({
       file: issue.file,
       line: issue.line,
+      level: issue.level,
       rule: issue.rule ?? normalizeMessage(issue).rule,
       detail: issue.message,
+      ...(issue.suggestion !== undefined ? { suggestion: issue.suggestion } : {}),
     });
   }
   const summary: { files: number; nodes: number; maxDepth: number; elapsedMs?: number } = {

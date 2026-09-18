@@ -45,7 +45,12 @@ async function dispatch(): Promise<CommandResult> {
 
 try {
   const result = await dispatch();
-  emit(result, args.includes('--json'), args.includes('--refs-only'));
+  // issue #41: check's --show sections are parsed for the EMIT side only —
+  // lazily, so non-check commands never load the check module.
+  const show = cmd === 'check'
+    ? (await import('./commands/check.ts')).showSectionsFromArgs(args)
+    : undefined;
+  emit(result, args.includes('--json'), args.includes('--refs-only'), show);
   process.exit(result.exitCode);
 } catch (e) {
   console.error(`✗ Internal error: ${e instanceof Error ? e.message : e}`);

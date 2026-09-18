@@ -64,6 +64,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -157,7 +166,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
     expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error)
-    expect(parsed.errorCount).toBeGreaterThanOrEqual(1);
+    expect(parsed.counts.errors).toBeGreaterThanOrEqual(1); // issue #41: counts.errors
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // word-frequency layer only: "cache" × 3 nodes stays silent at default threshold 4
     // (the fuzzy layer's unrelated cycle↔cache typo warning is NOT a frequency flag)
@@ -180,7 +189,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
     expect(r.exit).toBe(2); // issue #41: exit 2 = error class (unlisted structure engine still ran)
-    expect(parsed.errorCount).toBeGreaterThanOrEqual(1);
+    expect(parsed.counts.errors).toBeGreaterThanOrEqual(1); // issue #41: counts.errors
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // the listed override must take effect: cache ×3 ≥ 2 (word-frequency layer)
     expect(parsed.issues.some((i: any) => i.category === 'redundancy' && /"cache" × \d+ nodes/.test(i.message))).toBe(true);

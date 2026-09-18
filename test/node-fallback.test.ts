@@ -153,8 +153,9 @@ describe('issue #12: CLI end-to-end under the current runtime', () => {
 
     const check = spawnCli(['check'], dir, env);
     expect(check.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
-    // A fresh init workspace carries orphan/tbd warnings — errors must be zero.
-    expect(check.out).toMatch(/0 errors, \d+ warnings?\./);
+    // issue #41: report opens with the severity + shape + timing line; the old
+    // "N errors, M warnings." footer is gone (severity lives on line 1 + $?).
+    expect(check.out).toMatch(/[⚠✓] \d+ files · \d+ nodes · depth \d+ · \d+ms/);
 
     const newTask = spawnCli(['new', 'task', 'verify-fallback'], dir, env);
     expect(newTask.exit).toBe(0);

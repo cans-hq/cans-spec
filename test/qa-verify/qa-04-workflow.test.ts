@@ -75,6 +75,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -253,7 +262,7 @@ describe('QA-04 red verification: new / done / status', () => {
     const c = runCli(['check', '--json'], ws.root);
     const cj = parseJsonOut(c.out);
     expect(c.exit === 0 || c.exit === 1).toBe(true); // issue #41: healthy = no errors (init-skeleton warnings → warnings-only exit 1)
-    expect(cj.errorCount).toBe(0);
+    expect(cj.counts.errors).toBe(0); // issue #41: counts.errors
 
     const r = runCli(['done', 'no-such-task'], ws.root);
     expect(r.exit).toBe(1);
@@ -337,7 +346,7 @@ describe('QA-04 red verification: new / done / status', () => {
     // Precondition (§22): healthy workspace so the done check gate passes.
     const c = runCli(['check', '--json'], ws.root);
     const cj = parseJsonOut(c.out);
-    expect(cj.errorCount).toBe(0);
+    expect(cj.counts.errors).toBe(0); // issue #41: counts.errors
 
     const r = runCli(['done', 'update-sessions', '--json'], ws.root);
     const j = parseJsonOut(r.out);

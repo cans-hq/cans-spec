@@ -81,6 +81,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -164,7 +173,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     // is the only ref-graph change (§22).
     const pre = runCli(['check', '--json'], ws.root);
     expect(pre.exit === 0 || pre.exit === 1).toBe(true); // issue #41: healthy sanity = no errors (warnings-only now exits 1)
-    expect(parseJsonOut(pre.out).errorCount).toBe(0);
+    expect(parseJsonOut(pre.out).counts.errors).toBe(0); // issue #41: counts.errors
 
     rmSync(join(ws.cans, '02-authentication.md'));
 
@@ -302,7 +311,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     const c = runCli(['check', '--json'], imp.root);
     const cj = parseJsonOut(c.out);
     expect(c.exit === 0 || c.exit === 1).toBe(true); // issue #41: healthy = no errors (warnings-only now exits 1)
-    expect(cj.errorCount).toBe(0);
+    expect(cj.counts.errors).toBe(0); // issue #41: counts.errors
     expect(cj.refs.broken).toBe(0);
     expect(
       cj.issues.some((i: Issue) => /unwritten spec slot/i.test(i.message)),
@@ -327,7 +336,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     const pre = runCli(['check', '--json'], ws.root);
     const prej = parseJsonOut(pre.out);
     expect(pre.exit === 0 || pre.exit === 1).toBe(true); // issue #41: healthy sanity = no errors (warnings-only now exits 1)
-    expect(prej.errorCount).toBe(0);
+    expect(prej.counts.errors).toBe(0); // issue #41: counts.errors
     expect(prej.refs.total).toBeGreaterThanOrEqual(1); // the task's see: ref is seen
     const targetBefore = readFileSync(join(ws.cans, '08-solo.md'), 'utf-8');
     expect(targetBefore).not.toContain('ref-by'); // scenario pin: no ref-by yet

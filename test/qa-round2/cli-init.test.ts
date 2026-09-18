@@ -183,10 +183,10 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
     const dir = initWs('q5d-04-plain-init');
     const r = runCli(['check', '--json'], dir);
     expect(r.exit).toBe(1); // issue #41: fresh init carries warnings (orphans/tbd) → warnings-only exit 1 (was 0)
-    const j = JSON.parse(r.out) as { ok: boolean; errorCount: number; files: number };
+    const j = JSON.parse(r.out) as { ok: boolean; counts: { errors: number }; summary: { files: number } }; // issue #41: counts.errors + summary.files
     expect(j.ok).toBe(true);
-    expect(j.errorCount).toBe(0);
-    expect(j.files).toBe(7);
+    expect(j.counts.errors).toBe(0); // issue #41: counts.errors
+    expect(j.summary.files).toBe(7); // issue #41: summary.files
     expect(r.out).not.toContain('CLAUDE');
   });
 
@@ -427,9 +427,10 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
     const v: string[] = [];
     if (c.exit === 2) v.push(`check exit ${c.exit} — a freshly init'ed (--tool claude) workspace must stay error-free (issue #41: exit 2 = error class)`);
     try {
-      const j = JSON.parse(c.out) as { ok?: boolean; errorCount?: number; files?: number; issues?: Array<{ file?: string; message?: string }> };
-      if (j.errorCount !== 0) v.push(`check errorCount ${j.errorCount} (expected 0) — CLAUDE.md parsed as spec: ${JSON.stringify(j.issues?.filter(i => i.file?.includes('CLAUDE')))}`);
-      if (j.files !== 7) v.push(`check files ${j.files} (expected 7) — CLAUDE.md counted as a spec file`);
+      const j = JSON.parse(c.out) as { ok?: boolean; counts?: { errors?: number }; summary?: { files?: number }; issues?: Array<{ file?: string; message?: string }> }; // issue #41: counts.errors + summary.files
+      // issue #41: counts.errors; issues view reconstituted from sections by the helper
+      if ((j.counts?.errors ?? 0) !== 0) v.push(`check errorCount ${j.counts?.errors} (expected 0) — CLAUDE.md parsed as spec: ${JSON.stringify(j.issues?.filter((i: any) => i.file?.includes('CLAUDE')))}`);
+      if (j.summary?.files !== 7) v.push(`check files ${j.summary?.files} (expected 7) — CLAUDE.md counted as a spec file`);
     } catch {
       v.push(`check --json did not emit valid JSON:\n${c.out}`);
     }

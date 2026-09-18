@@ -407,12 +407,16 @@ describe('report core (issue #41)', () => {
     expect(json['refs']).toEqual({ total: 120, broken: 3, deepHops: 1 });
     expect(json['backPointers']).toEqual({ total: 10, current: 8, stale: 2 });
     expect(json['counts']).toEqual({ errors: 2, warnings: 2 });
-    const sections = json['sections'] as Record<string, Array<{ file: string; line: number; rule: string; detail: string }>>;
+    // issue #41 integration: entries are a superset of the acceptance shape
+    // (level always present; suggestion only when the issue carries one).
+    const sections = json['sections'] as Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>>;
     expect(Object.keys(sections)).toEqual(['structure', 'style', 'refs', 'redundancy', 'overflow', 'other']);
     // one entry per raw issue, source order preserved, detail lossless
     expect(sections['refs']!.length).toBe(1);
+    // issue #41 integration: entries are a strict superset of the acceptance
+    // shape — level always present, suggestion only when the issue carries one.
     expect(sections['refs']![0]).toEqual({
-      file: 'a.md', line: 5, rule: 'refs.broken.file', detail: 'broken ref: see x.md — file not found',
+      file: 'a.md', line: 5, level: 'error', rule: 'refs.broken.file', detail: 'broken ref: see x.md — file not found',
     });
     expect(sections['structure']!.length).toBe(2);
     expect(sections['structure']![0]!.rule).toBe('parse.error'); // derived when rule absent

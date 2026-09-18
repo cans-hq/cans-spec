@@ -64,7 +64,14 @@ function copyFixture(ws: string, fixture: string): void {
 }
 
 function parseJson(out: string): any {
-  return JSON.parse(out);
+  const json = JSON.parse(out) as Record<string, unknown>;
+  // issue #41: reconstitute the flat issues view from sections.{category}[].
+  if (json.sections !== undefined && json.issues === undefined) {
+    (json as any).issues = Object.entries(json.sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
+  return json;
 }
 
 afterEach(() => {

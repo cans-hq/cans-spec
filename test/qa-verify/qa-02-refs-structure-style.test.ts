@@ -30,14 +30,15 @@ interface CheckJson {
   ok: boolean;
   command: string;
   exitCode: number;
-  files: number;
-  nodes: number;
-  maxDepth: number;
+  // issue #41 wire shape: shape/timing moved under summary, flat issues under
+  // sections.{category}[], counts under counts.*. The helper reconstitutes
+  // `issues` (category + message) for the assertions below.
+  summary: { files: number; nodes: number; maxDepth: number; elapsedMs: number };
+  counts: { errors: number; warnings: number };
   refs: { total: number; broken: number; deepHops: number };
   backPointers: { total: number; current: number; stale: number };
+  sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>>;
   issues: Issue[];
-  errorCount: number;
-  warningCount: number;
   backPointersUpdated: number;
 }
 
@@ -66,7 +67,16 @@ function copyFixtureSpec(ws: string, fixture: string, file: string): void {
 
 function checkJson(ws: string, extraArgs: string[] = []): { exit: number | null; json: CheckJson } {
   const res = runCli(['check', '--json', ...extraArgs], ws);
-  return { exit: res.exit, json: JSON.parse(res.out) as CheckJson };
+  const json = JSON.parse(res.out) as CheckJson;
+  // issue #41: wire shape moved to sections.{category}[] — reconstitute the
+  // flat issues view (category + message) for the assertions below.
+  const j = json as unknown as Record<string, unknown>;
+  if (j.sections !== undefined && j.issues === undefined) {
+    (j as any).issues = Object.entries(j.sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
+  return { exit: res.exit, json };
 }
 
 afterAll(() => {
@@ -175,7 +185,7 @@ describe('QA-02 red verification — refs/structure/style engines (documented co
     );
     expect(depthErrors).toHaveLength(0);
     // §35: 1-based maxDepth (4-level project → maxDepth 4).
-    expect(json.maxDepth).toBe(4);
+    expect(json.summary.maxDepth).toBe(4); // issue #41: summary.maxDepth
   });
 
   // F9a (QA-02) — §18 rules system: keys under `references:` are honored;
