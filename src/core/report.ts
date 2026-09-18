@@ -455,6 +455,7 @@ export function buildReport(issues: IssueLike[], opts?: { topN?: number }): Chec
         sort: norm.item.sort,
         order: acc.itemMap.size,
         locations: [],
+        ...(norm.item.metric !== undefined ? { metric: norm.item.metric } : {}),
       };
       entry.count++;
       if (issue.file !== '') {

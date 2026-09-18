@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.ts';
-import { flattenNodes } from './outline.ts';
+import { flattenNodes, maxDepth as outlineMaxDepth } from './outline.ts';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
@@ -62,6 +62,22 @@ export function checkStructure(
         });
       }
 
+      // issue #41: §15 documents "sibling count per parent" as a min/max check,
+      // but only max was enforced — siblings.min was an inert knob. Fire for
+      // parents with 2..min-1 children (2+ avoids double-reporting the 1-child
+      // case the single_child_collapse check owns; 0 children is a leaf).
+      const siblingsMin = rules.siblings !== null ? rules.siblings.min : null;
+      if (siblingsMin !== null && count >= 2 && count < siblingsMin) {
+        issues.push({
+          file,
+          line: node.line,
+          level: 'warning',
+          category: 'structure',
+          message: `"${node.text}" has ${count} children (min ${siblingsMin}).`,
+          rule: 'structure.siblings.min', // issue #41
+        });
+      }
+
       if (rules.single_child_collapse && count === 1) {
         issues.push({
           file,
@@ -89,6 +105,26 @@ export function checkStructure(
   };
 
   walk(nodes);
+
+  // issue #41: §15 documents depth (min/max) — enforce the documented minimum.
+  // Per-file, warning-level (the issue's scenario: `Max depth 4 is below min 5`
+  // at agent.md:1), skipped for empty files; depth is 1-based like §35 maxDepth.
+  const depthMin = rules.depth !== null ? rules.depth.min : null;
+  if (depthMin !== null && nodes.length > 0) {
+    const d = outlineMaxDepth(nodes) + 1;
+    if (d < depthMin) {
+      issues.push({
+        file,
+        line: nodes[0]?.line ?? 0,
+        level: 'warning',
+        category: 'structure',
+        message: `Max depth ${d} is below min ${depthMin}. Deepen the outline.`,
+        suggestion: 'deepen the outline or lower structure.depth.min in _rules.yaml',
+        rule: 'structure.depth.min', // issue #41
+      });
+    }
+  }
+
   return issues;
 }
 

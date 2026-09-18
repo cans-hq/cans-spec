@@ -104,3 +104,4 @@ Both round-1 BLOCKERs confirmed fixed (QA-05 F8 import merge corruption, false-s
 ## What held up (round 2)
 
 Round-1 BLOCKER fixes verified green; unknown-command/typo guidance 16/16 (QA-10 B); flag-interaction matrix clean 11/11 (QA-10 E); lifecycle chain 16/17 PASS; `check --fix` converges to a stable fixpoint and is idempotent; budget write/read state machine coherent (10/12); export→import round-trips preserve hierarchy for opml/dynalist; fresh imports of all three formats still exact; no data-loss BLOCKER found anywhere in round 2.
+| QA-12-issue-41-check-output.md | check output aggregation, --show, --json shape, exit codes 0/1/2, runtime warning hygiene (issue #41) | §19, §35-37 (issue #41 contract) |
