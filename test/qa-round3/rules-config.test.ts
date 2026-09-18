@@ -156,7 +156,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const ws = mixedWs('ctl-defaults', null);
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(1); // long node → structure error
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error)
     expect(parsed.errorCount).toBeGreaterThanOrEqual(1);
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // word-frequency layer only: "cache" × 3 nodes stays silent at default threshold 4
@@ -179,7 +179,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     ].join('\n'));
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(1); // unlisted structure engine must still run
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (unlisted structure engine still ran)
     expect(parsed.errorCount).toBeGreaterThanOrEqual(1);
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // the listed override must take effect: cache ×3 ≥ 2 (word-frequency layer)
@@ -190,7 +190,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const ws = mixedWs('r3-r1b-empty', '');
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error present)
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
   });
 
@@ -198,7 +198,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const ws = mixedWs('r3-r1c-unknown', 'bogus_key: 42\n');
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error present)
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
   });
 
@@ -248,7 +248,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     writeFileSync(join(ws.cans, '_rules.yaml'), rules);
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only (vehicle ×4 warning fires) → exit 1 (was 0 pre-#41)
     expect(parsed.issues.some((i: any) => i.category === 'redundancy' && /vehicle/i.test(i.message))).toBe(true);
   });
 

@@ -152,7 +152,7 @@ describe('issue #12: CLI end-to-end under the current runtime', () => {
     expect(init.out).toContain('Workspace:');
 
     const check = spawnCli(['check'], dir, env);
-    expect(check.exit).toBe(0);
+    expect(check.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
     // A fresh init workspace carries orphan/tbd warnings — errors must be zero.
     expect(check.out).toMatch(/0 errors, \d+ warnings?\./);
 

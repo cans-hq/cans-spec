@@ -37,6 +37,7 @@ export function checkStyle(
               level: 'warning',
               category: 'style',
               message: `${size} siblings share prefix "${word}". Group under nested style.`,
+              rule: 'style.prefix.shared', // issue #41: machine-readable rule key
             });
           }
         }
@@ -63,6 +64,7 @@ export function checkStyle(
           // QA-03 F17 pluralization contract (unreachable for 1 — the ≥2 guard
           // above plus the structure engine owns the 1-child case).
           message: `"${node.text}" has ${children.length} ${children.length === 1 ? 'child' : 'children'}. Collapse to sibling style.`,
+          rule: 'style.nesting.prefer', // issue #41: closest scheme key (nesting preference)
         });
       }
 

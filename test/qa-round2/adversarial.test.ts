@@ -212,7 +212,7 @@ describe('QA-08 red verification: adversarial inputs & parser robustness', () =>
     // Baseline: empty overview → the other spec files' node count, no errors.
     writeFileSync(overview, '');
     const r0 = runCli(['check', '--json'], ws.root);
-    expect(r0.exit).toBe(0); // setup sanity (QA-08 B1: empty file counted, no issues)
+    expect(r0.exit === 0 || r0.exit === 1).toBe(true); // issue #41: setup sanity = no errors (init-skeleton warnings → exit 1)
     const j0 = parseJsonOut(r0.out);
     expect(j0.ok).toBe(true);
     const nodes0 = j0.nodes as number; // check --json top-level node count key
@@ -230,7 +230,7 @@ describe('QA-08 red verification: adversarial inputs & parser robustness', () =>
 
     // Contract 1: the file's bullets are parsed → node count rises by ≥ 3.
     const r1 = runCli(['check', '--json'], ws.root);
-    expect(r1.exit).toBe(0);
+    expect(r1.exit === 0 || r1.exit === 1).toBe(true); // issue #41: setup sanity = no errors (warnings-only exits 1)
     const j1 = parseJsonOut(r1.out);
     // RED: currently nodes stay at the empty-file baseline (CRLF bullets contribute 0).
     expect(j1.nodes).toBeGreaterThanOrEqual(nodes0 + 3);

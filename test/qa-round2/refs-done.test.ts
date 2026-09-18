@@ -152,17 +152,18 @@ afterEach(() => {
 });
 
 describe('QA round-2 red verification: refs engine integrity + done contracts', () => {
-  test('E2a: backward in-span missing see: target is a broken-ref ERROR with exit 1, not "unwritten spec slot" (§12 edge cases; QA-09 E2, QA-02 F2 residual)', () => {
+  test('E2a: backward in-span missing see: target is a broken-ref ERROR with exit 2, not "unwritten spec slot" (§12 edge cases; QA-09 E2, QA-02 F2 residual)', () => {
     // §12 edge-case table: "File not found → Broken ref error." There is NO
     // forward/backward or in-span exemption: rm a mid-span spec (02 of 00–06)
-    // and every dangling see: ref to it is a broken-ref error (exit 1).
+    // and every dangling see: ref to it is a broken-ref error (exit 2 since
+    // issue #41: errors = exit 2).
     const ws = makeWs('e2a');
     buildSpanWorkspace(ws);
 
     // Setup sanity: with 02 present the workspace has 0 errors, so the rm below
     // is the only ref-graph change (§22).
     const pre = runCli(['check', '--json'], ws.root);
-    expect(pre.exit).toBe(0);
+    expect(pre.exit === 0 || pre.exit === 1).toBe(true); // issue #41: healthy sanity = no errors (warnings-only now exits 1)
     expect(parseJsonOut(pre.out).errorCount).toBe(0);
 
     rmSync(join(ws.cans, '02-authentication.md'));
@@ -170,8 +171,9 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
 
-    // Documented contract (§12 + §19): dangling refs are broken-ref ERRORS → exit 1.
-    expect(r.exit).toBe(1);
+    // Documented contract (§12 + issue #41): dangling refs are broken-ref
+    // ERRORS → exit 2 (error class).
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (was 1)
     expect(j.refs.broken).toBeGreaterThanOrEqual(1);
     expect(
       j.issues.some((i: Issue) =>
@@ -187,7 +189,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     ).toBe(false);
   });
 
-  test('control (expected PASS): forward in-span missing see: target is a broken-ref ERROR with exit 1 (§12; forward direction verified fixed by QA-07 r2f2)', () => {
+  test('control (expected PASS): forward in-span missing see: target is a broken-ref ERROR with exit 2 (§12; forward direction verified fixed by QA-07 r2f2)', () => {
     // Same §12 contract, forward direction (02 → missing 05 with span 00–06).
     // QA-07 F2 verified this direction was fixed; pinned here as a control so
     // the surviving backward downgrade (E2a) cannot hide behind it.
@@ -209,7 +211,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
 
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (was 1)
     expect(j.refs.broken).toBeGreaterThanOrEqual(1);
     expect(
       j.issues.some((i: Issue) =>
@@ -299,7 +301,8 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     // warning), not a semantically dead ref masked as false-clean.
     const c = runCli(['check', '--json'], imp.root);
     const cj = parseJsonOut(c.out);
-    expect(c.exit).toBe(0);
+    expect(c.exit === 0 || c.exit === 1).toBe(true); // issue #41: healthy = no errors (warnings-only now exits 1)
+    expect(cj.errorCount).toBe(0);
     expect(cj.refs.broken).toBe(0);
     expect(
       cj.issues.some((i: Issue) => /unwritten spec slot/i.test(i.message)),
@@ -323,7 +326,7 @@ describe('QA round-2 red verification: refs engine integrity + done contracts', 
     // and only the back-pointer contract is under test.
     const pre = runCli(['check', '--json'], ws.root);
     const prej = parseJsonOut(pre.out);
-    expect(pre.exit).toBe(0);
+    expect(pre.exit === 0 || pre.exit === 1).toBe(true); // issue #41: healthy sanity = no errors (warnings-only now exits 1)
     expect(prej.errorCount).toBe(0);
     expect(prej.refs.total).toBeGreaterThanOrEqual(1); // the task's see: ref is seen
     const targetBefore = readFileSync(join(ws.cans, '08-solo.md'), 'utf-8');

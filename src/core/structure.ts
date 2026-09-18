@@ -23,6 +23,7 @@ export function checkStructure(
           level: 'error',
           category: 'structure',
           message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
+          rule: 'structure.node_length.max', // issue #41: machine-readable rule key
         });
       } else if (nl !== null && nl.min !== null && len < nl.min) {
         issues.push({
@@ -31,6 +32,7 @@ export function checkStructure(
           level: 'warning',
           category: 'structure',
           message: `Node too short (${len} < ${nl.min}).`,
+          rule: 'structure.node_length.min', // issue #41
         });
       }
 
@@ -43,6 +45,7 @@ export function checkStructure(
           level: 'error',
           category: 'structure',
           message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
+          rule: 'structure.depth.max', // issue #41
         });
       }
 
@@ -55,6 +58,7 @@ export function checkStructure(
           level: 'warning',
           category: 'structure',
           message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
+          rule: 'structure.siblings.max', // issue #41
         });
       }
 
@@ -65,6 +69,7 @@ export function checkStructure(
           level: 'warning',
           category: 'structure',
           message: `"${node.text}" has exactly 1 child. Collapse.`,
+          rule: 'structure.single_child', // issue #41
         });
       }
 
@@ -75,6 +80,7 @@ export function checkStructure(
           level: 'warning',
           category: 'structure',
           message: 'Empty node.',
+          rule: 'structure.empty_node', // issue #41
         });
       }
 
@@ -107,6 +113,7 @@ export function checkTbdPolicy(
         category: 'structure',
         message: 'TBD used but content.tbd_allowed is false',
         suggestion: 'resolve the TBD nodes or set content.tbd_allowed: true',
+        rule: 'content.tbd.disallowed', // issue #41
       },
     ];
   }
@@ -119,6 +126,7 @@ export function checkTbdPolicy(
         category: 'structure',
         message: `${tbdNodes.length} TBD nodes exceed content.max_tbd_per_file (${rules.max_tbd_per_file})`,
         suggestion: 'resolve the TBD nodes or raise content.max_tbd_per_file',
+        rule: 'content.tbd.max', // issue #41
       },
     ];
   }

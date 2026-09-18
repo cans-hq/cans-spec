@@ -93,6 +93,7 @@ export function wordFrequency(
       file: loc.file, line: loc.line, level: 'warning', category: 'redundancy',
       message: `"${word}" × ${n} nodes (threshold: ${threshold})`,
       suggestion: `pick one canonical home for "${word}" and see: it from the others`,
+      rule: 'redundancy.keyword', // issue #41: machine-readable rule key
     });
   }
   return issues;
@@ -126,6 +127,8 @@ export function phraseOverlap(
           file: a.node.file, line: a.node.line, level: 'warning', category: 'redundancy',
           message: `${pct}% overlap: ${a.node.file}:${a.node.line} ↔ ${b.node.file}:${b.node.line}`,
           suggestion: 'merge the duplicated bullets or see: the canonical one',
+          // issue #41: 100% overlap is an exact duplicate; below that is fuzzy.
+          rule: pct >= 100 ? 'redundancy.overlap.exact' : 'redundancy.overlap.fuzzy',
         });
       }
     }
@@ -165,6 +168,7 @@ export function fuzzyDistance(
           file: a.file, line: a.line, level: 'warning', category: 'redundancy',
           message: `possible typo: "${a.text}" (${a.file}:${a.line}) ↔ "${b.text}" (${b.file}:${b.line}) — Levenshtein ${d}`,
           suggestion: 'unify the spelling or map the variant as a synonym',
+          rule: 'redundancy.typo', // issue #41: word-form layer of the redundancy scheme
         });
       }
     }
@@ -234,6 +238,7 @@ export function crossFileCanonicality(
       file: entry.first.file, line: entry.first.line, level: 'warning', category: 'redundancy',
       message: `"${concept}" at depth 0-1 in ${files.length}+ files without see: (${files.join(', ')})`,
       suggestion: `keep "${concept}" in one canonical file and see: it from the others`,
+      rule: 'redundancy.duplicate_home', // issue #41
     });
   }
   return issues;

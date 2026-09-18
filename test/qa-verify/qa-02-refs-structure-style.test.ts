@@ -77,7 +77,7 @@ describe('QA-02 red verification — refs/structure/style engines (documented co
   // F1 (QA-02) — §8: "Flat wins over folder. If both exist, `cans check` flags error."
   //              §11: "Both existing = error."
   // A flat spec file and a folder index for the same NN-slug must be flagged as
-  // an ERROR (→ exit 1). Currently both parse as separate specs, exit 0.
+  // an ERROR (→ exit 2 since issue #41). Currently both parse as separate specs, exit 0.
   test('F1: flat + folder duplicate home for the same slug is flagged as an error (§8/§11)', () => {
     const ws = makeWs('f1-dup-home');
     // Two divergent copies of the same concept — the exact hazard the docs call out.
@@ -88,7 +88,7 @@ describe('QA-02 red verification — refs/structure/style engines (documented co
     const errs = json.issues.filter((i) => i.level === 'error');
     expect(errs.length).toBeGreaterThan(0); // §8: "flags error"
     expect(errs.some((i) => /02-authentication/.test(i.message))).toBe(true); // names the conflicting home
-    expect(exit).toBe(1); // §19: errors → exit 1
+    expect(exit).toBe(2); // issue #41: exit 2 = error class (was 1)
   });
 
   // F2 (QA-02) — §12 edge-case table: "File not found → Broken ref error".
@@ -114,7 +114,7 @@ describe('QA-02 red verification — refs/structure/style engines (documented co
     expect(
       json.issues.some((i) => i.level === 'error' && /04-api\.md/.test(i.message)),
     ).toBe(true);
-    expect(exit).toBe(1);
+    expect(exit).toBe(2); // issue #41: exit 2 = error class (was 1)
   });
 
   // F4 (QA-02) — §34 deep-hop fixture: the documented expected output contains
@@ -281,12 +281,12 @@ describe('QA-02 red verification — refs/structure/style engines (documented co
   // control (expected PASS) — pins the harness: broken-ref detection works on
   // the shipped broken-refs-project fixture (§34: 2 broken refs + 1 self-ref).
   // QA-02 matrix row 2a: PASS. This test is expected to pass TODAY.
-  test('control (expected PASS): broken-refs fixture yields refs.broken >= 2 and exit 1 (§34)', () => {
+  test('control (expected PASS): broken-refs fixture yields refs.broken >= 2 and exit 2 (§34)', () => {
     const ws = makeWs('ctl-broken-refs');
     copyFixtureSpec(ws, 'broken-refs-project', '04-api.md');
 
     const { exit, json } = checkJson(ws);
     expect(json.refs.broken).toBeGreaterThanOrEqual(2);
-    expect(exit).toBe(1);
+    expect(exit).toBe(2); // issue #41: exit 2 = error class (was 1)
   });
 });

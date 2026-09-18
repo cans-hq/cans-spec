@@ -252,7 +252,7 @@ describe('QA-04 red verification: new / done / status', () => {
     // Precondition (§22): the workspace is healthy — check exits 0 with 0 errors.
     const c = runCli(['check', '--json'], ws.root);
     const cj = parseJsonOut(c.out);
-    expect(c.exit).toBe(0);
+    expect(c.exit === 0 || c.exit === 1).toBe(true); // issue #41: healthy = no errors (init-skeleton warnings → warnings-only exit 1)
     expect(cj.errorCount).toBe(0);
 
     const r = runCli(['done', 'no-such-task'], ws.root);

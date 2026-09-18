@@ -24,6 +24,7 @@ export function checkOverflow(
           level: 'error',
           category: 'overflow',
           message: 'code fence detected — extract to file and reference via see:',
+          rule: 'overflow.code_fence', // issue #41: machine-readable rule key
         });
       }
       if (node.hasTable && forceSet.has('table')) {
@@ -33,6 +34,7 @@ export function checkOverflow(
           level: 'error',
           category: 'overflow',
           message: 'table detected — extract to file and reference via see:',
+          rule: 'overflow.table', // issue #41
         });
       }
       if (rules.max_node_chars !== null && node.text.length > rules.max_node_chars) {
@@ -42,6 +44,7 @@ export function checkOverflow(
           level: 'error',
           category: 'overflow',
           message: `node exceeds max chars (${node.text.length} > ${rules.max_node_chars})`,
+          rule: 'overflow.node_chars', // issue #41
         });
       }
       walk(node.children);
@@ -67,6 +70,7 @@ export function checkNoChaining(targets: Map<string, OutlineNode[]>): Issue[] {
           category: 'overflow',
           message: `no chaining: overflow target ${file} must not contain its own see: refs (found see ${ref.file})`,
           suggestion: `remove the see: ref inside ${file} — overflow targets are leaf content, reference them from a spec file instead`,
+          rule: 'refs.chaining', // issue #41: §16 chaining is a refs-category rule
         });
       }
     }

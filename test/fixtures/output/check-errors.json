@@ -1,5 +1,5 @@
 {
-  "ok": false, "command": "check", "exitCode": 1,
+  "ok": false, "command": "check", "exitCode": 2,
   "files": 6, "nodes": 84, "maxDepth": 4,
   "refs": { "total": 12, "broken": 0, "deepHops": 1 },
   "backPointers": { "total": 12, "current": 10, "stale": 2 },

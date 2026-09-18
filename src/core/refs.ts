@@ -79,6 +79,7 @@ export function checkRefs(
           file, line: ref.line, level: 'error', category: 'refs',
           message: `self-reference: ${file} → ${ref.file}`,
           suggestion: 'remove the self-reference; point at the canonical file instead',
+          rule: 'refs.self', // issue #41: machine-readable rule key
         });
         continue;
       }
@@ -87,6 +88,7 @@ export function checkRefs(
           file, line: ref.line, level: 'warning', category: 'refs',
           message: `transient ref: see ${ref.file} — _tasks/ files are transient, not spec`,
           suggestion: 're-point at a spec file when the task lands',
+          rule: 'refs.transient', // issue #41
         });
         continue;
       }
@@ -95,6 +97,7 @@ export function checkRefs(
           file, line: ref.line, level: 'error', category: 'refs',
           message: `ref to _collab/: see ${ref.file} — collab notes are not spec`,
           suggestion: 'move the content into a spec file and ref that',
+          rule: 'refs.collab', // issue #41
         });
         continue;
       }
@@ -110,6 +113,7 @@ export function checkRefs(
           file, line: ref.line, level: 'error', category: 'refs',
           message: `broken ref: see ${ref.file} — file not found`,
           suggestion: `create ${ref.file} or fix the ref target`,
+          rule: 'refs.broken.file', // issue #41
         });
         continue;
       }
@@ -139,6 +143,7 @@ export function checkRefs(
               file, line: ref.line, level: 'error', category: 'refs',
               message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
               suggestion: `fix the anchor or add a "${anchor}" node to ${ref.file}`,
+              rule: 'refs.broken.anchor', // issue #41
             });
           }
         }
@@ -213,6 +218,7 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
       file: b, line: out.line, level: 'error', category: 'refs',
       message: `DEEP HOP: ${from} → ${b} → ${out.file}`,
       suggestion: `add "see: ${out.file}${anchor}" directly to ${from}`,
+      rule: 'refs.deep_hop', // issue #41
     });
   }
   return issues;
@@ -241,6 +247,7 @@ export function detectOrphans(
       file: key, line: 0, level: 'warning', category: 'refs',
       message: `orphan: ${key} has no incoming or outgoing refs`,
       suggestion: 'link it from a related spec file, or fold it into one',
+      rule: 'refs.orphan', // issue #41
     });
   }
   return issues;

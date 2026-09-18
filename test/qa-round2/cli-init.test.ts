@@ -182,7 +182,7 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
     // the F4 red tests: the poisoning comes specifically from --tool claude.
     const dir = initWs('q5d-04-plain-init');
     const r = runCli(['check', '--json'], dir);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: fresh init carries warnings (orphans/tbd) → warnings-only exit 1 (was 0)
     const j = JSON.parse(r.out) as { ok: boolean; errorCount: number; files: number };
     expect(j.ok).toBe(true);
     expect(j.errorCount).toBe(0);
@@ -288,7 +288,7 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
     const dir = fixtureWs('q5d-08-check-bogus', 'flat-project');
     const r = runCli(['check', '--bogus'], dir);
     const v: string[] = [];
-    if (r.exit !== 1) v.push(`expected exit 1 for unknown flag, got ${r.exit} (full check silently ran?)`);
+    if (r.exit !== 2) v.push(`expected exit 2 for unknown flag (issue #41: error class), got ${r.exit} (full check silently ran?)`);
     if (!/unknown flag|--bogus/.test(r.out)) {
       v.push(`output does not report the unknown flag "--bogus" (§37):\n${r.out}`);
     }
@@ -305,7 +305,7 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
     const dir = fixtureWs('q5d-09-check-short', 'flat-project');
     const r = runCli(['check', '-x'], dir);
     const v: string[] = [];
-    if (r.exit !== 1) v.push(`expected exit 1 for short flag, got ${r.exit}`);
+    if (r.exit !== 2) v.push(`expected exit 2 for short flag (issue #41: error class), got ${r.exit}`);
     if (/no spec file matches/i.test(r.out)) {
       v.push(`short flag misparsed as a [file] positional ("no spec file matches"):\n${r.out}`);
     }
@@ -413,7 +413,7 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
 
   // ── Red: QA-09 F4 — init --tool claude poisons the workspace ─────────────
 
-  test('red QA-09 F4a: after init --tool claude, check must be clean (exit 0, 0 errors) and CLAUDE.md must not be discovered as a spec (§21/§22/§32)', () => {
+  test('red QA-09 F4a: after init --tool claude, check must be error-free (warnings-only exit 1, 0 errors) and CLAUDE.md must not be discovered as a spec (§21/§22/§32)', () => {
     // §21 emits CLAUDE.md as an instruction artifact; §22/§32 exclude
     // instruction files (AGENTS.md) from spec discovery. Actual: CLAUDE.md is
     // discovered as an 8th spec — check reports 2 hard errors (bogus broken
@@ -425,7 +425,7 @@ describe('QA round-2 task 5-d — CLI arg surface & init (red verification)', ()
 
     const c = runCli(['check', '--json'], dir);
     const v: string[] = [];
-    if (c.exit !== 0) v.push(`check exit ${c.exit} — a freshly init'ed (--tool claude) workspace must check clean (README quick-start)`);
+    if (c.exit === 2) v.push(`check exit ${c.exit} — a freshly init'ed (--tool claude) workspace must stay error-free (issue #41: exit 2 = error class)`);
     try {
       const j = JSON.parse(c.out) as { ok?: boolean; errorCount?: number; files?: number; issues?: Array<{ file?: string; message?: string }> };
       if (j.errorCount !== 0) v.push(`check errorCount ${j.errorCount} (expected 0) — CLAUDE.md parsed as spec: ${JSON.stringify(j.issues?.filter(i => i.file?.includes('CLAUDE')))}`);

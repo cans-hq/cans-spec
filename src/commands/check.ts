@@ -85,17 +85,19 @@ function zeroedCounts(): Omit<CheckResult, 'ok' | 'command' | 'exitCode'> {
     errorCount: 0,
     warningCount: 0,
     backPointersUpdated: 0,
+    elapsedMs: 0, // issue #41: the static failure paths never ran a check
   };
 }
 
 /** §37: check-level failure (no workspace, invalid rules, unknown flag, file
  *  filter matched nothing). The diagnosis rides in `error` so the human printer
- *  can show it standalone — never inside a report-shaped body. */
+ *  can show it standalone — never inside a report-shaped body.
+ *  issue #41: the check could not run = error class → exitCode 2. */
 function checkFail(message: string): CheckResult & { error: string } {
   return {
     ok: false,
     command: 'check',
-    exitCode: 1,
+    exitCode: 2, // issue #41: usage/no-workspace/invalid-rules are the error class
     ...zeroedCounts(),
     issues: [{ file: '', line: 0, level: 'error', category: 'refs', message }],
     errorCount: 1,
@@ -147,6 +149,7 @@ function rewriteRefBy(source: string, body: string | null): string {
 
 /** The shared engine orchestrator used by `cans check` and `cans done`. */
 export async function checkWorkspace(root: string, opts: CheckArgs): Promise<CheckResult> {
+  const t0 = performance.now(); // issue #41: elapsedMs timing (global in Bun + Node ≥16)
   let rules;
   try {
     rules = loadRules(root);
@@ -163,6 +166,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       file: name, line: 0, level: 'warning', category: 'structure',
       message: `malformed workspace entry: directory "${name}" looks like a spec file — rename it or use folder mode (${name.replace(/\.md$/, '')}/index.md)`,
       suggestion: `remove or rename the directory cans/${name}`,
+      rule: 'structure.malformed_dir', // issue #41
     });
   }
 
@@ -172,6 +176,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       file: flat, line: 0, level: 'error', category: 'structure',
       message: `duplicate home: both ${flat} and ${folder} exist — flat wins, remove the folder`,
       suggestion: `delete ${folder} (or merge its content into ${flat})`,
+      rule: 'structure.duplicate_home', // issue #41
     });
   }
 
@@ -187,6 +192,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       issues.push({
         file: rel, line: 0, level: 'error', category: 'structure',
         message: `unreadable spec file: ${e instanceof Error ? e.message : String(e)}`,
+        rule: 'io.unreadable', // issue #41
       });
       continue;
     }
@@ -198,6 +204,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       issues.push({
         file: rel, line: 0, level: 'error', category: 'structure',
         message: `parse error: ${e instanceof Error ? e.message : String(e)}`,
+        rule: 'parse.error', // issue #41
       });
     }
     // Odd (non-2-multiple) indentation silently re-parents nodes — surface it.
@@ -205,6 +212,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       issues.push({
         file: rel, line: pw.line, level: 'warning', category: 'structure',
         message: pw.message,
+        rule: 'parse.indent', // issue #41
       });
     }
   }
@@ -290,6 +298,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
             file: rel, line: bp.fromLine, level: 'warning', category: 'refs',
             message: `stale back-pointer: ${bp.fromFile} no longer refs ${rel}`,
             suggestion: 'remove the ref-by comment (or re-run cans check --fix)',
+            rule: 'refs.backpointer.stale', // issue #41
           });
         }
       }
@@ -379,7 +388,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   return {
     ok,
     command: 'check',
-    exitCode: ok ? 0 : 1,
+    // issue #41: exit contract 0 clean · 1 warnings · 2 errors.
+    // strict affects `ok` only, never the exit code.
+    exitCode: errorCount > 0 ? 2 : (warningCount > 0 ? 1 : 0),
     files: specFiles.size,
     nodes: nodeCount,
     // §35: maxDepth is 1-based (a 4-level chain reports 4); 0 for an empty workspace.
@@ -390,6 +401,8 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     errorCount,
     warningCount,
     backPointersUpdated,
+    // issue #41: whole-ms wall-clock duration of the run (never negative).
+    elapsedMs: Math.max(0, Math.round(performance.now() - t0)),
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
     // §18 delete-key semantics: a deleted range key shows as "off", never a raw null.
     rulesSummary:

@@ -179,33 +179,33 @@ describe('QA-03 F1 — §18 "delete a key = check turns off"', () => {
   });
 });
 
-describe('QA-03 F2 — §18 invalid _rules.yaml: line-numbered config error, exit 1', () => {
+describe('QA-03 F2 — §18 invalid _rules.yaml: line-numbered config error, exit 2', () => {
   // Both malformed shapes below PARSE as valid mini-YAML but produce a
   // type-inconsistent rules tree; §18 still classes them as invalid config:
-  // the user gets a line-numbered `_rules.yaml` error + exit 1 (§19
-  // user-correctable), and §37 forbids internal-error leakage.
+  // the user gets a line-numbered `_rules.yaml` error + exit 2 (issue #41:
+  // the check could not run = error class), and §37 forbids internal-error leakage.
 
-  test('F2a: `structure: 42` (scalar where a mapping belongs) → exit 1 + _rules.yaml line error', () => {
+  test('F2a: `structure: 42` (scalar where a mapping belongs) → exit 2 + _rules.yaml line error', () => {
     const ws = freshWs('f2a-structure-scalar');
     writeSpec(ws, '01-alpha.md', '- Alpha\n  - Alpha setup\n');
     writeRules(ws, 'structure: 42\n');
 
     const r = runCli(['check'], ws);
     const combined = r.out + r.err;
-    expect(r.exit).toBe(1); // §18/§19: config error = user-correctable failure, NOT exit 2
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (check could not run)
     expect(combined).toContain('_rules.yaml'); // names the offending file
     expect(combined).toMatch(/line \d+/); // §18: "print line number"
     expect(combined).not.toContain('Internal error'); // §37: never leak internal errors
   });
 
-  test('F2b: tab-indented line under `structure:` → exit 1 + _rules.yaml line error', () => {
+  test('F2b: tab-indented line under `structure:` → exit 2 + _rules.yaml line error', () => {
     const ws = freshWs('f2b-tab-indent');
     writeSpec(ws, '01-alpha.md', '- Alpha\n  - Alpha setup\n');
     writeRules(ws, 'structure:\n\tnode_length: { min: 3, max: 120 }\n');
 
     const r = runCli(['check'], ws);
     const combined = r.out + r.err;
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (check could not run)
     expect(combined).toContain('_rules.yaml');
     expect(combined).toMatch(/line \d+/);
     expect(combined).not.toContain('Internal error');
@@ -423,12 +423,12 @@ describe('QA-03 F9 — §37 budget outside a workspace', () => {
 
 describe('QA-03 control — documented default behavior (expected PASS)', () => {
   // control (expected PASS)
-  test('control: redundancy-project reports the ×6 "authentication" word-frequency warning, exit 0', () => {
+  test('control: redundancy-project reports the ×6 "authentication" word-frequency warning (warnings-only → exit 1 since issue #41)', () => {
     const ws = freshWs('control-redundancy-fixture');
     copyFixture(ws, 'redundancy-project');
 
     const r = runCli(['check', '--json'], ws);
-    expect(r.exit).toBe(0); // §19: warnings never affect exit code
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41; §19 unchanged for errors→2)
     const data = parseJson(r.out);
     // §34 / §13 L1: "authentication" appears in 6 nodes ≥ default threshold 4.
     const freq = data.issues.find(

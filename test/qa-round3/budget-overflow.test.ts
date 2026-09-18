@@ -177,7 +177,7 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
     // Verified at HEAD: error, category overflow, "no chaining: overflow target ..."
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (chaining error present)
     expect(parsed.issues.some((i: any) => /request-schema/.test(i.file) && i.category === 'overflow' && i.level === 'error')).toBe(true);
   });
 });
