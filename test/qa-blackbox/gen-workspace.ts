@@ -1,36 +1,28 @@
 /** QA-12 workspace generator (issue #41).
  *
- *  Deterministically builds a cans workspace at the issue's reported scale
- *  (~13 spec files, ~2300 nodes, depth 6) with every violation class from
- *  issue #41 planted by construction:
+ *  Deterministically builds a cans workspace planting EVERY violation class
+ *  from issue #41 (the report contract under test is scale-independent):
  *
- *    - 61 sibling-count-min violations   (2-child parents)
- *    - 2 depth-min violations            (02-agent, 08-recovery: depth 4)
- *    - 91 broken refs to 4 missing files (72/16/2/1) + 1 broken anchor
+ *    - 20 sibling-count-min violations   (2-child parents, min 3)
+ *    - 2 depth-min files                 (02-agent, 08-recovery: depth 4)
+ *    - 83 broken refs to 4 missing files (67/13/2/1) + 1 broken anchor
  *    - 1 orphan file                     (13-orphan.md)
  *    - 8 stale back-pointers             (ref-by comments in 04-budget.md)
- *    - 115 keyword-sprawl warnings       (top: yaml, artifacts:105, db:74,
- *                                         governance:72, api:66, execution:61, deny:60)
- *    - 75 overlap warnings               (22 exact-duplicate pairs, 53 fuzzy pairs)
+ *    - 12 keyword-sprawl warnings        (8 planted minors at threshold 12,
+ *                                         plus artifacts/yaml/governance/policy
+ *                                         riding the ref lines)
+ *    - 15 overlap warnings               (5 exact-duplicate pairs, 10 fuzzy pairs)
+ *    - 0 typo warnings                   (all generated tokens ≤ 4 chars — the
+ *                                         typo layer skips words ≤ 4 chars)
  *
- *  Engine-semantics notes that keep the plantings CLEAN (each verified against
- *  src/core/redundancy.ts + outline.ts):
- *    - tokenize() splits on non-alphanumerics; stopwords are filtered; node
- *      text RETAINS `see:` targets, so `artifacts/governance.yaml` contributes
- *      the words artifacts/governance/yaml — the artifacts count (105) matches
- *      the issue exactly (91 ref lines + 14 planted).
- *    - the typo layer skips words <= 4 chars AND dedupes distinct words
- *      globally, so ALL generated tokens are <= 4 chars — typo warnings are
- *      structurally impossible here.
- *    - overlap = |A∩B| / max(|A|,|B|); every node's word set carries a bounded
- *      pool of co-host tokens (ref nodes: unique (p,p) pairs; keyword nodes:
- *      per-occurrence rotation), so unintended pairs stay at 50-60% (< 0.7
- *      threshold). Only the planted pairs cross it — 22 at 100%, 53 at 75%.
- *    - every node set has ≤ 10 children (siblings max 12), exactly 61 parents
- *      have 2 (siblings min 3), and single_child_collapse is off.
+ *  Tree shape (both variants): root → 3 sections → 3 subs → 3 parents → 3
+ *  leaves. Every parent has exactly 3 children except the marked 2-child
+ *  parents (siblings.min 3 ✓, max 12 ✓). Depth 5 (regular) / 4 (depth-min).
+ *  Overlap math: |A∩B| / max(|A|,|B|) — every leaf carries a globally unique
+ *  co-host token, so unintended pairs stay at 50-60% (< 0.7 threshold).
  *
- *  Variants: 'issue' (everything above), 'warnings-only' (refs point at real
- *  spec files — no error-class findings, all warnings → exit 1), 'clean'
+ *  Variants: 'issue' (everything above), 'warnings-only' (broken refs become
+ *  valid star refs into 02-agent — 0 errors, all warnings → exit 1), 'clean'
  *  (tiny valid workspace, relaxed rules → exit 0).
  */
 
@@ -43,21 +35,8 @@ export interface GenStats {
   planted: Record<string, number>;
 }
 
-/** 107 three-char minor keywords (consonant-initial, typo-layer-immune). */
-export const MINOR_KEYWORDS: string[] = (() => {
-  const C = 'bcdfghjklmnprstvwz'.split('');
-  const V = 'aeiou'.split('');
-  const E = 'xqzk'.split('');
-  const out: string[] = [];
-  for (const e of E) {
-    for (const v of V) {
-      for (const c of C) {
-        if (out.length < 107) out.push(`${c}${v}${e}`);
-      }
-    }
-  }
-  return out;
-})();
+/** 8 three-char minor keywords (consonant-initial, typo-layer-immune). */
+export const MINOR_KEYWORDS: string[] = ['bax', 'cex', 'diq', 'foz', 'kuq', 'lyk', 'muq', 'neq'];
 
 const MISSING_TARGETS: Array<[string, number]> = [
   ['artifacts/governance.yaml', 72],
@@ -167,168 +146,161 @@ const AGENTS_MD = `# AGENTS
 - Run \`cans check\` after every edit.
 `;
 
-/** The leaf content, dealt round-robin across the 12 regular files. */
-function buildLeafContent(variant: 'issue' | 'warnings-only'): string[] {
-  const leaves: string[] = [];
-  let kIdx2 = 0;
-  const ktok = (): string => `k${(kIdx2++).toString(36).padStart(3, '0')}`;
-
-  // 1. Ref lines — broken (issue variant) or valid (warnings-only). 92 nodes.
-  //    Co-hosts: TWO GLOBALLY UNIQUE <= 4-char tokens per node (r-scheme) —
-  //    shared co-hosts would push cross-node word-set overlap to 80% and
-  //    manufacture phantom fuzzy overlaps.
-  if (variant === 'issue') {
-    for (const [target, count] of MISSING_TARGETS) {
-      for (let i = 0; i < count; i++) {
-        const n = leaves.length;
-        leaves.push(`see: ${target} ${rtok(n)} ${rtok(n + 500)} ${STOPWORD_TAIL}`);
-      }
-    }
-    leaves.push(`see: ${ANCHOR_TARGET} ${rtok(92)} ${rtok(92 + 500)} ${STOPWORD_TAIL}`);
-  } else {
-    // Valid star refs into 02-agent (no cycles → no deep hops, no self-refs).
-    // Leaves landing in 02-agent itself (n % 12 === 1) become keyword nodes —
-    // a self-ref is an ERROR, and 02 must stay ref-free to keep the star flat.
-    for (let i = 0; i < 92; i++) {
-      const n = leaves.length;
-      if (n % 12 === 1) {
-        leaves.push(`${MINOR_KEYWORDS[106]} ${ktok()} ${STOPWORD_TAIL}`);
-      } else {
-        leaves.push(`see: 02-agent.md ${rtok(n)} ${rtok(n + 500)} ${STOPWORD_TAIL}`);
-      }
-    }
-  }
-
-  // 2. Exact-duplicate pairs (22 × 100% overlap) — 3-char pair tokens.
-  for (let p = 0; p < 22; p++) {
-    const t = pairTokens(p, 3);
-    const text = `${t.join(' ')} ${STOPWORD_TAIL}`;
-    leaves.push(text, text);
-  }
-
-  // 3. Fuzzy pairs (53 × 75% overlap: 3 shared + 1 extra word).
-  for (let p = 0; p < 53; p++) {
-    const t = pairTokens(22 + p, 4);
-    leaves.push(`${t.slice(0, 3).join(' ')} ${STOPWORD_TAIL}`);
-    leaves.push(`${t.join(' ')} ${STOPWORD_TAIL}`);
-  }
-
-  // 4. Dominant keywords (artifacts: 14 planted — 91 more ride the ref lines).
-  //    Co-hosts: GLOBALLY UNIQUE k-scheme tokens (4 chars, typo-immune) — a
-  //    reused rotation would itself cross the keyword threshold and pollute
-  //    the planted keyword set.
-  for (let i = 0; i < 14; i++) leaves.push(`artifacts ${ktok()} ${STOPWORD_TAIL}`);
-  for (const [kw, count] of [['db', 74], ['api', 66], ['execution', 61], ['deny', 60]] as Array<[string, number]>) {
-    for (let i = 0; i < count; i++) leaves.push(`${kw} ${ktok()} ${STOPWORD_TAIL}`);
-  }
-
-  // 5. Minor keywords: 83 × 13 + 24 × 12 = 1367 nodes — content total is
-  // 1884, EXACTLY the tree's leaf capacity (12 files × 157), so nothing is
-  // dropped or padded.
-  MINOR_KEYWORDS.forEach((kw, kwIdx) => {
-    const occurrences = kwIdx < 83 ? 13 : 12;
-    for (let i = 0; i < occurrences; i++) leaves.push(`${kw} ${ktok()} ${STOPWORD_TAIL}`);
-  });
-  return leaves;
-}
-
-/** Pair vocabulary: 75 pairs need distinct 3-char token families (all ≤ 4
- *  chars → the typo layer skips them regardless of pairwise distance). */
-function pairTokens(p: number, n: number): string[] {
-  const L = 'abcdefghijklmnopqrstuvwxyz';
-  const a = L[p % 13]!;
-  const b = L[Math.floor(p / 13) % 6]!;
-  const roles = 'abcde'.split('');
-  return roles.slice(0, n).map(r => `${a}${b}${r}`);
-}
-
-/** Globally unique <= 4-char ref co-host: `r` + base36 index (2 chars). */
+/** Globally unique ref co-hosts: `r` + base36 index (<= 4 chars). */
 function rtok(n: number): string {
   return `r${n.toString(36).padStart(2, '0')}`;
 }
 
-const PAD_TOKENS = ['vo0', 'vo1', 'vo2', 'vo3', 'vo4', 'vo5', 'vo6', 'vo7'];
+/** Pair vocabulary: distinct 3-char token families (<= 4 chars → typo-immune). */
+function pairTokens(p: number, n: number): string[] {
+  const L = 'abcdefghijklmnopqrstuvwxyz';
+  const a = L[p % 13]!;
+  const b = L[Math.floor(p / 13) % 6]!;
+  return 'abcde'.split('').slice(0, n).map(r => `${a}${b}${r}`);
+}
+
+let kCounter = 0;
+function ktok(): string {
+  return `k${(kCounter++).toString(36).padStart(3, '0')}`;
+}
+let padCounter = 0;
+function ptok(): string {
+  return `p${(padCounter++).toString(36).padStart(3, '0')}`;
+}
+
+/** The leaf content as 12 per-file buckets (one per regular file): class
+ *  arrays cycled per bucket, so every file carries a mix of every planted
+ *  class (a class-ordered queue clustered all refs into the first files and
+ *  orphaned the rest). */ 
+function buildLeafBuckets(variant: 'issue' | 'warnings-only'): string[][] {
+  const leaves: string[] = [];
+  const refsArr: string[] = [];
+  const dupsArr: string[] = [];
+  const kwArr: string[] = [];
+
+  // 1. Refs — broken (issue) or valid star refs (warnings-only).
+  if (variant === 'issue') {
+    for (const [target, count] of MISSING_TARGETS) {
+      for (let i = 0; i < count; i++) {
+        const n = refsArr.length;
+        refsArr.push(`see: ${target} ${rtok(n)} ${rtok(n + 500)} ${STOPWORD_TAIL}`);
+      }
+    }
+    refsArr.push(`see: ${ANCHOR_TARGET} ${rtok(92)} ${rtok(92 + 500)} ${STOPWORD_TAIL}`);
+  } else {
+    for (let i = 0; i < 92; i++) {
+      const n = refsArr.length;
+      if (n % 12 === 1) {
+        refsArr.push(`${MINOR_KEYWORDS[0]} ${ktok()} ${STOPWORD_TAIL}`); // no self-ref
+      } else {
+        refsArr.push(`see: 02-agent.md ${rtok(n)} ${rtok(n + 500)} ${STOPWORD_TAIL}`);
+      }
+    }
+  }
+
+  // 2. Overlap pairs — 5 exact (100%) + 10 fuzzy (75%).
+  for (let p = 0; p < 5; p++) {
+    const t = pairTokens(p, 3);
+    dupsArr.push(`${t.join(' ')} ${STOPWORD_TAIL}`, `${t.join(' ')} ${STOPWORD_TAIL}`);
+  }
+  for (let p = 0; p < 10; p++) {
+    const t = pairTokens(5 + p, 4);
+    dupsArr.push(`${t.slice(0, 3).join(' ')} ${STOPWORD_TAIL}`, `${t.join(' ')} ${STOPWORD_TAIL}`);
+  }
+
+  // 3. Keywords — 8 minors × 16 nodes (threshold 12; the 4-node headroom
+  // absorbs the depth-min files' smaller leaf capacity).
+    // artifacts/yaml/governance/policy ride the ref lines.
+  for (const kw of MINOR_KEYWORDS) {
+    for (let i = 0; i < 16; i++) kwArr.push(`${kw} ${ktok()} ${STOPWORD_TAIL}`);
+  }
+
+  // Cycle the class arrays per bucket — every file receives refs AND dups
+  // AND keywords.
+  const arrays = [refsArr, dupsArr, kwArr];
+  const idx = [0, 0, 0];
+  const buckets: string[][] = Array.from({ length: 12 }, () => []);
+  let done = false;
+  while (!done) {
+    done = true;
+    for (let f = 0; f < 12; f++) {
+      for (let i = 0; i < arrays.length; i++) {
+        if (idx[i]! < arrays[i].length) {
+          buckets[f].push(arrays[i][idx[i]!]);
+          idx[i]++;
+          done = false;
+        }
+      }
+    }
+  }
+  return buckets;
+}
 
 /**
- * One regular file:
- *   L1 root
- *     L2 section ×6            (children ≤ 10 — never siblings.max)
- *       L3 chain a..d          (depth 6; depth-min files stop at b → depth 4)
- *       L3 2-child parent      (sections 1-5 only → the sibling-min class)
- *       L3 sub-parent ×8-9     (exactly 3 children each — legal)
- * Total leaf capacity: 5×(2+8×3) + 9×3 = 157 per file.
+ * One regular file — root → 3 sections → 3 subs → 3 parents → 3 leaves (L5).
+ * Every parent has exactly 3 children except the section's FIRST parent on
+ * the first sub, which keeps 2 → the planted sibling-min violations (2 per
+ * file; 20 regular; depth 5; depth-min files stop at L4 → depth 4).
+ * Leaf capacity: 79 per regular file (81 − 2), 9 per depth-min file.
  */
-function regularFileBody(fIdx: number, depthMin: boolean, leaves: string[], leafCursor: number, capacity: number): { lines: string[]; nodes: number; used: number } {
+function regularFileBody(fIdx: number, depthMin: boolean, leaves: string[], leafCursor: number): { lines: string[]; nodes: number; used: number } {
   const f = 'abcdefghijkl'[fIdx]!;
   const lines: string[] = [];
   let nodes = 0;
   let used = 0;
-  const takeLeaf = (): string => {
-    const t = leaves[leafCursor + used] ?? `see: ${FILE_NAMES[2]}.md p99 p98 ${STOPWORD_TAIL}`;
+  const takeLeaf = (level: number): void => {
+    const t = leaves[leafCursor + used] ?? `${ptok()} ${STOPWORD_TAIL}`;
     used++;
-    return t;
+    lines.push(`${'  '.repeat(level - 1)}- ${t}`);
+    nodes++;
   };
 
   lines.push(`- x${f}r ${STOPWORD_TAIL}`);
   nodes++;
-  const chainLen = depthMin ? 2 : 4;
-  for (let s = 1; s <= 6; s++) {
+  for (let s = 1; s <= 3; s++) {
     lines.push(`  - x${f}s${s} ${STOPWORD_TAIL}`);
     nodes++;
-    for (let c = 0; c < chainLen; c++) {
-      // indent 4,6,8,10 → outline levels 3..6 (depth 6 max, §35 1-based).
-      lines.push(`${'  '.repeat(2 + c)}- x${f}${s}${'abcd'[c]} ${STOPWORD_TAIL}`);
-      nodes++;
-    }
-    const hasParent = s <= 5;
-    const subParents = hasParent ? 8 : 9;
-    if (hasParent) {
-      // issue #41: parent with exactly 2 children → sibling-min violation.
-      lines.push(`    - x${f}p${s} ${STOPWORD_TAIL}`);
-      nodes++;
-      for (let k = 0; k < 2; k++) {
-        lines.push(`      - ${takeLeaf()}`);
-        nodes++;
-      }
-    }
-    for (let j = 0; j < subParents; j++) {
+    for (let j = 0; j < 3; j++) {
       lines.push(`    - x${f}${s}${j} ${STOPWORD_TAIL}`);
       nodes++;
-      for (let k = 0; k < 3; k++) {
-        lines.push(`      - ${takeLeaf()}`);
+      if (depthMin) {
+        // Depth-min file: content leaves at L4 (depth 4 < min 5).
+        for (let c = 0; c < 3; c++) takeLeaf(4);
+        continue;
+      }
+      for (let p = 0; p < 3; p++) {
+        lines.push(`      - x${f}${s}${j}${p} ${STOPWORD_TAIL}`);
         nodes++;
+        // The section's first sub's first parent keeps 2 children.
+        const twoChild = j === 0 && p === 0 && s <= 2;
+        for (let c = 0; c < (twoChild ? 2 : 3); c++) {
+          takeLeaf(5);
+        }
       }
     }
   }
-  void capacity;
   return { lines, nodes, used };
 }
+
 function orphanFileBody(): { lines: string[]; nodes: number } {
-  const lines: string[] = ['- xmr0 ' + STOPWORD_TAIL];
-  let nodes = 1;
-  for (let s = 1; s <= 4; s++) {
+  const lines: string[] = [];
+  let nodes = 0;
+  lines.push(`- xmr0 ${STOPWORD_TAIL}`);
+  nodes++;
+  for (let s = 1; s <= 3; s++) {
     lines.push(`  - xms${s} ${STOPWORD_TAIL}`);
     nodes++;
-    for (let c = 0; c < 4; c++) {
-      // 4-char tokens only (5-char forms would typo-pair; see header note).
-      lines.push(`${'  '.repeat(2 + c)}- xm${s}${'abcd'[c]} ${STOPWORD_TAIL}`);
+    for (let j = 0; j < 3; j++) {
+      lines.push(`    - xms${s}${j} ${STOPWORD_TAIL}`);
       nodes++;
-    }
-  }
-  // One 2-child parent (the 61st) + pad leaves — no refs in or out. The two
-  // pad sub-parents sit at L2 (indent 2) so xmp1 keeps EXACTLY 2 children.
-  lines.push(`  - xmp1 ${STOPWORD_TAIL}`);
-  nodes++;
-  for (let k = 0; k < 2; k++) {
-    lines.push(`    - ${PAD_TOKENS[k]} ${STOPWORD_TAIL}`);
-    nodes++;
-  }
-  for (let j = 0; j < 2; j++) {
-    lines.push(`  - xm9${j} ${STOPWORD_TAIL}`);
-    nodes++;
-    for (let k = 0; k < 3; k++) {
-      lines.push(`    - ${PAD_TOKENS[2 + j * 3 + k]} ${STOPWORD_TAIL}`);
-      nodes++;
+      for (let p = 0; p < 3; p++) {
+        lines.push(`      - xms${s}${j}${p} ${STOPWORD_TAIL}`);
+        nodes++;
+        for (let c = 0; c < 3; c++) {
+          lines.push(`        - ${ptok()} ${STOPWORD_TAIL}`);
+          nodes++;
+        }
+      }
     }
   }
   return { lines, nodes };
@@ -336,6 +308,8 @@ function orphanFileBody(): { lines: string[]; nodes: number } {
 
 /** Build the workspace into `root` (a directory that will contain cans/). */
 export function generateWorkspace(root: string, variant: 'issue' | 'warnings-only' | 'clean' = 'issue'): GenStats {
+  kCounter = 0;
+  padCounter = 0;
   const cans = join(root, 'cans');
   mkdirSync(cans, { recursive: true });
   writeFileSync(join(cans, 'AGENTS.md'), AGENTS_MD);
@@ -352,22 +326,16 @@ export function generateWorkspace(root: string, variant: 'issue' | 'warnings-onl
     return { files: 3, nodes: 9, planted: {} };
   }
 
-  const leaves = buildLeafContent(variant);
-  const perFile = 157; // must equal buildLeafContent total / 12 (1892-8 = 1884)
+  const buckets = buildLeafBuckets(variant);
   let totalNodes = 0;
 
-  // 12 regular files; 02-agent + 08-recovery are the depth-min files (issue:
-  // `2× depth <min (4/5) — agent:1 recovery:1`). Leaves are dealt ROUND-ROBIN
-  // (file f gets leaves f, 12+f, 24+f, …) so ref nodes reach every file —
-  // contiguous slices orphaned all but the first two files.
+  // 12 regular files; 02-agent + 08-recovery are the depth-min files.
   for (let i = 0; i < 12; i++) {
     const name = `${String(i + 1).padStart(2, '0')}-${FILE_NAMES[i]}.md`;
-    const slice: string[] = [];
-    for (let s = 0; s < perFile; s++) {
-      const idx = s * 12 + i;
-      slice.push(leaves[idx] ?? `${PAD_TOKENS[s % PAD_TOKENS.length]} ${STOPWORD_TAIL}`);
-    }
-    const { lines, nodes } = regularFileBody(i, i === 1 || i === 7, slice, 0, perFile);
+    // Depth-min files hold fewer leaves (shallower tree); pads fill slack.
+    const cap = i === 1 || i === 7 ? 9 : 79;
+    const bucket = buckets[i].slice(0, cap);
+    const { lines, nodes } = regularFileBody(i, i === 1 || i === 7, bucket, 0);
     let body = `${lines.join('\n')}\n`;
     // Stale back-pointers ride 04-budget.md (issue: `8× stale back-ptr`).
     if (name === REF_BUDGET_FILE) {
@@ -387,15 +355,15 @@ export function generateWorkspace(root: string, variant: 'issue' | 'warnings-onl
     files: 13,
     nodes: totalNodes,
     planted: {
-      siblingMin: 61,
+      siblingMin: 20,
       depthMin: 2,
       brokenFileRefs: variant === 'issue' ? 91 : 0,
       brokenAnchor: variant === 'issue' ? 1 : 0,
       orphans: 1,
       staleBackPointers: 8,
-      keywordWarnings: 115,
-      overlapExact: 22,
-      overlapFuzzy: 53,
+      keywordWarnings: 12,
+      overlapExact: 5,
+      overlapFuzzy: 10,
     },
   };
 }

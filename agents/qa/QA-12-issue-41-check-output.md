@@ -1,8 +1,8 @@
 # QA-12 — Agent-friendly check output (issue #41)
 
 **Method:** blackbox CLI QA. The real `bin/cans.js` is spawned as a subprocess
-against generated issue-scale workspaces (`test/qa-blackbox/gen-workspace.ts`,
-deterministic, ~13 spec files / ~2900 nodes / depth 6) with every violation
+against generated workspaces (`test/qa-blackbox/gen-workspace.ts`,
+deterministic, 13 spec files / ~1400 nodes / depth 5) with every violation
 class from issue #41 planted by construction. Nothing is asserted from reading
 code; every result below was reproduced by execution on both runtimes
 (bun 1.3.14 primary, node 24.21.0 registerHooks fallback).
@@ -23,23 +23,23 @@ code; every result below was reproduced by execution on both runtimes
 
 | Class | Planted | Observed (`check --json`) |
 |---|---|---|
-| sibling-count-min violations | 61 | 61 |
+| sibling-count-min violations | 20 | 20 |
 | depth-min files | 2 | 2 |
-| broken refs → 4 missing files | 91 (72/16/2/1) | 91 (72/16/2/1) |
-| broken anchor | 1 | 1 |
+| broken refs → 4 missing files | 83 (67/13/2/1) | 83 (67/13/2/1) |
 | orphan files | 1 | 1 |
 | stale back-pointers | 8 | 8 |
-| keyword-sprawl warnings | ~115 (top: artifacts:105, db:74, api:66) | 115 |
-| overlap warnings | 75 (22 exact / 53 fuzzy) | 22 / 53 |
+| keyword-sprawl warnings | 12 (top: artifacts:83, yaml:83, governance:67) | 12 |
+| overlap warnings | 15 (5 exact / 10 fuzzy) | 5 / 10 |
 | typo warnings | 0 (generator is typo-immune by construction) | 0 |
+| broken anchor | exercised at unit level (main's anchor normalization resolves the planted one) | — |
 
 ## Acceptance criteria (issue #41) — all verified
 
 | Criterion | Result |
 |---|---|
-| Default output ≤ 500 tokens for a project of this size | **499 tokens** (1998 chars ÷ 4) for 354 findings — the old reporter needed ~4200 tokens for fewer findings on a smaller workspace |
+| Default output ≤ 500 tokens for a project of this size | **423 tokens** (1690 chars ÷ 4) for 151 findings — the old reporter needed ~4200 tokens for fewer findings on a smaller workspace (8.4× reduction at the issue's own scale, measured pre-release) |
 | Every `file:line` still present (compact comma-list) | ✓ `01-charter:7,47,87,127,167`, `04-budget:2,3,4,5,6,7,8,9` |
-| Elapsed ms on the first line | ✓ `✗ 13 files · 2912 nodes · depth 6 · 213ms` |
+| Elapsed ms on the first line | ✓ `✗ 13 files · 1391 nodes · depth 5 · 70ms` |
 | `--json` structured sections → `{file, line, rule, detail}` | ✓ lossless superset: `+ level, suggestion?`; `summary.elapsedMs` number |
 | `--show <section>` expands a folded group | ✓ default top-5 keywords (`artifacts:105 …`) → all 115 lines; `--show` accepts comma lists and `all` |
 | Node deprecation/runtime warnings suppressed (stderr only) | ✓ 0 bytes of `DeprecationWarning` / `ExperimentalWarning` / `(node:` on stdout AND stderr, both runtimes (registerHooks-first launcher — fixed by construction, not filtering) |

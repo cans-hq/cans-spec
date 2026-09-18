@@ -15,7 +15,8 @@
 
 import { describe, test, expect, afterAll } from '../testing.ts';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, cpSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, cpSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateWorkspace, MINOR_KEYWORDS } from './gen-workspace.ts';
@@ -23,7 +24,10 @@ import { generateWorkspace, MINOR_KEYWORDS } from './gen-workspace.ts';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const BIN = join(REPO, 'bin', 'cans.js');
-const SCRATCH = join(REPO, '.tmp', `qa-blackbox-${typeof process.versions.bun !== 'undefined' ? 'bun' : 'node'}`);
+// Under os.tmpdir (NOT REPO/.tmp): the workspace-resolution fallback scans
+// REPO/.tmp for the newest cans/ — a QA workspace existing there would hijack
+// init/scratch tests. A temp dir outside the repo is invisible to them.
+const SCRATCH = mkdtempSync(join(tmpdir(), `cans-qa12-${typeof process.versions.bun !== 'undefined' ? 'bun' : 'node'}-`));
 
 function runCli(args: string[], cwd: string): { exit: number; out: string; err: string } {
   const r = spawnSync(process.execPath, [BIN, ...args], { cwd, encoding: 'utf8' });
@@ -37,7 +41,6 @@ function estimateTokens(text: string): number {
 const NOISE_RE = /DeprecationWarning|ExperimentalWarning|\(node:/;
 
 // ── Shared generated workspaces (read-only for most tests) ──
-mkdirSync(SCRATCH, { recursive: true });
 const WS_ISSUE = join(SCRATCH, 'issue');
 const WS_WARN = join(SCRATCH, 'warnings-only');
 const WS_CLEAN = join(SCRATCH, 'clean');
@@ -116,24 +119,25 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
   });
 
   test('one line per pattern — no per-occurrence repetition', () => {
-    // The old reporter printed this exact sentence 61 times.
+    // The old reporter printed this exact sentence once per violation.
     expect(defaultRun.out.match(/has 2 children \(min 3\)/g)?.length ?? 0).toBe(0);
     // …the aggregated form carries the count prefix instead.
-    expect(defaultRun.out).toContain('61× <min children (2/3)');
-    expect(defaultRun.out).toContain('91× missing file');
-    expect(defaultRun.out).toContain('115× keyword sprawl');
+    expect(defaultRun.out).toContain('20× <min children (2/3)');
+    expect(defaultRun.out).toContain('83× missing file');
+    expect(defaultRun.out).toContain('12× keyword sprawl');
   });
 
-  test('grouped by root cause — 91 broken refs collapse to 4 missing targets', () => {
-    expect(defaultRun.out).toContain('artifacts/governance.yaml (72)');
-    expect(defaultRun.out).toContain('artifacts/policy.yaml (16)');
+  test('grouped by root cause — broken refs collapse to 4 missing targets', () => {
+    expect(defaultRun.out).toContain('83× missing file');
+    expect(defaultRun.out).toContain('artifacts/governance.yaml (67)');
+    expect(defaultRun.out).toContain('artifacts/policy.yaml (13)');
     expect(defaultRun.out).toContain('artifacts/system-schema.yaml (2)');
     expect(defaultRun.out).toContain('artifacts/schema.yaml (1)');
     expect(defaultRun.out.match(/create the file or remove the see: ref/g)?.length ?? 0).toBeLessThanOrEqual(1);
   });
 
   test('every planted file:line stays present in compact comma lists', () => {
-    expect(defaultRun.out).toContain('01-charter:7,47,87,127,167');
+    expect(defaultRun.out).toContain('01-charter:4,43');
     expect(defaultRun.out).toContain('04-budget:2,3,4,5,6,7,8,9');
     expect(defaultRun.out).toContain('02-agent:1');
   });
@@ -152,10 +156,10 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
     };
     expect(typeof parsed.summary.elapsedMs).toBe('number');
     expect(parsed.summary.files).toBe(13);
-    expect(parsed.summary.nodes).toBe(2912);
+    expect(parsed.summary.nodes).toBe(1391);
     expect(parsed.exitCode).toBe(2);
-    expect(parsed.counts.errors).toBe(92);
-    expect(parsed.counts.warnings).toBe(262);
+    expect(parsed.counts.errors).toBe(83);
+    expect(parsed.counts.warnings).toBe(58);
     for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow']) {
       expect(Array.isArray(parsed.sections[name])).toBe(true);
     }
@@ -168,22 +172,23 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
         expect(typeof entry.detail).toBe('string');
       }
     }
-    // refs bucket = raw refs-category issues: 91 missing + 1 anchor + 8 stale
-    // back-pointers + 1 orphan = 101.
-    expect(parsed.sections.refs!.length).toBe(101);
+    // refs bucket = raw refs-category issues: 83 missing + 8 stale
+    // back-pointers + 1 orphan = 92 (the planted anchor resolves under main's
+    // anchor-normalization rules and is exercised by unit tests instead).
+    expect(parsed.sections.refs!.length).toBe(92);
   });
 
   test('--show redundancy expands the folded keyword group', () => {
     const expanded = runCli(['check', '--show', 'redundancy'], WS_ISSUE);
     expect(expanded.out.length).toBeGreaterThan(defaultRun.out.length);
     // Default folds to the metric-ranked top 5 (node counts in the labels)…
-    expect(defaultRun.out).toContain('artifacts:105  yaml:91  db:74  governance:72  api:66');
-    // …a 13-occurrence minor keyword is folded out of the default view…
-    const minor = `${MINOR_KEYWORDS[0]}:13`;
+    expect(defaultRun.out).toContain('artifacts:83  yaml:83  governance:67');
+    // …a minor keyword beyond the top 5 is folded out of the default view…
+    const minor = `${MINOR_KEYWORDS[2]}:14`; // 2 of its 16 leaves fell to depth-min caps
     expect(defaultRun.out).not.toContain(minor);
     expect(expanded.out).toContain(minor);
     // …and the fold hint counts the hidden occurrences.
-    expect(defaultRun.out).toContain('↳ 110 more → cans check --show redundancy');
+    expect(defaultRun.out).toContain('↳ 7 more → cans check --show redundancy');
   });
 
   test('exit codes: 0 clean · 1 warnings · 2 errors · 2 usage', () => {

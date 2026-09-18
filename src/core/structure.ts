@@ -1,7 +1,10 @@
 import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.ts';
-import { flattenNodes, maxDepth as outlineMaxDepth } from './outline.ts';
+import { flattenNodes, isSyntheticNode } from './outline.ts';
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
+ *  Both sides of every range are enforced (issue #1 — siblings.min and depth.min
+ *  were banner-checked but never enforced): node_length, siblings and depth each
+ *  check their `min` (warning) as well as their `max`.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
  *  check is skipped entirely (never compared against null, which would coerce
  *  to 0 and flag everything). */
@@ -14,90 +17,94 @@ export function checkStructure(
 
   const walk = (list: OutlineNode[]): void => {
     for (const node of list) {
-      const len = node.text.length;
-      const nl = rules.node_length;
-      if (nl !== null && nl.max !== null && len > nl.max) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'error',
-          category: 'structure',
-          message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not user
+      // structure — never flagged themselves (their children, if any, still
+      // are: the walk recurses below regardless).
+      if (!isSyntheticNode(node)) {
+        const len = node.text.length;
+        const nl = rules.node_length;
+        if (nl !== null && nl.max !== null && len > nl.max) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'error',
+            category: 'structure',
+            message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
           rule: 'structure.node_length.max', // issue #41: machine-readable rule key
-        });
-      } else if (nl !== null && nl.min !== null && len < nl.min) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `Node too short (${len} < ${nl.min}).`,
-          rule: 'structure.node_length.min', // issue #41
-        });
-      }
+          });
+        } else if (nl !== null && nl.min !== null && len < nl.min) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `Node too short (${len} < ${nl.min}).`,
+          rule: 'structure.node_length.min', // issue #41: machine-readable rule key
+          });
+        }
 
-      const depth = node.indent + 1;
-      const depthMax = rules.depth !== null ? rules.depth.max : null;
-      if (depthMax !== null && depth > depthMax) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'error',
-          category: 'structure',
-          message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
-          rule: 'structure.depth.max', // issue #41
-        });
-      }
+        const depth = node.indent + 1;
+        const depthMax = rules.depth !== null ? rules.depth.max : null;
+        if (depthMax !== null && depth > depthMax) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'error',
+            category: 'structure',
+            message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
+          rule: 'structure.depth.max', // issue #41: machine-readable rule key
+          });
+        }
 
-      const count = node.children.length;
-      const siblingsMax = rules.siblings !== null ? rules.siblings.max : null;
-      if (siblingsMax !== null && count > siblingsMax) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
-          rule: 'structure.siblings.max', // issue #41
-        });
-      }
+        const count = node.children.length;
+        const siblingsMax = rules.siblings !== null ? rules.siblings.max : null;
+        if (siblingsMax !== null && count > siblingsMax) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
+          rule: 'structure.siblings.max', // issue #41: machine-readable rule key
+          });
+        }
+        // Issue #1: enforce siblings.min — a parent with 0 < count < min children
+        // is under the configured fan-out. Warning level, consistent with the
+        // siblings.max side above. The single_child_collapse advisory below is a
+        // separate check and may fire for the same node — that is acceptable.
+        const siblingsMin = rules.siblings !== null ? rules.siblings.min : null;
+        if (siblingsMin !== null && count > 0 && count < siblingsMin) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `"${node.text}" has ${count} children (min ${siblingsMin}).`,
+          rule: 'structure.siblings.min', // issue #41: machine-readable rule key
+          });
+        }
 
-      // issue #41: §15 documents "sibling count per parent" as a min/max check,
-      // but only max was enforced — siblings.min was an inert knob. Fire for
-      // parents with 2..min-1 children (2+ avoids double-reporting the 1-child
-      // case the single_child_collapse check owns; 0 children is a leaf).
-      const siblingsMin = rules.siblings !== null ? rules.siblings.min : null;
-      if (siblingsMin !== null && count >= 2 && count < siblingsMin) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `"${node.text}" has ${count} children (min ${siblingsMin}).`,
-          rule: 'structure.siblings.min', // issue #41
-        });
-      }
+        if (rules.single_child_collapse && count === 1) {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: `"${node.text}" has exactly 1 child. Collapse.`,
+          rule: 'structure.single_child', // issue #41: machine-readable rule key
+          });
+        }
 
-      if (rules.single_child_collapse && count === 1) {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: `"${node.text}" has exactly 1 child. Collapse.`,
-          rule: 'structure.single_child', // issue #41
-        });
-      }
-
-      if (rules.empty_nodes && node.text.trim() === '') {
-        issues.push({
-          file,
-          line: node.line,
-          level: 'warning',
-          category: 'structure',
-          message: 'Empty node.',
-          rule: 'structure.empty_node', // issue #41
-        });
+        if (rules.empty_nodes && node.text.trim() === '') {
+          issues.push({
+            file,
+            line: node.line,
+            level: 'warning',
+            category: 'structure',
+            message: 'Empty node.',
+          rule: 'structure.empty_node', // issue #41: machine-readable rule key
+          });
+        }
       }
 
       walk(node.children);
@@ -106,22 +113,36 @@ export function checkStructure(
 
   walk(nodes);
 
-  // issue #41: §15 documents depth (min/max) — enforce the documented minimum.
-  // Per-file, warning-level (the issue's scenario: `Max depth 4 is below min 5`
-  // at agent.md:1), skipped for empty files; depth is 1-based like §35 maxDepth.
-  const depthMin = rules.depth !== null ? rules.depth.min : null;
-  if (depthMin !== null && nodes.length > 0) {
-    const d = outlineMaxDepth(nodes) + 1;
-    if (d < depthMin) {
-      issues.push({
-        file,
-        line: nodes[0]?.line ?? 0,
-        level: 'warning',
-        category: 'structure',
-        message: `Max depth ${d} is below min ${depthMin}. Deepen the outline.`,
-        suggestion: 'deepen the outline or lower structure.depth.min in _rules.yaml',
-        rule: 'structure.depth.min', // issue #41
-      });
+  // Issue #1: enforce depth.min at file level — a file whose deepest node is
+  // above the configured minimum is under-specified. Attached to the first
+  // root node's line (there is always at least one node when the file has
+  // nodes); an empty tree skips the check entirely.
+  // LEVEL RATIONALE: depth.min is a warning — a too-shallow file is advisory
+  // (depth.max stays an error because it protects the token budget; making
+  // shallow files hard-fail would break legitimately shallow summary files).
+  // siblings.min is a warning for the same reason: it matches the warning
+  // level of the siblings.max side. Defaults (min: 1 both) can never fire —
+  // `0 < count < 1` is impossible and any non-empty file has max depth ≥ 1 —
+  // so default-rule workspaces stay clean.
+  if (nodes.length > 0) {
+    const depthMin = rules.depth !== null ? rules.depth.min : null;
+    if (depthMin !== null) {
+      let maxNodeDepth = 0;
+      for (const n of flattenNodes(nodes)) {
+        const d = n.indent + 1; // same convention as the per-node depth check above
+        if (d > maxNodeDepth) maxNodeDepth = d;
+      }
+      if (maxNodeDepth < depthMin) {
+        issues.push({
+          file,
+          line: nodes[0]!.line,
+          level: 'warning',
+          category: 'structure',
+          message: `Max depth ${maxNodeDepth} is below min ${depthMin}. Deepen the outline.`,
+          suggestion: `add nested sub-levels until the outline reaches depth ${depthMin}, or lower structure.depth.min in _rules.yaml`,
+          rule: 'structure.depth.min', // issue #41: machine-readable rule key
+        });
+      }
     }
   }
 
@@ -148,8 +169,8 @@ export function checkTbdPolicy(
         level: 'warning',
         category: 'structure',
         message: 'TBD used but content.tbd_allowed is false',
+          rule: 'content.tbd.disallowed', // issue #41: machine-readable rule key
         suggestion: 'resolve the TBD nodes or set content.tbd_allowed: true',
-        rule: 'content.tbd.disallowed', // issue #41
       },
     ];
   }
@@ -161,8 +182,8 @@ export function checkTbdPolicy(
         level: 'warning',
         category: 'structure',
         message: `${tbdNodes.length} TBD nodes exceed content.max_tbd_per_file (${rules.max_tbd_per_file})`,
+          rule: 'content.tbd.max', // issue #41: machine-readable rule key
         suggestion: 'resolve the TBD nodes or raise content.max_tbd_per_file',
-        rule: 'content.tbd.max', // issue #41
       },
     ];
   }

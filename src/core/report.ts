@@ -108,6 +108,9 @@ export interface CheckResultLike {
   backPointersUpdated: number;
   rulesSummary?: string;
   issues: IssueLike[];
+  /** checkFail diagnosis (usage / no-workspace / invalid rules) — carried
+   *  through the wire shape so agents get the real cause, not just exit 2. */
+  error?: string;
 }
 
 // ── Section/rule vocabulary ──
@@ -133,6 +136,7 @@ const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
 const RE_DEEP_HOP = /^DEEP HOP: (.+)$/;
 const RE_CHAINING = /^no chaining: overflow target (\S+) must not contain its own see: refs \(found see (\S+)\)$/;
+const RE_PROSE = /^see-like prose: "see (\S+)" did not resolve to a spec file/;
 const RE_KEYWORD = /^"([^"]+)" × (\d+) nodes \(threshold: (\d+)\)$/;
 const RE_OVERLAP = /^(\d+)% overlap: (\S+) ↔ (\S+)$/;
 const RE_TYPO = /^possible typo: "([^"]+)" \(([^)]*)\) ↔ "([^"]+)" \(([^)]*)\) — Levenshtein (\d+)$/;
@@ -219,6 +223,10 @@ function normalizeMessage(issue: IssueLike): Normalized {
   }
   if ((mt = m.match(RE_CHAINING)) !== null) {
     return { rule: 'refs.chaining', pattern: 'chaining in overflow target', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_PROSE)) !== null) {
+    // Main's see-like-prose finding (advisory rephrase hint) — per-target group.
+    return { rule: 'refs.prose', pattern: 'see-like prose', key: mt[1]!, detail: m };
   }
 
   // ── redundancy ──
@@ -557,5 +565,6 @@ export function checkReportJson(result: CheckResultLike): unknown {
     backPointersUpdated: result.backPointersUpdated,
   };
   if (result.rulesSummary !== undefined) out.rulesSummary = result.rulesSummary;
+  if (result.error !== undefined) out.error = result.error;
   return out;
 }

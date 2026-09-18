@@ -221,6 +221,7 @@ export function defaultRules(): Rules {
       word_frequency_threshold: 4,
       phrase_overlap_threshold: 0.7,
       cross_file_threshold: 2,
+      fuzzy: true,
       stopwords: ['the', 'a', 'an', 'of', 'to', 'in', 'for', 'and', 'or', 'with', 'must', 'shall', 'requires'],
       synonyms: [
         ['postgres', 'postgresql', 'pg'],
@@ -298,6 +299,21 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
       ) {
         throw new Error(`${at} — "${section}.${key}" must be a mapping like { min: 3, max: 120 }`);
       }
+      // Issue #2: style.prefer / references.mode are validated reserved values.
+      // The merged object always carries the (valid) defaults, so an invalid
+      // value can only come from the user's _rules.yaml. `null` (an empty
+      // `prefer:` / `mode:`) is accepted and means the documented default; a
+      // non-string (e.g. `prefer: 42`) fails the same got-value convention.
+      if (section === 'style' && key === 'prefer') {
+        if (v !== null && (typeof v !== 'string' || (v !== 'sibling' && v !== 'nested'))) {
+          throw new Error(`${at} — "style.prefer" must be "sibling" or "nested", got "${String(v)}"`);
+        }
+      }
+      if (section === 'references' && key === 'mode') {
+        if (v !== null && (typeof v !== 'string' || v !== 'pointer')) {
+          throw new Error(`${at} — "references.mode" must be "pointer", got "${String(v)}"`);
+        }
+      }
     }
   }
 }
@@ -307,7 +323,10 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
  *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed too:
  *  they count towards a section's coverage but are never flipped OFF — omitted
  *  parameters keep their documented defaults (§18 overrides only what the file
- *  lists for them). */
+ *  lists for them). references.mode is additionally a VALIDATED reserved
+ *  parameter: validateRulesShape rejects any value other than 'pointer' (or a
+ *  deleted/empty null) with a line-numbered error, and style.prefer is
+ *  validated the same way against 'sibling' | 'nested'. */
 const SECTION_KEYS: Record<string, string[]> = {
   structure: ['node_length', 'siblings', 'depth', 'single_child_collapse', 'empty_nodes'],
   style: ['prefer', 'force_nested_above', 'force_sibling_below', 'shared_prefix_detection'],
@@ -318,6 +337,7 @@ const SECTION_KEYS: Record<string, string[]> = {
     'word_frequency_threshold',
     'phrase_overlap_threshold',
     'cross_file_threshold',
+    'fuzzy',
     'stopwords',
     'synonyms',
   ],
@@ -387,7 +407,8 @@ export function loadRules(root: string): Rules {
   // from its deep-merged default to its OFF state:
   //   boolean switch   → false   (single_child_collapse, empty_nodes, tbd_allowed,
   //                               shared_prefix_detection, back_pointers,
-  //                               orphan_check, duplicate_home_check, redundancy.enabled;
+  //                               orphan_check, duplicate_home_check,
+  //                               redundancy.enabled, redundancy.fuzzy;
   //                               an explicit `false` stays false — same OFF result)
   //   mapping/numeric  → null    (node_length, siblings, depth, max_tbd_per_file,
   //                               force_nested_above, force_sibling_below, max_hops,
@@ -498,9 +519,11 @@ export function loadRules(root: string): Rules {
   }
 
   // redundancy: enabled / word_frequency_threshold / phrase_overlap_threshold /
-  // cross_file_threshold. `stopwords`/`synonyms` are parameters (§13 inputs) —
-  // they keep their defaults when omitted so the remaining layers still
-  // normalize text exactly as documented.
+  // cross_file_threshold / fuzzy. `stopwords`/`synonyms` are parameters (§13
+  // inputs) — they keep their defaults when omitted so the remaining layers
+  // still normalize text exactly as documented. `fuzzy` is layer 3's own check
+  // switch (issue #3): deleted → the near-miss layer alone turns OFF while
+  // layers 1/2/4 keep running.
   if (!listed('redundancy')) {
     if (deleteMode) {
       rules.redundancy = {
@@ -509,6 +532,7 @@ export function loadRules(root: string): Rules {
         word_frequency_threshold: null,
         phrase_overlap_threshold: null,
         cross_file_threshold: null,
+        fuzzy: false,
       };
     }
   } else {
@@ -523,6 +547,9 @@ export function loadRules(root: string): Rules {
     }
     if (deleted('redundancy', 'cross_file_threshold')) {
       rules.redundancy = { ...rules.redundancy, cross_file_threshold: null };
+    }
+    if (deleted('redundancy', 'fuzzy')) {
+      rules.redundancy = { ...rules.redundancy, fuzzy: false };
     }
   }
 

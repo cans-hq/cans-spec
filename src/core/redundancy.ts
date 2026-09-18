@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, RedundancyRules } from '../types.ts';
-import { flattenNodes } from './outline.ts';
+import { flattenNodes, isSyntheticNode } from './outline.ts';
 
 interface NodeRef {
   text: string;
@@ -136,21 +136,63 @@ export function phraseOverlap(
   return issues;
 }
 
+/** Light English suffixes for the inflection check (issue #3), longest first —
+ *  stripped iteratively from the end so "carries" → "carri" (→ i↔y → "carry"). */
+const INFLECTION_SUFFIXES = ['ing', 'ers', 'er', 'ed', 'es', 'ly', 's'];
+
+/** Reduce a word to a rough stem by iteratively stripping common English
+ *  suffixes, then a trailing `e`, folding a trailing `i` onto `y` (so
+ *  deny/denied → deny, approve/approved → approv). Deliberately NOT a real
+ *  stemmer — only good enough to recognize pure suffix inflections. */
+function lightStem(word: string): string {
+  let w = word;
+  for (;;) {
+    const suffix = INFLECTION_SUFFIXES.find(s => w.length > s.length && w.endsWith(s));
+    if (suffix === undefined) break;
+    w = w.slice(0, w.length - suffix.length);
+  }
+  if (w.endsWith('i')) w = `${w.slice(0, -1)}y`;
+  if (w.endsWith('e')) w = w.slice(0, -1);
+  return w;
+}
+
+/** Issue #3: is `a` a pure suffix-inflection of `b` (or vice versa)? Both words
+ *  are reduced with lightStem; equal stems — or a stem equal to the other word's
+ *  unstemmed form — mean the pair differs only by an English inflection
+ *  (approve/approved, session/sessions, deny/denied), not by a typo. Stems
+ *  shorter than 3 chars are treated as unsafe and the pair is NOT skipped
+ *  (e.g. sing/singe stays a typo candidate). Genuine near-misses with no suffix
+ *  relation (flavour/flavor, table/tabble) keep different stems → still flagged. */
+export function isInflectionOf(a: string, b: string): boolean {
+  const sa = lightStem(a);
+  const sb = lightStem(b);
+  if (sa.length < 3 || sb.length < 3) return false;
+  return sa === sb || sa === b || sb === a;
+}
+
 /** Layer 3 — near-miss word forms (Levenshtein <= 2, both words > 4 chars) → possible typo.
  *  §13: "NOT ALREADY SYNONYM-MATCHED" — words are normalized with the rules'
  *  synonym groups first, so members of the same group collapse to one word and
- *  never pair up as typos. */
+ *  never pair up as typos. Issue #3: the layer now applies the SAME collection
+ *  filter as the other layers — the configured `redundancy.stopwords` and the
+ *  §8/§13 ref-syntax tokens (`see`, `md`) are never collected — and skips
+ *  candidate pairs that are pure suffix inflections of each other
+ *  (isInflectionOf) before the Levenshtein comparison, so English inflections
+ *  (approved/approve, sessions/session) are no longer reported as typos. */
 export function fuzzyDistance(
   nodes: NodeRef[],
   rules?: RedundancyRules,
 ): Issue[] {
   const synonyms = rules ? rules.synonyms : [];
+  const stopwords = rules ? rules.stopwords : [];
   const words: NodeRef[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
     for (const raw of tokenize(node.text)) {
       const w = normalizeWord(raw, synonyms);
       if (w.length === 0 || seen.has(w)) continue;
+      if (REF_SYNTAX_TOKENS.has(w)) continue;
+      if (stopwords.includes(w)) continue;
       seen.add(w);
       words.push({ text: w, file: node.file, line: node.line });
     }
@@ -162,6 +204,7 @@ export function fuzzyDistance(
       const b = words[j];
       if (a.text.length <= 4 || b.text.length <= 4) continue;
       if (Math.abs(a.text.length - b.text.length) > 2) continue;
+      if (isInflectionOf(a.text, b.text)) continue;
       const d = levenshtein(a.text, b.text);
       if (d <= 2) {
         issues.push({
@@ -212,6 +255,10 @@ export function crossFileCanonicality(
   const concepts = new Map<string, { files: Set<string>; first: NodeRef }>();
   for (const [key, nodes] of allFiles) {
     for (const node of flattenNodes(nodes)) {
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not
+      // concepts — comparing them across files fabricated "canonical home"
+      // warnings with nonsense advice.
+      if (isSyntheticNode(node)) continue;
       if (node.indent > 1) continue;
       const text = node.text.trim().toLowerCase();
       if (text.length === 0) continue;
@@ -245,7 +292,9 @@ export function crossFileCanonicality(
 }
 
 /** All four redundancy layers over every loaded spec node.
- *  `duplicateHomeCheck` (§18 references.duplicate_home_check) gates layer 4. */
+ *  `duplicateHomeCheck` (§18 references.duplicate_home_check) gates layer 4.
+ *  Issue #3: `redundancy.fuzzy` (§18 delete-key semantics: deleted → false)
+ *  gates layer 3 independently of `enabled`, which still covers all layers. */
 export function checkRedundancy(
   allFiles: Map<string, OutlineNode[]>,
   rules: RedundancyRules,
@@ -254,13 +303,18 @@ export function checkRedundancy(
   const nodes: NodeRef[] = [];
   for (const [file, tree] of allFiles) {
     for (const node of flattenNodes(tree)) {
+      // Issue #8: synthetic "(table)"/"(code fence)" placeholders are not
+      // content — excluded from all three text-comparison layers (they made
+      // any two table-opening files 100%-overlapping and inflated the
+      // "table"/"code"/"fence" word-frequency counts).
+      if (isSyntheticNode(node)) continue;
       nodes.push({ text: node.text, file, line: node.line });
     }
   }
   return [
     ...wordFrequency(nodes, rules),
     ...phraseOverlap(nodes, rules.phrase_overlap_threshold, rules),
-    ...fuzzyDistance(nodes, rules),
+    ...(rules.fuzzy !== false ? fuzzyDistance(nodes, rules) : []),
     ...(duplicateHomeCheck ? crossFileCanonicality(allFiles, rules.cross_file_threshold) : []),
   ];
 }
