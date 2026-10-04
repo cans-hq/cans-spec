@@ -26,6 +26,18 @@ export function targetMatchesKey(name: string, key: string): boolean {
   return false;
 }
 
+/** Issue #10 (round-6 port of 3adbc91): does a raw see: target escape the
+ *  workspace — an absolute path or a `..` segment? Such targets can never
+ *  name a workspace spec file, so their broken-ref message is workspace-scoped
+ *  and their advice never proposes creating a path outside the workspace
+ *  (no more `create /etc/hosts`). Conservative by design: ANY `..` segment
+ *  flags — the label only affects messaging; actual resolution is decided by
+ *  resolveSpecFile's containment guard, so interior `..` that normalizes back
+ *  inside the root still resolves. */
+export function refEscapesWorkspace(name: string): boolean {
+  return name.startsWith('/') || name.split('/').includes('..');
+}
+
 /** Map a raw ref target to the loaded files-map key, if the target is loaded or resolvable on disk. */
 function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: string): string | null {
   // Issue #22: normalize the trailing-slash folder form up front so every
@@ -33,6 +45,11 @@ function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: str
   const target = name.replace(/\/+$/, '');
   if (target === '') return null;
   if (files.has(target)) return target;
+  // Round 6 (QA-19 F51): §11 flat-first covers extensionless FLAT targets
+  // too — `see 02-b` resolves to `02-b.md` exactly like `see auth` resolves
+  // to `auth/index.md` (folders already had this). Probed BEFORE the folder
+  // index so flat wins when both spellings exist.
+  if (!target.endsWith('.md') && files.has(`${target}.md`)) return `${target}.md`;
   if (target.endsWith('.md') && files.has(`${target.slice(0, -3)}/index.md`)) return `${target.slice(0, -3)}/index.md`;
   if (!target.endsWith('.md') && files.has(`${target}/index.md`)) return `${target}/index.md`;
   const p = resolveSpecFile(root, target);
@@ -94,13 +111,22 @@ export function buildRefGraph(
 
 /** Issue #22: broken-ref create-* advice must never propose creating a path
  *  that already exists (file or directory — same hygiene family as #10's
- *  `create /etc/hosts`). A trailing-slash target (`see auth/`) reaches this
- *  branch only when no spec file sits behind it: if the bare folder exists
- *  without an index.md, the actionable creation target is the folder's spec
- *  file; if the folder is already complete (a deeper, non-spec index.md), the
- *  only fix is the ref target itself. Plain missing targets keep the exact
- *  legacy `create <target> or fix the ref target` advice. */
+ *  `create /etc/hosts`), and (round 6, issue #10 port) never a path outside
+ *  the workspace. A trailing-slash target (`see auth/`) reaches this branch
+ *  only when no spec file sits behind it: if the bare folder exists without
+ *  an index.md, the actionable creation target is the folder's spec file; if
+ *  the folder is already complete (a deeper, non-spec index.md), the only fix
+ *  is the ref target itself. Plain missing targets keep the exact legacy
+ *  `create <target> or fix the ref target` advice — and (round 6, QA-19 F51)
+ *  a missing extensionless stem proposes its §11 flat-first file `<stem>.md`,
+ *  never an extensionless file. */
 function brokenRefSuggestion(root: string, target: string): string {
+  // Defense in depth: checkRefs classifies escapes before calling here, but
+  // the contract holds for ANY caller — an escaping target never earns a
+  // create-* proposal.
+  if (refEscapesWorkspace(target)) {
+    return 'fix the ref target — see: targets must name spec files inside the workspace (no ../ or absolute paths)';
+  }
   const clean = target.replace(/\/+$/, '');
   if (clean === '') return 'fix the ref target';
   if (dirExists(join(root, clean))) {
@@ -112,9 +138,12 @@ function brokenRefSuggestion(root: string, target: string): string {
   if (isFile(join(root, clean))) {
     return `fix the ref target — ${clean} is not a spec file`;
   }
+  if (clean.endsWith('.md')) {
+    return `create ${clean} or fix the ref target`;
+  }
   return clean !== target
     ? `create ${clean}/index.md or fix the ref target`
-    : `create ${clean} or fix the ref target`;
+    : `create ${clean}.md or fix the ref target`;
 }
 
 export function checkRefs(
@@ -155,6 +184,22 @@ export function checkRefs(
 
       const key = loadedKeyFor(files, root, ref.file);
       if (key === null && resolveSpecFile(root, ref.file) === null) {
+        // Issue #10 (round-6 port of 3adbc91): ../ and absolute targets
+        // escape the workspace — say so, and never suggest creating a path
+        // outside it (`create /etc/hosts` proposed creating an EXISTING file
+        // beyond the root; `create ../escape` proposed a traversal path).
+        // Checked before the issue #4 prose exemption: an escaping target is
+        // never English prose. (Resolution itself is contained by
+        // resolveSpecFile's isInsideRoot guard — this is the reporting half.)
+        if (refEscapesWorkspace(ref.file)) {
+          issues.push({
+            file, line: ref.line, level: 'error', category: 'refs',
+            message: `broken ref: see ${ref.file} — file not found in workspace`,
+            rule: 'refs.broken.file', // issue #41: machine-readable rule key
+            suggestion: 'fix the ref target — see: targets must name spec files inside the workspace (no ../ or absolute paths)',
+          });
+          continue;
+        }
         // §12 edge cases: "File not found → Broken ref error." There is NO
         // span/direction exemption — forward or backward, inside or outside the
         // loaded numeric span, a missing file is always a level:error broken
@@ -249,11 +294,22 @@ export function checkRefs(
  *    see: auth/index.md) flips the advice to "already refs … — remove the
  *    intermediate hop via <b>" — following the "add" advice would have
  *    appended a second see: to one node while leaving the hop in place.
+ *    Round 6 (QA-19 F54/F55): the guard is ANCHOR-aware — two refs name the
+ *    same target only when they resolve to the same target key AND the same
+ *    anchor node (case-insensitive §12 anchorMatches), or when both are
+ *    file-level. A same-file/different-node ref (`see auth#Passwords` vs the
+ *    suggested `auth/index.md#Sessions`) and a file-level ref beside an
+ *    anchored suggestion are NOT duplicates — the old file-key-only guard
+ *    emitted false, self-contradictory "already refs" claims.
  *    The plain (no-existing-ref) advice likewise states the intermediate hop
  *    must be removed, not just the direct ref added: from ≠ b holds because
  *    incoming lists exclude self, and from = out would place from, b and out
  *    in one SCC — guarded defensively anyway, so the advice can never convert
  *    a deep-hop error into a checkRefs self-reference error.
+ *    Round 6 (QA-19 F26): the removal names the EXACT edge — `from`'s raw
+ *    ref to b with its line — so a multi-referrer workspace never leaves the
+ *    user guessing which `see:` to delete ("remove the intermediate hop via
+ *    X" alone is ambiguous when several files ref X).
  *  - §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
  *    skipped entirely. */
 export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
@@ -400,17 +456,34 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     // "add" advice would append a SECOND see: to the same target while the
     // deep hop itself stays in place. Name the existing ref (verbatim raw
     // spelling) and the hop to remove instead.
+    // Round 6 (QA-19 F54/F55): the file-key match alone is NOT enough — the
+    // two refs must also name the same ANCHOR NODE (case-insensitive §12
+    // anchorMatches), or both be file-level. Otherwise the referrer holds a
+    // ref to a DIFFERENT node of the same file (or a file-level ref beside an
+    // anchored suggestion): claiming "already refs" would be false and
+    // following its premise silently drops the linkage.
     const outKey = resolveKey(out.file);
+    const sameAnchor = (r: RefTarget): boolean => {
+      if (out.anchor === null) return r.anchor === null; // both file-level
+      return r.anchor !== null && anchorMatches(r.anchor, out.anchor);
+    };
     const existing = outKey !== null
-      ? (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === outKey)
+      ? (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === outKey && sameAnchor(r))
       : undefined;
+    // Round 6 (QA-19 F26): name the EXACT edge that feeds the hop — from's
+    // ref to b (raw spelling + source line). b is a loaded key and from ∈
+    // incoming[b], so the ref exists; first match in document order.
+    const hopEdge = (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === b);
+    const edge = hopEdge !== undefined
+      ? `: delete ${from}'s "${hopEdge.raw}" (line ${hopEdge.line})`
+      : '';
     issues.push({
       file: b, line: out.line, level: 'error', category: 'refs',
       message: `DEEP HOP: ${from} → ${b} → ${out.file}`,
           rule: 'refs.deep_hop', // issue #41: machine-readable rule key
       suggestion: outKey !== null && existing !== undefined
-        ? `${from} already refs ${outKey}${anchor} as "${existing.raw}" — remove the intermediate hop via ${b}`
-        : `add "see: ${out.file}${anchor}" directly to ${from} and remove the intermediate hop via ${b}`,
+        ? `${from} already refs ${outKey}${anchor} as "${existing.raw}" — remove the intermediate hop via ${b}${edge}`
+        : `add "see: ${out.file}${anchor}" directly to ${from} and remove the intermediate hop via ${b}${edge}`,
     });
   }
   return issues;

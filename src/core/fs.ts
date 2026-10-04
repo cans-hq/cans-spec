@@ -1,5 +1,5 @@
 import { statSync, readdirSync, existsSync, mkdirSync, type Stats } from 'fs';
-import { join, relative, dirname, basename } from 'path';
+import { join, relative, dirname, basename, isAbsolute } from 'path';
 import { globFiles as runtimeGlobFiles } from './runtime.ts';
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
@@ -48,9 +48,12 @@ export function discoverSpecFiles(root: string): string[] {
   return out.sort();
 }
 
-/** Detect flat-vs-folder conflicts: both `NN-name.md` AND `NN-name/index.md` exist.
- *  §8: "Flat wins over folder. If both exist, `cans check` flags error."
- *  Returns pairs of [flatRel, folderRel]. */
+/** Detect flat-vs-folder conflicts: both `<slug>.md` AND `<slug>/index.md` exist.
+ *  §8/§11: "Flat wins. Both existing = error." Round 6 (QA-19 F15/F17–19):
+ *  the condition is slug-AGNOSTIC — any pair (numbered `02-authentication.md` +
+ *  `02-authentication/index.md`, or plain `auth.md` + `auth/index.md`) is a
+ *  duplicate home; the old NN--only gate let unnumbered pairs coexist
+ *  silently. Returns pairs of [flatRel, folderRel]. */
 export function detectFlatFolderConflicts(root: string): Array<[string, string]> {
   const conflicts: Array<[string, string]> = [];
   if (!dirExists(root)) return conflicts;
@@ -60,7 +63,8 @@ export function detectFlatFolderConflicts(root: string): Array<[string, string]>
 
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
-    if (entry.isFile() && SPEC_FILE_RE.test(entry.name)) {
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      // §11 both-existing: ANY spec-shaped .md file, numbered slug or not.
       flatFiles.add(entry.name);
     } else if (entry.isDirectory() && exists(join(root, entry.name, 'index.md'))) {
       folderDirs.add(entry.name);
@@ -138,17 +142,29 @@ export function discoverAdrs(root: string): string[] {
     .sort();
 }
 
+/** Containment guard (issue #10, round-6 port of 3adbc91): a ref candidate
+ *  must resolve INSIDE the workspace root. `../` traversal, absolute targets
+ *  and root-aliasing paths (rel === "") are all rejected — null falls through
+ *  to broken-ref reporting. */
+function isInsideRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
 /** Resolve a ref target: flat file wins, then folder index.md. null when neither exists.
  *  Issue #22: trailing slashes are folder-target spelling, not a different
- *  path — `auth/` resolves exactly like `auth` / `auth/index.md`. */
+ *  path — `auth/` resolves exactly like `auth` / `auth/index.md`.
+ *  Issue #10 (round-6 port of 3adbc91): the result can never point OUTSIDE
+ *  `root` — an escaping candidate is rejected even when the file physically
+ *  exists beyond the workspace. */
 export function resolveSpecFile(root: string, name: string): string | null {
   const clean = name.replace(/\/+$/, '');
   if (clean === '') return null;
   const direct = join(root, clean);
-  if (exists(direct) && statSync(direct).isFile()) return direct;
+  if (isInsideRoot(root, direct) && exists(direct) && statSync(direct).isFile()) return direct;
   if (clean.endsWith('.md')) {
     const folderIdx = join(root, clean.slice(0, -3), 'index.md');
-    if (exists(folderIdx)) return folderIdx;
+    if (isInsideRoot(root, folderIdx) && exists(folderIdx)) return folderIdx;
   }
   return null;
 }

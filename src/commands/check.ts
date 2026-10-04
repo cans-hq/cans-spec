@@ -645,8 +645,14 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     depthMax = Math.max(depthMax, outlineMaxDepth(nodes));
   }
   const refsTotal = [...graph.forward.values()].reduce((a, ts) => a + ts.length, 0);
+  // Round 6 (QA-19 F40b): refs.broken is TRUTHFUL — broken ref targets AND
+  // broken anchors are both §12 broken-ref errors, so both count. (The old
+  // message-prefix filter left refs.broken: 0 beside a broken-anchor ERROR
+  // with errorCount 1 / ok:false — machine consumers filtered on the counter
+  // missed the error.) Rule keys are the stable vocabulary (issue #41).
   const broken = issues.filter(
-    i => i.category === 'refs' && i.level === 'error' && i.message.startsWith('broken ref:'),
+    i => i.category === 'refs' && i.level === 'error'
+      && (i.rule === 'refs.broken.file' || i.rule === 'refs.broken.anchor'),
   ).length;
 
   const errorCount = issues.filter(i => i.level === 'error').length;

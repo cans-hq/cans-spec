@@ -683,7 +683,12 @@ describe('issue #22 round 6 (QA-19 F51): §11 flat-first covers extensionless FL
     const files = loadFiles(spec);
     const issues = detectDeepHops(buildRefGraph(files, '.'), 1);
     expect(issues).toHaveLength(1);
-    expect(issues[0]!.message).toBe('DEEP HOP: 00-overview.md → 01-a.md → 02-b.md');
+    // The edge 01-a → 02-b resolves (targetMatchesKey) so the hop fires; the
+    // message keeps the referrer's raw spelling, the advice keeps resolving.
+    expect(issues[0]!.message).toBe('DEEP HOP: 00-overview.md → 01-a.md → 02-b');
+    expect(issues[0]!.suggestion).toBe(
+      'add "see: 02-b" directly to 00-overview.md and remove the intermediate hop via 01-a.md: delete 00-overview.md\'s "see 01-a.md" (line 2)',
+    );
   });
 
   test('v5: still-missing extensionless stem — create advice proposes the .md file (§11 flat-first)', () => {

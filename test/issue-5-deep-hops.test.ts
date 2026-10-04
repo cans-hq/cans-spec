@@ -144,7 +144,9 @@ describe('issue #5: detectDeepHops mesh semantics', () => {
     // The engine's fix advice must be actionable: never a self-reference, and
     // (issue #22) complete — adding the direct ref alone leaves the hop in
     // place, so the removal of the intermediate ref is part of the advice.
-    expect(issue.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-b.md');
+    // (Round 6, QA-19 F26: the removal names the exact edge — file, raw ref,
+    // line — so multi-referrer shapes are unambiguous.)
+    expect(issue.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-b.md: delete 01-a.md\'s "see: 02-b.md" (line 2)');
   });
 
   test('anchor suffixes are preserved in the suggestion exactly as before', () => {
@@ -155,7 +157,7 @@ describe('issue #5: detectDeepHops mesh semantics', () => {
     }, 1);
     expect(issues.length).toBe(1);
     expect(issues[0]!.message).toBe('DEEP HOP: 01-a.md → 02-b.md → 03-c.md');
-    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md#Data-protection" directly to 01-a.md and remove the intermediate hop via 02-b.md');
+    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md#Data-protection" directly to 01-a.md and remove the intermediate hop via 02-b.md: delete 01-a.md\'s "see: 02-b.md" (line 2)');
   });
 
   test('a 3-cycle is a mesh, not a deep-hop chain', () => {
@@ -168,7 +170,7 @@ describe('issue #5: detectDeepHops mesh semantics', () => {
     // 02-b is flagged: the chain 01-a → 02-b → 03-c leaves the mesh.
     expect(issues[0]!.file).toBe('02-b.md');
     expect(issues[0]!.message).toBe('DEEP HOP: 01-a.md → 02-b.md → 03-c.md');
-    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-b.md');
+    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-b.md: delete 01-a.md\'s "see: 02-b.md" (line 2)');
     // 01-a is NOT flagged: its out edge stays inside its own mesh.
     expect(issues.some(i => i.file === '01-a.md')).toBe(false);
     // 03-c is NOT flagged: no outgoing refs.
@@ -199,7 +201,7 @@ describe('issue #5: detectDeepHops mesh semantics', () => {
     expect(issues.length).toBe(1);
     expect(issues[0]!.file).toBe('02-auth/index.md');
     expect(issues[0]!.message).toBe('DEEP HOP: 01-a.md → 02-auth/index.md → 03-c.md');
-    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-auth/index.md');
+    expect(issues[0]!.suggestion).toBe('add "see: 03-c.md" directly to 01-a.md and remove the intermediate hop via 02-auth/index.md: delete 01-a.md\'s "see: 02-auth.md" (line 2)');
   });
 
   test('property: suggestions never self-reference and verdicts are deterministic across calls', () => {
@@ -237,9 +239,17 @@ describe('issue #5: detectDeepHops mesh semantics', () => {
         // issue #22: the advice must state the hop goes away — the flagged
         // file is named as the via-point of the removal, and (duplicate guard)
         // the suggested target is one the referrer does not already hold.
+        // (Round 6: the advice continues past the via-point with the exact
+        // edge to delete, so the via regex drops its $ anchor.)
         expect(issue.suggestion!.includes(`via ${issue.file}`), label).toBe(true);
-        const via = /via (\S+)$/.exec(issue.suggestion!);
+        const via = /via (\S+):/.exec(issue.suggestion!);
         expect(via![1]!, label).toBe(issue.file);
+        // Round 6 (QA-19 F26): the removal names the exact edge — the
+        // referrer's own raw ref to the flagged file, with its line.
+        const edge = /: delete (\S+)'s "(.+)" \(line (\d+)\)/.exec(issue.suggestion!);
+        expect(edge, label).not.toBeNull();
+        expect(edge![1]!, label).not.toBe(issue.file);
+        expect(edge![2]!.includes(issue.file) || edge![2]!.includes(issue.file.replace(/\/index\.md$/, '')), label).toBe(true);
         // Message shape: DEEP HOP: <from> → <flagged> → <out>, flagged in the
         // middle, endpoints distinct from it.
         const parts = issue.message.replace('DEEP HOP: ', '').split(' → ');
