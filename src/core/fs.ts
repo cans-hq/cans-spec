@@ -138,12 +138,16 @@ export function discoverAdrs(root: string): string[] {
     .sort();
 }
 
-/** Resolve a ref target: flat file wins, then folder index.md. null when neither exists. */
+/** Resolve a ref target: flat file wins, then folder index.md. null when neither exists.
+ *  Issue #22: trailing slashes are folder-target spelling, not a different
+ *  path — `auth/` resolves exactly like `auth` / `auth/index.md`. */
 export function resolveSpecFile(root: string, name: string): string | null {
-  const direct = join(root, name);
+  const clean = name.replace(/\/+$/, '');
+  if (clean === '') return null;
+  const direct = join(root, clean);
   if (exists(direct) && statSync(direct).isFile()) return direct;
-  if (name.endsWith('.md')) {
-    const folderIdx = join(root, name.slice(0, -3), 'index.md');
+  if (clean.endsWith('.md')) {
+    const folderIdx = join(root, clean.slice(0, -3), 'index.md');
     if (exists(folderIdx)) return folderIdx;
   }
   return null;

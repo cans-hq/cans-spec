@@ -163,7 +163,8 @@ describe('issue #22: trailing-slash folder targets resolve to the same key', () 
     let broken = issues.filter(i => i.message.startsWith('broken ref:'));
     expect(broken).toHaveLength(1);
     expect(broken[0]!.message).toBe('broken ref: see auth/ — file not found');
-    expect(broken[0]!.suggestion).not.toContain('create auth/');
+    // The exact unactionable v0.3.0 advice — proposing the existing directory.
+    expect(broken[0]!.suggestion).not.toBe('create auth/ or fix the ref target');
     expect(broken[0]!.suggestion).toBe('create auth/index.md or fix the ref target');
 
     // Trailing-slash intent with NOTHING on disk → folder-layout target,

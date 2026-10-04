@@ -290,12 +290,15 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 
 **Flat vs folder resolution:** Try `cans/02-authentication.md` first. Then `cans/02-authentication/index.md`. Flat wins. Both existing = error.
 
+**Trailing-slash folder targets (issue #22):** `see: auth/`, `see: auth` and `see: auth/index.md` are equivalent spellings of one folder-layout target — trailing slashes are trimmed in target-key resolution (targetMatchesKey / loadedKeyFor / resolveSpecFile), so all ref consumers (broken refs, anchors, deep-hop edges, orphans, back-pointer grouping, token budgets) treat them identically.
+
 ---
 
 ## 12. Refs Engine
 
 ### Resolution
 - Find target file (flat then folder).
+- Trailing-slash folder forms are equivalent spellings: `auth/` = `auth` = `auth/index.md` (issue #22) — never a broken ref on slash spelling alone.
 - If no anchor → file-level ref, resolved.
 - If anchor → find node by exact text match, then case-insensitive fallback.
 - No fuzzy anchor matching. Not found = broken ref error.
@@ -320,6 +323,8 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remov
 | Case | Behavior |
 |---|---|
 | File not found | Broken ref error |
+| Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
+| Broken-ref suggestion | Never proposes creating an existing path (file or dir) — names the missing spec file or says fix the target |
 | Lowercase anchor | Case-insensitive fallback |
 | No anchor | Valid file-level ref |
 | Ref to `_tasks/` | Warning (transient) |

@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
-import { resolveSpecFile, toRelative, isFile } from './fs.ts';
+import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -10,9 +10,12 @@ export interface RefGraph {
 }
 
 /** Does a raw ref target `name` point at workspace file `key`?
- *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts. */
+ *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts.
+ *  Issue #22: trailing-slash folder forms are equivalent spellings —
+ *  `auth/`, `auth` and `auth/index.md` all name the same folder-layout
+ *  target, so trailing slashes are trimmed before every comparison. */
 export function targetMatchesKey(name: string, key: string): boolean {
-  const n = name.toLowerCase();
+  const n = name.toLowerCase().replace(/\/+$/, '');
   const k = key.toLowerCase();
   if (n === k) return true;
   const nBase = n.endsWith('.md') ? n.slice(0, -3) : n;
@@ -25,14 +28,18 @@ export function targetMatchesKey(name: string, key: string): boolean {
 
 /** Map a raw ref target to the loaded files-map key, if the target is loaded or resolvable on disk. */
 function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: string): string | null {
-  if (files.has(name)) return name;
-  if (name.endsWith('.md') && files.has(`${name.slice(0, -3)}/index.md`)) return `${name.slice(0, -3)}/index.md`;
-  if (!name.endsWith('.md') && files.has(`${name}/index.md`)) return `${name}/index.md`;
-  const p = resolveSpecFile(root, name);
+  // Issue #22: normalize the trailing-slash folder form up front so every
+  // probe below (`auth/`, `auth`, `auth/index.md`) agrees with targetMatchesKey.
+  const target = name.replace(/\/+$/, '');
+  if (target === '') return null;
+  if (files.has(target)) return target;
+  if (target.endsWith('.md') && files.has(`${target.slice(0, -3)}/index.md`)) return `${target.slice(0, -3)}/index.md`;
+  if (!target.endsWith('.md') && files.has(`${target}/index.md`)) return `${target}/index.md`;
+  const p = resolveSpecFile(root, target);
   if (p === null) return null;
   const rel = toRelative(root, p);
   if (files.has(rel)) return rel;
-  for (const key of files.keys()) if (targetMatchesKey(name, key)) return key;
+  for (const key of files.keys()) if (targetMatchesKey(target, key)) return key;
   return null; // exists on disk but is not part of the loaded set
 }
 
@@ -83,6 +90,31 @@ export function buildRefGraph(
     }
   }
   return { forward, back };
+}
+
+/** Issue #22: broken-ref create-* advice must never propose creating a path
+ *  that already exists (file or directory — same hygiene family as #10's
+ *  `create /etc/hosts`). A trailing-slash target (`see auth/`) reaches this
+ *  branch only when no spec file sits behind it: if the bare folder exists
+ *  without an index.md, the actionable creation target is the folder's spec
+ *  file; if the folder is already complete (a deeper, non-spec index.md), the
+ *  only fix is the ref target itself. Plain missing targets keep the exact
+ *  legacy `create <target> or fix the ref target` advice. */
+function brokenRefSuggestion(root: string, target: string): string {
+  const clean = target.replace(/\/+$/, '');
+  if (clean === '') return 'fix the ref target';
+  if (dirExists(join(root, clean))) {
+    if (!exists(join(root, clean, 'index.md'))) {
+      return `create ${clean}/index.md or fix the ref target`;
+    }
+    return `fix the ref target — ${clean}/ is a folder, not a spec file`;
+  }
+  if (isFile(join(root, clean))) {
+    return `fix the ref target — ${clean} is not a spec file`;
+  }
+  return clean !== target
+    ? `create ${clean}/index.md or fix the ref target`
+    : `create ${clean} or fix the ref target`;
 }
 
 export function checkRefs(
@@ -142,7 +174,7 @@ export function checkRefs(
             file, line: ref.line, level: 'error', category: 'refs',
             message: `broken ref: see ${ref.file} — file not found`,
           rule: 'refs.broken.file', // issue #41: machine-readable rule key
-            suggestion: `create ${ref.file} or fix the ref target`,
+            suggestion: brokenRefSuggestion(root, ref.file),
           });
         } else {
           issues.push({
