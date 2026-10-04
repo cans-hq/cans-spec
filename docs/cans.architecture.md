@@ -484,6 +484,8 @@ overflow:
   force_file_for: [code_block, table, diagram]
 ```
 
+`token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
+
 ---
 
 ## 19. Output System
@@ -649,8 +651,8 @@ Token budget planner. Deterministic. No LLM.
 ### `budget read <concept>`
 1. Normalize concept. Find matching nodes.
 2. Pick canonical home: highest child count → lowest depth → earliest file sort.
-3. Score all files: canonical home (100), active task mentioning (80), back-pointer (60), forward ref (40), mentions concept (20), no connection (0).
-4. Sort by score. Pack best-effort (issues #15/#16): take each item in order while it fits under the token limit. An item that does not fit is skipped (listed in `skipped`) — it does NOT cut the walk, so cheaper lower-scored items that still fit are planned. `skipped` lists every file not in the plan (didn't fit, or no connection to the concept).
+3. Score all files: canonical home (100), active task mentioning (80), back-pointer (60), forward ref (40), mentions concept (20), no connection (0). A **back-pointer** is a file holding a `see:` ref into the canonical home; a **forward ref** is a file the canonical home points to (the target of a `see:` ref made from the home file). A file matching several tiers keeps the highest (back-pointer 60 beats forward ref 40 beats mentions concept 20).
+4. Sort by score. Pack best-effort (issues #15/#16): take each item in order while it fits under the token limit. An item that does not fit is skipped (listed in `skipped`) — it does NOT cut the walk, so cheaper lower-scored items that still fit are planned. `skipped` lists every file not in the plan (didn't fit, or no connection to the concept). Budget scope is the spec files plus the active `_tasks/*.md` files (AGENTS.md is out of scope, §22) — so a task file with no connection to the concept is listed in `skipped`, never invisible.
 5. Print plan.
 
 **Empty plan (§19/§37, issues #15/#16):** if the plan is empty while a truly unbounded plan for the same concept is non-empty, the concept matches — the limit is simply below every matching item. The user-correctable failure (exit 1) names the actual source of the limit and the top-priority item that busts it, never a spelling problem:
@@ -660,7 +662,7 @@ Token budget planner. Deterministic. No LLM.
 ✗ plan empty: token_budget.default_limit (10) in _rules.yaml is below the top-priority item 01-auth.md (32 tok) — raise default_limit or pass --limit
 ```
 
-Both limit sources (`--limit` flag and `token_budget.default_limit`) get the same diagnosis; a concept that matches nothing is still reported as `no files match concept "…" — check spelling or run \`cans status\``. A limit that can afford some but not all matching items is a SUCCESS: the partial plan is printed with the unaffordable files in `skipped`.
+Both limit sources (`--limit` flag and `token_budget.default_limit`) get the same diagnosis — and the same VALUE validation (see **Config** below): non-numeric, negative or fractional limit values are rejected with `✗ invalid …` (exit 1) whichever source they came from, and the validation runs even when a valid `--limit` overrides the config value. A concept that matches nothing is still reported as `no files match concept "…" — check spelling or run \`cans status\``. A limit that can afford some but not all matching items is a SUCCESS: the partial plan is printed with the unaffordable files in `skipped`.
 
 ### `budget write <concept>`
 1. Find canonical home.
@@ -672,6 +674,12 @@ Both limit sources (`--limit` flag and `token_budget.default_limit`) get the sam
 Centered on a task file. Add its refs (1 hop). Reject deep-hop expansion. Apply budget.
 
 **Token estimate:** `Math.ceil(text.length / charsPerToken)`. Default 3.5 chars/token.
+
+**Config (§18 `token_budget`):** both budget commands validate the `token_budget` values at load — the same validation the `--limit` flag applies (issue #15 flag≡config parity). Invalid values are §19 user-correctable errors (exit 1, `ok:false`) that name the key and the file, never silently-ignored dead config:
+
+- `default_limit` — a non-negative integer. 0 is a degenerate limit that affords nothing (the truthful empty-plan diagnosis names it, exactly like `--limit 0`); non-numeric, negative or fractional values fail: `✗ invalid token_budget.default_limit "abc" in _rules.yaml — pass a positive integer`
+- `estimate_chars_per_token` — a positive number (default 3.5). 0 or less would make every estimate `Infinity` and no limit could fix that, so it fails instead: `✗ invalid token_budget.estimate_chars_per_token "0" in _rules.yaml — pass a positive number`
+- `enabled` — a boolean. `false` observably disables budget planning: `budget read` and `budget write` refuse (exit 1): `✗ budget planning disabled: token_budget.enabled is false in _rules.yaml — set it to true (or delete the key) to plan budgets`. Deleted or omitted, `enabled` keeps its default `true` — it is a planning switch, not a check switch, so §18's "delete a key = check turns off" does not apply to it. A non-boolean value fails: `✗ invalid token_budget.enabled "false" in _rules.yaml — pass true or false`
 
 **JSON result (read):**
 ```ts
