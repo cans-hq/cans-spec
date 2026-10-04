@@ -33,6 +33,12 @@ export interface BackPointer {
   fromFile: string;
   fromLine: number;
   toFile: string;
+  /** The anchor side of the back-pointer. For graph-built back-pointers
+   *  (buildRefGraph): the ref's raw anchor token, null for file-level refs.
+   *  For extracted `<!-- ref-by: ... -->` comments (extractBackPointers,
+   *  issue #19): the text of the node whose bullet line carries the comment
+   *  (INLINE form — a node mark), or null when the comment stands on its own
+   *  line (STANDALONE form — a file-level mark). */
   toAnchor: string | null;
 }
 
@@ -48,6 +54,10 @@ export interface Issue {
   category: IssueCategory;
   message: string;
   suggestion?: string;
+  /** issue #41: machine-readable dotted rule key (e.g. "refs.broken.file",
+   *  "structure.node_length.max") — stable vocabulary for report grouping and
+   *  agent consumption. Optional so non-engine Issue constructors stay legal. */
+  rule?: string;
 }
 
 // ── Rules ──
@@ -160,6 +170,13 @@ export interface CheckResult extends CommandResult {
   errorCount: number;
   warningCount: number;
   backPointersUpdated: number;
+  /** Issue #11: spec-relative paths of the files --fix actually rewrote
+   *  (sorted). Empty without --fix or when nothing needed a write; with a
+   *  [file] filter only matching files can ever appear here. */
+  backPointersUpdatedFiles: string[];
+  /** issue #41: wall-clock duration of the whole checkWorkspace run,
+   *  rounded to whole ms (0 for the static checkFail paths). */
+  elapsedMs: number;
   /** §22/§36: human-facing one-line summary of the active _rules.yaml limits (QA-02 F17). */
   rulesSummary?: string;
 }

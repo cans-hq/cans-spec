@@ -352,7 +352,7 @@ describe('issue #8: checkWorkspace node counts and issues exclude phantoms', () 
     expect(result.issues.some(i => i.message.includes('100% overlap'))).toBe(false);
     expect(result.issues.some(i => i.message.includes('(table)'))).toBe(false);
     expect(result.ok).toBe(true);
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1); // issue #41: warnings-only (orphans) → 1 (was 0 pre-#41)
   });
 
   test('fence variant: nodes == real nodes, no "(code fence)" output, ok', async () => {
@@ -371,10 +371,15 @@ describe('issue #8: checkWorkspace node counts and issues exclude phantoms', () 
     const ws = makeWs('cli-table');
     writeWs(ws, TABLE_WS_FILES);
     const r = spawnCli(['check', '--json'], ws.root, { ...process.env, CANS_ROOT: '' });
-    expect(r.exit).toBe(0);
-    const data = JSON.parse(r.out) as { ok: boolean; nodes: number; issues: Array<{ message: string }> };
+    expect(r.exit).toBe(1); // issue #41: warnings-only (orphans) → 1 (was 0 pre-#41)
+    const raw = JSON.parse(r.out) as Record<string, unknown>;
+    // issue #41: reconstitute the flat issues view from sections.{category}[].
+    (raw as any).issues = Object.entries((raw.sections ?? {}) as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+    const data = raw as { ok: boolean; summary: { nodes: number }; issues: Array<{ message: string }> };
     expect(data.ok).toBe(true);
-    expect(data.nodes).toBe(8);
+    expect(data.summary.nodes).toBe(8); // issue #41: shape/counts moved under summary
     expect(data.issues.some(i => i.message.includes('100% overlap'))).toBe(false);
     expect(data.issues.some(i => i.message.includes('(table)'))).toBe(false);
   });

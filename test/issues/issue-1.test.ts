@@ -120,6 +120,14 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: reconstitute the flat issues view from sections.{category}[]
+  // (wire shape moved from a flat issues array to sections buckets).
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -206,11 +214,12 @@ describe('issue #1: structure.siblings.min and structure.depth.min are enforced'
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    // Warnings only → exit 0 (§19: warnings never affect the exit code).
-    expect(r.exit).toBe(0);
-    expect(j.exitCode).toBe(0);
-    expect(j.errorCount).toBe(0);
-    expect(j.warningCount).toBeGreaterThanOrEqual(4);
+    // issue #41: warnings-only → exit 1 (§19 superseded by the issue's
+    // three-class exit contract: 0 clean / 1 warnings / 2 errors).
+    expect(r.exit).toBe(1);
+    expect(j.exitCode).toBe(1);
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBeGreaterThanOrEqual(4);
     // The exact breakdown: 3 siblings-min warnings + 1 depth-min warning.
     const sibMin = j.issues.filter((i: any) => i.message.includes('(min 3)'));
     expect(sibMin.length).toBe(3);
@@ -232,8 +241,8 @@ describe('issue #1: structure.siblings.min and structure.depth.min are enforced'
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(r.exit).toBe(0); // healthy workspace: no findings at all → 0
+    expect(j.counts.errors).toBe(0);
     const minWarnings = j.issues.filter(
       (i: any) => i.message.includes('children (min') || i.message.includes('below min'),
     );

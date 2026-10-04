@@ -76,6 +76,14 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: reconstitute the flat issues view from sections.{category}[]
+  // (wire shape moved from a flat issues array to sections buckets).
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -197,11 +205,11 @@ describe('issue #4: cans check end-to-end', () => {
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
 
-    // Un-breaking prose: warnings only → ok, exit 0.
-    expect(r.exit).toBe(0);
+    // Un-breaking prose: warnings only → ok=true, exit 1 (issue #41).
+    expect(r.exit).toBe(1);
     expect(j.ok).toBe(true);
-    expect(j.errorCount).toBe(0);
-    expect(j.warningCount).toBe(2);
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(2);
 
     // Banner counts keep working: both prose refs are still minted (issue #4
     // contract — do NOT stop minting at parse time), but none is "broken".
@@ -221,10 +229,11 @@ describe('issue #4: cans check end-to-end', () => {
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
 
-    // Documented §12 contract preserved: missing spec-shaped file → error, exit 1.
-    expect(r.exit).toBe(1);
+    // Documented §12 contract preserved: missing spec-shaped file → error.
+    // issue #41: error class exits 2 (was 1 pre-#41).
+    expect(r.exit).toBe(2);
     expect(j.ok).toBe(false);
-    expect(j.errorCount).toBe(1);
+    expect(j.counts.errors).toBe(1);
     expect(j.refs.broken).toBe(1);
     expect(j.issues.some((i: any) =>
       i.level === 'error'

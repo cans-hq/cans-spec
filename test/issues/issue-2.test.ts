@@ -60,6 +60,14 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: reconstitute the flat issues view from sections.{category}[]
+  // (wire shape moved from a flat issues array to sections buckets).
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -167,8 +175,8 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0); // style findings are warnings — exit unaffected
-    expect(j.errorCount).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41) // style findings are warnings — exit unaffected
+    expect(j.counts.errors).toBe(0);
     // The issue's contradiction is gone: no collapse advice under prefer: nested.
     const collapse = j.issues.filter((i: any) => /Collapse to sibling style/.test(i.message));
     expect(collapse).toEqual([]);
@@ -177,7 +185,7 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
       (i: any) => i.category === 'style' && /share prefix "request"/.test(i.message),
     );
     expect(grouped.length).toBe(1);
-    expect(j.warningCount).toBe(1);
+    expect(j.counts.warnings).toBe(1);
   });
 
   test('prefer: sibling suppresses "Group under nested style." — the collapse-to-sibling hint still fires', () => {
@@ -185,8 +193,8 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
+    expect(j.counts.errors).toBe(0);
     const grouped = j.issues.filter((i: any) => /share prefix/.test(i.message));
     expect(grouped).toEqual([]);
     const collapse = j.issues.filter(
@@ -195,7 +203,7 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
         /"Keeper" has 3 children\. Collapse to sibling style\./.test(i.message),
     );
     expect(collapse.length).toBe(1);
-    expect(j.warningCount).toBe(1);
+    expect(j.counts.warnings).toBe(1);
   });
 
   test('prefer deleted (style listed without it, template-shaped file) → null → NO modulation: both hints fire', () => {
@@ -203,8 +211,8 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
+    expect(j.counts.errors).toBe(0);
     const grouped = j.issues.filter(
       (i: any) => i.category === 'style' && /share prefix "request"/.test(i.message),
     );
@@ -213,7 +221,7 @@ describe('issue #2 — style.prefer wiring in checkStyle', () => {
       (i: any) => i.category === 'style' && /Collapse to sibling style/.test(i.message),
     );
     expect(collapse.length).toBe(1);
-    expect(j.warningCount).toBe(2);
+    expect(j.counts.warnings).toBe(2);
   });
 });
 
@@ -223,15 +231,15 @@ describe('issue #2 — regression: default prefer: sibling on the issue Repro A'
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
+    expect(j.counts.errors).toBe(0);
     // Before the fix this file produced TWO style warnings; the second one
     // ("6 siblings share prefix "request". Group under nested style.") argued
     // against the declared default sibling preference.
     const styleIssues = j.issues.filter((i: any) => i.category === 'style');
     expect(styleIssues.length).toBe(1);
     expect(styleIssues[0].message).toBe('"Keeper" has 3 children. Collapse to sibling style.');
-    expect(j.warningCount).toBe(1);
+    expect(j.counts.warnings).toBe(1);
   });
 
   test('pure defaults (no _rules.yaml at all) → the style engine reports only the collapse hint, no "share prefix" advice', () => {
@@ -240,7 +248,7 @@ describe('issue #2 — regression: default prefer: sibling on the issue Repro A'
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
     const styleIssues = j.issues.filter((i: any) => i.category === 'style');
     expect(styleIssues.length).toBe(1);
     expect(styleIssues[0].message).toBe('"Keeper" has 3 children. Collapse to sibling style.');
@@ -254,9 +262,9 @@ describe('issue #2 — style.prefer / references.mode value validation (validate
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(1); // §18/§19: invalid config = user-correctable failure
+    expect(r.exit).toBe(2); // issue #41: usage/invalid-config = error class (was 1 pre-#41) // §18/§19: invalid config = user-correctable failure
     expect(j.ok).toBe(false);
-    expect(j.errorCount).toBe(1);
+    expect(j.counts.errors).toBe(1);
     expect(j.error).toContain('invalid _rules.yaml');
     expect(j.error).toContain('"style.prefer" must be "sibling" or "nested"');
     expect(j.error).toContain('got "banana"');
@@ -276,9 +284,9 @@ describe('issue #2 — style.prefer / references.mode value validation (validate
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: usage/invalid-config = error class (was 1 pre-#41)
     expect(j.ok).toBe(false);
-    expect(j.errorCount).toBe(1);
+    expect(j.counts.errors).toBe(1);
     expect(j.error).toContain('invalid _rules.yaml');
     expect(j.error).toContain('"references.mode" must be "pointer"');
     expect(j.error).toContain('got "banana"');
@@ -289,7 +297,7 @@ describe('issue #2 — style.prefer / references.mode value validation (validate
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: usage/invalid-config = error class (was 1 pre-#41)
     expect(j.error).toContain('"style.prefer" must be "sibling" or "nested"');
     expect(j.error).toContain('got "42"');
   });
@@ -328,9 +336,9 @@ describe('issue #2 — style.prefer / references.mode value validation (validate
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(0); // healthy workspace (empty prefer/mode accepted) → 0
     expect(j.ok).toBe(true);
-    expect(j.errorCount).toBe(0);
+    expect(j.counts.errors).toBe(0);
     expect(j.issues.some((i: any) => /invalid _rules\.yaml/.test(i.message))).toBe(false);
   });
 });

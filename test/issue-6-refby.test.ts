@@ -239,6 +239,13 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: reconstitute the flat issues view from sections.{category}[].
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -306,7 +313,7 @@ describe('issue #6: check --fix end-to-end (CLI blackbox)', () => {
     // back-pointer (it is not a real back-pointer).
     const pre = runCli(['check', '--json'], ws.root);
     const prej = parseJsonOut(pre.out);
-    expect(pre.exit).toBe(0);
+    expect(pre.exit).toBe(0); // no stale BP, both files linked → clean (0)
     const preStale = prej.issues.filter((i: any) => i.message.startsWith('stale back-pointer:'));
     expect(preStale).toEqual([]);
 

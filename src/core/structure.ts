@@ -30,6 +30,7 @@ export function checkStructure(
             level: 'error',
             category: 'structure',
             message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
+          rule: 'structure.node_length.max', // issue #41: machine-readable rule key
           });
         } else if (nl !== null && nl.min !== null && len < nl.min) {
           issues.push({
@@ -38,6 +39,7 @@ export function checkStructure(
             level: 'warning',
             category: 'structure',
             message: `Node too short (${len} < ${nl.min}).`,
+          rule: 'structure.node_length.min', // issue #41: machine-readable rule key
           });
         }
 
@@ -50,6 +52,7 @@ export function checkStructure(
             level: 'error',
             category: 'structure',
             message: `Depth ${depth} exceeds max ${depthMax}. Flatten.`,
+          rule: 'structure.depth.max', // issue #41: machine-readable rule key
           });
         }
 
@@ -62,6 +65,7 @@ export function checkStructure(
             level: 'warning',
             category: 'structure',
             message: `"${node.text}" has ${count} children (max ${siblingsMax}).`,
+          rule: 'structure.siblings.max', // issue #41: machine-readable rule key
           });
         }
         // Issue #1: enforce siblings.min — a parent with 0 < count < min children
@@ -76,6 +80,7 @@ export function checkStructure(
             level: 'warning',
             category: 'structure',
             message: `"${node.text}" has ${count} children (min ${siblingsMin}).`,
+          rule: 'structure.siblings.min', // issue #41: machine-readable rule key
           });
         }
 
@@ -86,6 +91,7 @@ export function checkStructure(
             level: 'warning',
             category: 'structure',
             message: `"${node.text}" has exactly 1 child. Collapse.`,
+          rule: 'structure.single_child', // issue #41: machine-readable rule key
           });
         }
 
@@ -96,6 +102,7 @@ export function checkStructure(
             level: 'warning',
             category: 'structure',
             message: 'Empty node.',
+          rule: 'structure.empty_node', // issue #41: machine-readable rule key
           });
         }
       }
@@ -133,6 +140,7 @@ export function checkStructure(
           category: 'structure',
           message: `Max depth ${maxNodeDepth} is below min ${depthMin}. Deepen the outline.`,
           suggestion: `add nested sub-levels until the outline reaches depth ${depthMin}, or lower structure.depth.min in _rules.yaml`,
+          rule: 'structure.depth.min', // issue #41: machine-readable rule key
         });
       }
     }
@@ -161,6 +169,7 @@ export function checkTbdPolicy(
         level: 'warning',
         category: 'structure',
         message: 'TBD used but content.tbd_allowed is false',
+          rule: 'content.tbd.disallowed', // issue #41: machine-readable rule key
         suggestion: 'resolve the TBD nodes or set content.tbd_allowed: true',
       },
     ];
@@ -173,6 +182,7 @@ export function checkTbdPolicy(
         level: 'warning',
         category: 'structure',
         message: `${tbdNodes.length} TBD nodes exceed content.max_tbd_per_file (${rules.max_tbd_per_file})`,
+          rule: 'content.tbd.max', // issue #41: machine-readable rule key
         suggestion: 'resolve the TBD nodes or raise content.max_tbd_per_file',
       },
     ];

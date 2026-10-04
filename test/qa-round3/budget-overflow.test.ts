@@ -59,6 +59,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -177,7 +186,7 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
     // Verified at HEAD: error, category overflow, "no chaining: overflow target ..."
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (chaining error present)
     expect(parsed.issues.some((i: any) => /request-schema/.test(i.file) && i.category === 'overflow' && i.level === 'error')).toBe(true);
   });
 });

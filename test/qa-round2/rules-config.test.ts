@@ -67,6 +67,15 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: the check --json wire shape moved to sections.{category}[]
+  // entries ({file,line,level,rule,detail,suggestion?}). Reconstitute the flat
+  // issues view (category + message) so assertions stay readable/unchanged.
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -199,7 +208,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
     // §18 delete-key contract: the node-length check is OFF → zero errors, exit 0 (§19).
     expect(r.exit).toBe(0);
     expect(j.exitCode).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(j.counts.errors).toBe(0); // issue #41: counts.errors
     const nodeLengthIssues = j.issues.filter((i: any) => i.message.includes('Node too long'));
     expect(nodeLengthIssues).toEqual([]);
   });
@@ -226,7 +235,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
     const j = parseJsonOut(r.out);
     expect(r.exit).toBe(0);
     expect(j.exitCode).toBe(0);
-    expect(j.errorCount).toBe(0);
+    expect(j.counts.errors).toBe(0); // issue #41: counts.errors
     const nodeLengthIssues = j.issues.filter((i: any) => i.message.includes('Node too long'));
     expect(nodeLengthIssues).toEqual([]);
   });
@@ -271,14 +280,14 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
 
     const r = runCli(['check', '--fix', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only (single-child collapses + stale-back-pointer warning) → exit 1; the §18 pin is backPointersUpdated 0
     expect(j.backPointersUpdated).toBe(0);
     const after = snapshotFiles(ws.cans);
     expect(after).toEqual(before);
     expect(after['02-authentication.md']).not.toContain('ref-by');
   });
 
-  test('CONTROL (§18 / QA-09 E7): an explicit `node_length: { min: 3, max: 60 }` override still applies — 130-char node flagged, exit 1', () => {
+  test('CONTROL (§18 / QA-09 E7): an explicit `node_length: { min: 3, max: 60 }` override still applies — 130-char node flagged, exit 2', () => {
     // CONTROL, marked as such: partial override is the WORKING half of the same §18
     // loading contract (QA-09 E7 recorded PASS). It also proves the node-length
     // engine itself fires on this fixture, so R1a/R1b cannot pass vacuously.
@@ -291,7 +300,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(1);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (was 1)
     const flagged = j.issues.filter((i: any) => i.message.includes('Node too long (130 > 60)'));
     expect(flagged.length).toBe(1);
   });
@@ -310,7 +319,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only (the merged ×6 warning fires) → exit 1 (was 0 pre-#41)
     // §13 L3: declared synonyms are "already synonym-matched" → no possible-typo pair.
     const typoIssues = j.issues.filter(
       (i: any) => i.message.includes('possible typo') && /flavou?r/.test(i.message),
@@ -332,7 +341,7 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
 
     const r = runCli(['check', '--fix', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(0);
+    expect(r.exit).toBe(1); // issue #41: warnings-only (single-child collapses + typo warning) → exit 1 (was 0 pre-#41)
     expect(j.backPointersUpdated).toBe(1);
     const target = readFileSync(join(ws.cans, '02-authentication.md'), 'utf-8');
     expect(target).toContain('<!-- ref-by: 04-api.md -->');

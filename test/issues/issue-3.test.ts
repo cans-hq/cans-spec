@@ -81,6 +81,14 @@ function parseJsonOut(out: string): any {
     parseError = e;
   }
   expect(parseError).toBeNull();
+  // issue #41: reconstitute the flat issues view from sections.{category}[]
+  // (wire shape moved from a flat issues array to sections buckets).
+  const j = parsed as Record<string, unknown> | null;
+  if (j !== null && typeof j === 'object' && (j as any).sections !== undefined && (j as any).issues === undefined) {
+    (j as any).issues = Object.entries((j as any).sections as Record<string, any[]>).flatMap(([category, arr]) =>
+      arr.map((i) => ({ ...i, category, message: i.detail })),
+    );
+  }
   return parsed;
 }
 
@@ -367,7 +375,7 @@ describe('issue #3 — CLI: layer independence, delete-key contract, exact repro
       (i: any) => i.category === 'redundancy' && /"cache" × 3 nodes \(threshold: 3\)/.test(i.message),
     );
     expect(freq).toBeDefined();
-    expect(r.exit).toBe(0); // warnings never fail a non-strict check (§19)
+    expect(r.exit).toBe(1); // issue #41: warnings-only → exit 1 (was 0 pre-#41)
   });
 
   test('control: the same workspace with fuzzy: true fires BOTH the typo and the frequency warning', () => {
@@ -476,8 +484,8 @@ describe('issue #3 — CLI: layer independence, delete-key contract, exact repro
     const parsed = parseJsonOut(r.out);
     expect(r.exit).toBe(0);
     expect(parsed.ok).toBe(true);
-    expect(parsed.errorCount).toBe(0);
-    expect(parsed.warningCount).toBe(0);
+    expect(parsed.counts.errors).toBe(0);
+    expect(parsed.counts.warnings).toBe(0);
     expect(parsed.issues).toEqual([]);
   });
 });

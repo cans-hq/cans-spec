@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
-import { resolveSpecFile, toRelative, isFile } from './fs.ts';
+import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -10,9 +10,12 @@ export interface RefGraph {
 }
 
 /** Does a raw ref target `name` point at workspace file `key`?
- *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts. */
+ *  Handles flat (`02-auth.md`) and folder (`02-auth/index.md`) layouts.
+ *  Issue #22: trailing-slash folder forms are equivalent spellings —
+ *  `auth/`, `auth` and `auth/index.md` all name the same folder-layout
+ *  target, so trailing slashes are trimmed before every comparison. */
 export function targetMatchesKey(name: string, key: string): boolean {
-  const n = name.toLowerCase();
+  const n = name.toLowerCase().replace(/\/+$/, '');
   const k = key.toLowerCase();
   if (n === k) return true;
   const nBase = n.endsWith('.md') ? n.slice(0, -3) : n;
@@ -23,16 +26,37 @@ export function targetMatchesKey(name: string, key: string): boolean {
   return false;
 }
 
+/** Issue #10 (round-6 port of 3adbc91): does a raw see: target escape the
+ *  workspace — an absolute path or a `..` segment? Such targets can never
+ *  name a workspace spec file, so their broken-ref message is workspace-scoped
+ *  and their advice never proposes creating a path outside the workspace
+ *  (no more `create /etc/hosts`). Conservative by design: ANY `..` segment
+ *  flags — the label only affects messaging; actual resolution is decided by
+ *  resolveSpecFile's containment guard, so interior `..` that normalizes back
+ *  inside the root still resolves. */
+export function refEscapesWorkspace(name: string): boolean {
+  return name.startsWith('/') || name.split('/').includes('..');
+}
+
 /** Map a raw ref target to the loaded files-map key, if the target is loaded or resolvable on disk. */
 function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: string): string | null {
-  if (files.has(name)) return name;
-  if (name.endsWith('.md') && files.has(`${name.slice(0, -3)}/index.md`)) return `${name.slice(0, -3)}/index.md`;
-  if (!name.endsWith('.md') && files.has(`${name}/index.md`)) return `${name}/index.md`;
-  const p = resolveSpecFile(root, name);
+  // Issue #22: normalize the trailing-slash folder form up front so every
+  // probe below (`auth/`, `auth`, `auth/index.md`) agrees with targetMatchesKey.
+  const target = name.replace(/\/+$/, '');
+  if (target === '') return null;
+  if (files.has(target)) return target;
+  // Round 6 (QA-19 F51): §11 flat-first covers extensionless FLAT targets
+  // too — `see 02-b` resolves to `02-b.md` exactly like `see auth` resolves
+  // to `auth/index.md` (folders already had this). Probed BEFORE the folder
+  // index so flat wins when both spellings exist.
+  if (!target.endsWith('.md') && files.has(`${target}.md`)) return `${target}.md`;
+  if (target.endsWith('.md') && files.has(`${target.slice(0, -3)}/index.md`)) return `${target.slice(0, -3)}/index.md`;
+  if (!target.endsWith('.md') && files.has(`${target}/index.md`)) return `${target}/index.md`;
+  const p = resolveSpecFile(root, target);
   if (p === null) return null;
   const rel = toRelative(root, p);
   if (files.has(rel)) return rel;
-  for (const key of files.keys()) if (targetMatchesKey(name, key)) return key;
+  for (const key of files.keys()) if (targetMatchesKey(target, key)) return key;
   return null; // exists on disk but is not part of the loaded set
 }
 
@@ -85,6 +109,43 @@ export function buildRefGraph(
   return { forward, back };
 }
 
+/** Issue #22: broken-ref create-* advice must never propose creating a path
+ *  that already exists (file or directory — same hygiene family as #10's
+ *  `create /etc/hosts`), and (round 6, issue #10 port) never a path outside
+ *  the workspace. A trailing-slash target (`see auth/`) reaches this branch
+ *  only when no spec file sits behind it: if the bare folder exists without
+ *  an index.md, the actionable creation target is the folder's spec file; if
+ *  the folder is already complete (a deeper, non-spec index.md), the only fix
+ *  is the ref target itself. Plain missing targets keep the exact legacy
+ *  `create <target> or fix the ref target` advice — and (round 6, QA-19 F51)
+ *  a missing extensionless stem proposes its §11 flat-first file `<stem>.md`,
+ *  never an extensionless file. */
+function brokenRefSuggestion(root: string, target: string): string {
+  // Defense in depth: checkRefs classifies escapes before calling here, but
+  // the contract holds for ANY caller — an escaping target never earns a
+  // create-* proposal.
+  if (refEscapesWorkspace(target)) {
+    return 'fix the ref target — see: targets must name spec files inside the workspace (no ../ or absolute paths)';
+  }
+  const clean = target.replace(/\/+$/, '');
+  if (clean === '') return 'fix the ref target';
+  if (dirExists(join(root, clean))) {
+    if (!exists(join(root, clean, 'index.md'))) {
+      return `create ${clean}/index.md or fix the ref target`;
+    }
+    return `fix the ref target — ${clean}/ is a folder, not a spec file`;
+  }
+  if (isFile(join(root, clean))) {
+    return `fix the ref target — ${clean} is not a spec file`;
+  }
+  if (clean.endsWith('.md')) {
+    return `create ${clean} or fix the ref target`;
+  }
+  return clean !== target
+    ? `create ${clean}/index.md or fix the ref target`
+    : `create ${clean}.md or fix the ref target`;
+}
+
 export function checkRefs(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
@@ -97,6 +158,7 @@ export function checkRefs(
         issues.push({
           file, line: ref.line, level: 'error', category: 'refs',
           message: `self-reference: ${file} → ${ref.file}`,
+          rule: 'refs.self', // issue #41: machine-readable rule key
           suggestion: 'remove the self-reference; point at the canonical file instead',
         });
         continue;
@@ -105,6 +167,7 @@ export function checkRefs(
         issues.push({
           file, line: ref.line, level: 'warning', category: 'refs',
           message: `transient ref: see ${ref.file} — _tasks/ files are transient, not spec`,
+          rule: 'refs.transient', // issue #41: machine-readable rule key
           suggestion: 're-point at a spec file when the task lands',
         });
         continue;
@@ -113,6 +176,7 @@ export function checkRefs(
         issues.push({
           file, line: ref.line, level: 'error', category: 'refs',
           message: `ref to _collab/: see ${ref.file} — collab notes are not spec`,
+          rule: 'refs.collab', // issue #41: machine-readable rule key
           suggestion: 'move the content into a spec file and ref that',
         });
         continue;
@@ -120,6 +184,22 @@ export function checkRefs(
 
       const key = loadedKeyFor(files, root, ref.file);
       if (key === null && resolveSpecFile(root, ref.file) === null) {
+        // Issue #10 (round-6 port of 3adbc91): ../ and absolute targets
+        // escape the workspace — say so, and never suggest creating a path
+        // outside it (`create /etc/hosts` proposed creating an EXISTING file
+        // beyond the root; `create ../escape` proposed a traversal path).
+        // Checked before the issue #4 prose exemption: an escaping target is
+        // never English prose. (Resolution itself is contained by
+        // resolveSpecFile's isInsideRoot guard — this is the reporting half.)
+        if (refEscapesWorkspace(ref.file)) {
+          issues.push({
+            file, line: ref.line, level: 'error', category: 'refs',
+            message: `broken ref: see ${ref.file} — file not found in workspace`,
+            rule: 'refs.broken.file', // issue #41: machine-readable rule key
+            suggestion: 'fix the ref target — see: targets must name spec files inside the workspace (no ../ or absolute paths)',
+          });
+          continue;
+        }
         // §12 edge cases: "File not found → Broken ref error." There is NO
         // span/direction exemption — forward or backward, inside or outside the
         // loaded numeric span, a missing file is always a level:error broken
@@ -138,12 +218,14 @@ export function checkRefs(
           issues.push({
             file, line: ref.line, level: 'error', category: 'refs',
             message: `broken ref: see ${ref.file} — file not found`,
-            suggestion: `create ${ref.file} or fix the ref target`,
+          rule: 'refs.broken.file', // issue #41: machine-readable rule key
+            suggestion: brokenRefSuggestion(root, ref.file),
           });
         } else {
           issues.push({
             file, line: ref.line, level: 'warning', category: 'refs',
             message: `see-like prose: "see ${ref.file}" did not resolve to a spec file — rephrase or link explicitly`,
+          rule: 'refs.prose', // issue #41: machine-readable rule key
             suggestion: 'use "see: <file>.md" (or "see: <file>.md#<anchor>") to link a spec file, or reword the sentence',
           });
         }
@@ -174,6 +256,7 @@ export function checkRefs(
             issues.push({
               file, line: ref.line, level: 'error', category: 'refs',
               message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
+          rule: 'refs.broken.anchor', // issue #41: machine-readable rule key
               suggestion: `fix the anchor or add a "${anchor}" node to ${ref.file}`,
             });
           }
@@ -205,12 +288,28 @@ export function checkRefs(
  *    making symmetric graphs flag asymmetrically depending on iteration
  *    order); only confirmed saturations at maxHops are cached, and those hold
  *    for every caller. Hop count above maxHops flags b.
- *  - The suggested fix (`add "see: <out>" directly to <from>`, where from is
- *    the deepest direct referrer of b, ties broken by file key sort so output
- *    is stable) is never a self-reference: from ≠ b holds because incoming
- *    lists exclude self, and from = out would place from, b and out in one
- *    SCC — guarded defensively anyway, so the advice can never convert a
- *    deep-hop error into a checkRefs self-reference error.
+ *  - The suggested fix never recommends a ref the deepest direct referrer
+ *    already holds (issue #22): `from`'s outgoing refs are resolved through
+ *    the same resolveKey, and an existing equivalent spelling (see auth vs
+ *    see: auth/index.md) flips the advice to "already refs … — remove the
+ *    intermediate hop via <b>" — following the "add" advice would have
+ *    appended a second see: to one node while leaving the hop in place.
+ *    Round 6 (QA-19 F54/F55): the guard is ANCHOR-aware — two refs name the
+ *    same target only when they resolve to the same target key AND the same
+ *    anchor node (case-insensitive §12 anchorMatches), or when both are
+ *    file-level. A same-file/different-node ref (`see auth#Passwords` vs the
+ *    suggested `auth/index.md#Sessions`) and a file-level ref beside an
+ *    anchored suggestion are NOT duplicates — the old file-key-only guard
+ *    emitted false, self-contradictory "already refs" claims.
+ *    The plain (no-existing-ref) advice likewise states the intermediate hop
+ *    must be removed, not just the direct ref added: from ≠ b holds because
+ *    incoming lists exclude self, and from = out would place from, b and out
+ *    in one SCC — guarded defensively anyway, so the advice can never convert
+ *    a deep-hop error into a checkRefs self-reference error.
+ *    Round 6 (QA-19 F26): the removal names the EXACT edge — `from`'s raw
+ *    ref to b with its line — so a multi-referrer workspace never leaves the
+ *    user guessing which `see:` to delete ("remove the intermediate hop via
+ *    X" alone is ambiguous when several files ref X).
  *  - §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
  *    skipped entirely. */
 export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
@@ -351,10 +450,40 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     // put from, b and out in one SCC. Skip rather than emit a broken fix.
     if (from === b || from === out.file) continue;
     const anchor = out.anchor !== null ? `#${out.anchor}` : '';
+    // Issue #22 defect 1: the advice must never recommend a ref `from`
+    // already holds. resolveKey maps equivalent spellings (auth, auth/,
+    // auth/index.md) onto one loaded key, so an existing match means the
+    // "add" advice would append a SECOND see: to the same target while the
+    // deep hop itself stays in place. Name the existing ref (verbatim raw
+    // spelling) and the hop to remove instead.
+    // Round 6 (QA-19 F54/F55): the file-key match alone is NOT enough — the
+    // two refs must also name the same ANCHOR NODE (case-insensitive §12
+    // anchorMatches), or both be file-level. Otherwise the referrer holds a
+    // ref to a DIFFERENT node of the same file (or a file-level ref beside an
+    // anchored suggestion): claiming "already refs" would be false and
+    // following its premise silently drops the linkage.
+    const outKey = resolveKey(out.file);
+    const sameAnchor = (r: RefTarget): boolean => {
+      if (out.anchor === null) return r.anchor === null; // both file-level
+      return r.anchor !== null && anchorMatches(r.anchor, out.anchor);
+    };
+    const existing = outKey !== null
+      ? (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === outKey && sameAnchor(r))
+      : undefined;
+    // Round 6 (QA-19 F26): name the EXACT edge that feeds the hop — from's
+    // ref to b (raw spelling + source line). b is a loaded key and from ∈
+    // incoming[b], so the ref exists; first match in document order.
+    const hopEdge = (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === b);
+    const edge = hopEdge !== undefined
+      ? `: delete ${from}'s "${hopEdge.raw}" (line ${hopEdge.line})`
+      : '';
     issues.push({
       file: b, line: out.line, level: 'error', category: 'refs',
       message: `DEEP HOP: ${from} → ${b} → ${out.file}`,
-      suggestion: `add "see: ${out.file}${anchor}" directly to ${from}`,
+          rule: 'refs.deep_hop', // issue #41: machine-readable rule key
+      suggestion: outKey !== null && existing !== undefined
+        ? `${from} already refs ${outKey}${anchor} as "${existing.raw}" — remove the intermediate hop via ${b}${edge}`
+        : `add "see: ${out.file}${anchor}" directly to ${from} and remove the intermediate hop via ${b}${edge}`,
     });
   }
   return issues;
@@ -382,17 +511,34 @@ export function detectOrphans(
     issues.push({
       file: key, line: 0, level: 'warning', category: 'refs',
       message: `orphan: ${key} has no incoming or outgoing refs`,
+          rule: 'refs.orphan', // issue #41: machine-readable rule key
       suggestion: 'link it from a related spec file, or fold it into one',
     });
   }
   return issues;
 }
 
+/** Issue #19: one desired ref-by comment — the referrers that point at one
+ *  anchor node (node !== null) or at the file itself (node === null) of one
+ *  target file. rebuildBackPointers groups incoming refs by (resolved target
+ *  file, anchor node): a ref WITH an anchor earns its mark INLINE on the
+ *  referenced node's bullet line, a plain file-level ref keeps the
+ *  file-level mark (standalone line after the first root bullet). */
+export interface RefByGroup {
+  /** Resolved target file key (workspace-relative). */
+  file: string;
+  /** The anchor node the refs point at (§12 anchorMatches resolution, first
+   *  match in document order); null for file-level refs. */
+  node: OutlineNode | null;
+  /** Sorted unique referrer file names — the comment body. */
+  fromFiles: string[];
+}
+
 export function rebuildBackPointers(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
-): Map<string, string> {
-  const groups = new Map<string, Set<string>>();
+): Map<string, RefByGroup[]> {
+  const groups = new Map<string, RefByGroup[]>();
   for (const bp of graph.back) {
     let target: string | null = null;
     for (const key of files.keys()) {
@@ -402,16 +548,42 @@ export function rebuildBackPointers(
       }
     }
     const name = target ?? bp.toFile;
-    let set = groups.get(name);
-    if (set === undefined) {
-      set = new Set<string>();
-      groups.set(name, set);
+    let node: OutlineNode | null = null;
+    if (bp.toAnchor !== null) {
+      // Issue #19: the anchor is now part of the group key. Resolve it in the
+      // target file's outline (the same §12 anchorMatches resolution
+      // checkRefs applies). An anchor that resolves to NO node is a broken
+      // anchor — already a checkRefs error — and earns no mark: dropped here
+      // so --fix never writes it and it can never read as current.
+      if (target === null) continue; // target not loaded: anchor unresolvable
+      node = flattenNodes(files.get(target)!).find(n => anchorMatches(n.text, bp.toAnchor!)) ?? null;
+      if (node === null) continue; // broken anchor — earns nothing
     }
-    set.add(bp.fromFile);
+    let list = groups.get(name);
+    if (list === undefined) {
+      list = [];
+      groups.set(name, list);
+    }
+    let group = list.find(g => g.node === node);
+    if (group === undefined) {
+      group = { file: name, node, fromFiles: [] };
+      list.push(group);
+    }
+    if (!group.fromFiles.includes(bp.fromFile)) group.fromFiles.push(bp.fromFile);
   }
-  const out = new Map<string, string>();
+  const out = new Map<string, RefByGroup[]>();
   for (const key of [...groups.keys()].sort()) {
-    out.set(key, [...groups.get(key)!].sort().join(', '));
+    const list = groups.get(key)!;
+    // Deterministic order: the file-level group first, then anchored groups by
+    // the anchor node's source line (document order).
+    list.sort((a, b) => {
+      if (a.node === null && b.node === null) return 0;
+      if (a.node === null) return -1;
+      if (b.node === null) return 1;
+      return a.node.line - b.node.line;
+    });
+    for (const g of list) g.fromFiles.sort();
+    out.set(key, list);
   }
   return out;
 }

@@ -212,7 +212,7 @@ Done. You have a `cans/` directory. Start writing bullets.
 
 1. **Scaffold** — `cans init` creates `cans/` with 7 spec files, `_adr/`, `_tasks/`, `_collab/`. Use `cans init --flat` for a flat layout, `--bare` for the minimal skeleton, `--tool claude` to also emit `CLAUDE.md`.
 2. **Write your spec as dense bullets** — hierarchy is indentation, cross-links are `see:` references. The outline is the spec; there is nothing else to learn.
-3. **Check health** — `cans check` lints structure, broken refs, deep hops, redundancy, style, and overflow. `cans check --fix` repairs back-pointers. Exit code 0 means clean.
+3. **Check health** — `cans check` lints structure, broken refs, deep hops, redundancy, style, and overflow. `cans check --fix` repairs back-pointers. Exit codes: `0` clean · `1` warnings · `2` errors — agents read `$?`, skip parsing.
 4. **Track work** — `cans new task add-dark-mode` creates a task, `cans status` shows the board, `cans done add-dark-mode` archives it (it blocks on `← @human` gates until a human signs off).
 5. **Mind the budget** — `cans budget read <concept>` gives your agent a token-budgeted reading plan; `cans budget write <concept>` says what it may edit.
 6. **Interoperate** — `cans export logseq --from cans` and `cans import logseq <path>` round-trip OPML / Dynalist, Logseq, and Obsidian. State lives in git; the transport layer is a plain text format your tools already read.
@@ -279,12 +279,21 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No migration.
 
 ```bash
-cans check              # human-readable
-cans check --json       # machine-readable
-cans check --fix        # rebuild back-pointer comments (nothing else)
-cans check --strict     # warnings become errors
-cans check 04-api.md    # single file
+cans check                  # human-readable: one line per pattern, count prefixes,
+                            # root-cause grouping, timing on the summary line
+cans check --json           # machine-readable: sections → {file, line, rule, detail}
+cans check --show redundancy  # expand a folded section (structure|style|refs|
+                            #   redundancy|overflow|all — comma-separated list works)
+cans check --fix            # rebuild back-pointer comments (nothing else)
+cans check --strict         # warnings flip `ok` to false
+cans check 04-api.md        # single file
 ```
+
+The default report groups repeated findings: `61× <min children (2/3)` instead
+of 61 identical lines, `91× missing file` with per-target counts instead of 91
+lines + 91 fix hints. Fix hints appear once per pattern; every `file:line`
+stays present in compact comma lists. Exit codes: `0` clean · `1` warnings ·
+`2` errors.
 
 ---
 

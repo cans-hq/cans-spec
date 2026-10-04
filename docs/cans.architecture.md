@@ -167,7 +167,7 @@ cans/
     └── decisions.md
 ```
 
-Folder mode alternative: `02-authentication/index.md` instead of `02-authentication.md`. Flat wins over folder. If both exist, `cans check` flags error.
+Folder mode alternative: `02-authentication/index.md` instead of `02-authentication.md`. Flat wins over folder. If both exist, `cans check` flags error — for any slug, numbered or plain (round 6).
 
 ---
 
@@ -288,42 +288,82 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - Owner parsed via regex: `/←\s*(@?\S+)/`
 - Stack-based parent attachment by indent level.
 
-**Flat vs folder resolution:** Try `cans/02-authentication.md` first. Then `cans/02-authentication/index.md`. Flat wins. Both existing = error.
+**Flat vs folder resolution:** Try `cans/02-authentication.md` first. Then `cans/02-authentication/index.md`. Flat wins. Both existing = error — for ANY slug, numbered (`02-authentication.md` + `02-authentication/`) or plain (`auth.md` + `auth/`): a duplicate home is a `structure.duplicate_home` error, flat wins.
+
+**Extensionless targets (§11 flat-first, round 6):** a ref target without an extension resolves like its spelled-out form, flat first: `see 02-b` → `cans/02-b.md` when it exists, then `cans/02-b/index.md` (same rule folders already followed: `see auth` → `auth/index.md`). Flat wins when both exist.
+
+**Workspace containment (issue #10, round 6):** ref targets can never resolve outside the workspace root — `../` traversal and absolute paths are broken refs (`file not found in workspace`) even when the file physically exists beyond the root. Interior `..` segments that normalize back inside the root still resolve.
+
+**Trailing-slash folder targets (issue #22):** `see: auth/`, `see: auth` and `see: auth/index.md` are equivalent spellings of one folder-layout target — trailing slashes are trimmed in target-key resolution (targetMatchesKey / loadedKeyFor / resolveSpecFile), so all ref consumers (broken refs, anchors, deep-hop edges, orphans, back-pointer grouping, token budgets) treat them identically.
 
 ---
 
 ## 12. Refs Engine
 
 ### Resolution
-- Find target file (flat then folder).
+- Find target file (flat then folder). Extensionless stems follow the same order: `<stem>.md` first, then `<stem>/index.md` (round 6).
+- Trailing-slash folder forms are equivalent spellings: `auth/` = `auth` = `auth/index.md` (issue #22) — never a broken ref on slash spelling alone.
+- Targets never resolve outside the workspace root: absolute and `../` targets are broken refs — `file not found in workspace` (issue #10, round 6).
 - If no anchor → file-level ref, resolved.
 - If anchor → find node by exact text match, then case-insensitive fallback.
-- No fuzzy anchor matching. Not found = broken ref error.
+- No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
 ### Back-pointers
 HTML comments in target file: `<!-- ref-by: 04-api.md, 05-frontend.md -->`
-Rebuilt from scratch every `--fix` run. Not incremental. Not authoritative.
+Rebuilt from scratch every `--fix` run (the desired-marks map is computed
+from the whole ref graph) — but the WRITES are scoped by the `[file]` filter
+(issue #11): a filtered `check --fix <file>` rewrites ref-by comments ONLY
+in the filter-matched spec files. A referrer filter (e.g. `04-api.md`)
+therefore leaves its targets' marks untouched that run — re-run with the
+target's filter, or unfiltered, to write them. Not incremental. Not
+authoritative.
+
+**Anchor-aware marks (issue #19):** a comment's FORM defines what it answers.
+- A ref WITH an anchor (`see: 02-authentication.md#Sessions`) earns its mark
+  INLINE on the referenced node's bullet line — the §34 convention:
+  `  - Sessions <!-- ref-by: 04-api.md -->`. The node is the first §12
+  anchorMatches hit in document order (exact → case-insensitive →
+  hyphen/space normalization).
+- A plain file-level ref (`see: 03-data.md`) earns the mark as a STANDALONE
+  comment line right after the target's first root bullet (issue #6 form —
+  never inside a code fence).
+- Currency: a standalone mark is current only while its referrer still holds
+  a FILE-LEVEL ref at the file; an inline mark on node X is current while the
+  referrer's anchor resolves to X, or while it refs the file itself (a
+  file-level ref satisfies any mark — the mark is at least as precise as the
+  ref). Retargeting an anchor (`#Sessions` → `#Passwords`) therefore turns
+  the old mark STALE — warning + `--fix` rewrite; a BROKEN anchor earns no
+  mark at all (it is already a `broken anchor` error) and can never read as
+  current. `back-pointers: N/M current` counts comments at this granularity.
 
 ### Deep-hop detection
 For every file that IS referenced (has incoming refs): if it ALSO has outgoing refs → deep hop error. Report the full chain and suggest the fix.
 
+The suggested fix is two-part and never a duplicate (issue #22): adding the direct ref alone leaves the hop in place, so the advice also says to remove the intermediate hop via the flagged file — naming the EXACT edge to delete (the referrer's raw `see:` and its source line), so a multi-referrer workspace never leaves the user guessing which ref feeds the hop (round 6). And before recommending any `add`, the engine checks the deepest direct referrer's existing refs — if one already resolves to the same target KEY and the same anchor NODE under an equivalent spelling (`see auth#Sessions` vs `see: auth/index.md#Sessions`; anchors compare case-insensitively, both file-level counts as its own equivalence), the advice names that existing ref instead of appending a second `see:` to the same node. A same-file/different-node ref (`see auth#Passwords` beside a suggested `auth/index.md#Sessions`) or a file-level ref beside an anchored suggestion is NOT a duplicate — the advice stays the plain add+remove (round 6).
+
 **Example:**
 ```
 ✗ DEEP HOP: 04-api.md → 02-authentication.md → 06-operations.md
-Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md
+Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remove the intermediate hop via 02-authentication.md: delete 04-api.md's "see: 02-authentication.md" (line 3)
 ```
 
 ### Edge cases
 
 | Case | Behavior |
 |---|---|
-| File not found | Broken ref error |
+| File not found (spec-shaped target: anchored, `.md`, path-like, `_`-service dir, numeric stem) | Broken ref error |
+| Unresolved plain-word target (`see the runbook`) | `refs.prose` warning — see-like prose, not a spec pointer (issue #4) |
+| Same-file anchor `see: #Sessions` | No ref minted — the §11 regex's file part can never start with `#` (round 6 sync) |
+| Absolute or `../` target | Broken ref error — `file not found in workspace`; resolution and create advice never leave the workspace root (issue #10, round 6) |
+| Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
+| Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
+| Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Lowercase anchor | Case-insensitive fallback |
 | No anchor | Valid file-level ref |
 | Ref to `_tasks/` | Warning (transient) |
 | Ref to `_collab/` | Error (not spec) |
 | Self-reference | Error |
-| `see:` inside `see:` target | Deep hop error |
+| `see:` inside `see:` target (`see see:02-b.md`) | Broken ref error — the §11 regex captures `see:02-b.md` as one target token; a ref target is a filename, never a nested `see:` (round 6 sync) |
 | Multiple `see:` on one line | Both parsed, both validated |
 
 ### Orphan detection
@@ -459,6 +499,8 @@ overflow:
   force_file_for: [code_block, table, diagram]
 ```
 
+`token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
+
 ---
 
 ## 19. Output System
@@ -530,15 +572,46 @@ Runs all validation engines. The most-used command.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits.
 
+**`--fix` honors the [file] filter (issue #11):** with a filter active,
+`--fix` rewrites ref-by comments ONLY in the filter-matched spec files —
+never in other files (the ref graph itself stays global, so ref findings
+still see the whole workspace). A referrer filter (e.g. `04-api.md`)
+therefore leaves its targets' marks untouched that run; re-run with the
+target's filter, or unfiltered, to write them. Unfiltered runs and
+`cans done` rewrite every spec source as before. Stale back-pointer
+warnings are dropped only for files the run actually rewrote — a stale
+comment still on disk stays reported. The report names the rewritten files:
+`backPointersUpdatedFiles` (sorted, JSON) and the human line
+`--fix updated ref-by in: ...` (printed under References).
+
+**`--fix` placement (issue #19):** an anchored ref's mark lands INLINE on the
+referenced node's bullet line (`  - Sessions <!-- ref-by: ... -->`); a
+file-level ref's mark stays the issue #6 form — a standalone comment line
+right after the first root bullet outside any fence. Misplaced marks (e.g. a
+root-level mark for a ref that points at `#Sessions`) are moved, not kept.
+
+**`--fix` writes are byte-preserving (issue #21):** rewrites split the raw
+source per line, keeping each line's own terminator. Replaced or stripped
+comments never touch the line's `\r\n` / `\n`; a dropped comment line vanishes
+with its terminator; only INSERTED comment lines mint a new terminator, which
+is the file's DOMINANT EOL. A CRLF spec file stays fully CRLF through `--fix`,
+an LF file stays fully LF — no mixed line endings, no normalization warnings.
+(The parser is CRLF-tolerant by §45, so silence alone never proved integrity —
+byte-level preservation does.)
+
 **Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary.
 
 **JSON result:**
 ```ts
 { ok, command: 'check', exitCode, files, nodes, maxDepth,
-  refs: { total, broken, deepHops },
+  refs: { total, broken, deepHops },   // broken = broken ref targets + broken anchors (round 6)
   backPointers: { total, current, stale },
-  issues: Issue[], errorCount, warningCount, backPointersUpdated }
+  issues: Issue[], errorCount, warningCount, backPointersUpdated,
+  backPointersUpdatedFiles }
 ```
+`backPointersUpdatedFiles`: sorted spec-relative paths of the files `--fix`
+actually rewrote (issue #11) — empty without `--fix` or when nothing needed
+a write; with a `[file]` filter only matching files can ever appear there.
 
 ---
 
@@ -609,9 +682,18 @@ Token budget planner. Deterministic. No LLM.
 ### `budget read <concept>`
 1. Normalize concept. Find matching nodes.
 2. Pick canonical home: highest child count → lowest depth → earliest file sort.
-3. Score all files: canonical home (100), active task mentioning (80), back-pointer (60), forward ref (40), mentions concept (20), no connection (0).
-4. Sort by score. Greedily include until token limit.
+3. Score all files: canonical home (100), active task mentioning (80), back-pointer (60), forward ref (40), mentions concept (20), no connection (0). A **back-pointer** is a file holding a `see:` ref into the canonical home; a **forward ref** is a file the canonical home points to (the target of a `see:` ref made from the home file). A file matching several tiers keeps the highest (back-pointer 60 beats forward ref 40 beats mentions concept 20).
+4. Sort by score. Pack best-effort (issues #15/#16): take each item in order while it fits under the token limit. An item that does not fit is skipped (listed in `skipped`) — it does NOT cut the walk, so cheaper lower-scored items that still fit are planned. `skipped` lists every file not in the plan (didn't fit, or no connection to the concept). Budget scope is the spec files plus the active `_tasks/*.md` files (AGENTS.md is out of scope, §22) — so a task file with no connection to the concept is listed in `skipped`, never invisible.
 5. Print plan.
+
+**Empty plan (§19/§37, issues #15/#16):** if the plan is empty while a truly unbounded plan for the same concept is non-empty, the concept matches — the limit is simply below every matching item. The user-correctable failure (exit 1) names the actual source of the limit and the top-priority item that busts it, never a spelling problem:
+
+```
+✗ plan empty: --limit 10 is below the top-priority item 01-auth.md (32 tok) — raise the limit
+✗ plan empty: token_budget.default_limit (10) in _rules.yaml is below the top-priority item 01-auth.md (32 tok) — raise default_limit or pass --limit
+```
+
+Both limit sources (`--limit` flag and `token_budget.default_limit`) get the same diagnosis — and the same VALUE validation (see **Config** below): non-numeric, negative or fractional limit values are rejected with `✗ invalid …` (exit 1) whichever source they came from, and the validation runs even when a valid `--limit` overrides the config value. A concept that matches nothing is still reported as `no files match concept "…" — check spelling or run \`cans status\``. A limit that can afford some but not all matching items is a SUCCESS: the partial plan is printed with the unaffordable files in `skipped`.
 
 ### `budget write <concept>`
 1. Find canonical home.
@@ -623,6 +705,12 @@ Token budget planner. Deterministic. No LLM.
 Centered on a task file. Add its refs (1 hop). Reject deep-hop expansion. Apply budget.
 
 **Token estimate:** `Math.ceil(text.length / charsPerToken)`. Default 3.5 chars/token.
+
+**Config (§18 `token_budget`):** both budget commands validate the `token_budget` values at load — the same validation the `--limit` flag applies (issue #15 flag≡config parity). Invalid values are §19 user-correctable errors (exit 1, `ok:false`) that name the key and the file, never silently-ignored dead config:
+
+- `default_limit` — a non-negative integer. 0 is a degenerate limit that affords nothing (the truthful empty-plan diagnosis names it, exactly like `--limit 0`); non-numeric, negative or fractional values fail: `✗ invalid token_budget.default_limit "abc" in _rules.yaml — pass a positive integer`
+- `estimate_chars_per_token` — a positive number (default 3.5). 0 or less would make every estimate `Infinity` and no limit could fix that, so it fails instead: `✗ invalid token_budget.estimate_chars_per_token "0" in _rules.yaml — pass a positive number`
+- `enabled` — a boolean. `false` observably disables budget planning: `budget read` and `budget write` refuse (exit 1): `✗ budget planning disabled: token_budget.enabled is false in _rules.yaml — set it to true (or delete the key) to plan budgets`. Deleted or omitted, `enabled` keeps its default `true` — it is a planning switch, not a check switch, so §18's "delete a key = check turns off" does not apply to it. A non-boolean value fails: `✗ invalid token_budget.enabled "false" in _rules.yaml — pass true or false`
 
 **JSON result (read):**
 ```ts
@@ -648,6 +736,8 @@ Centered on a task file. Add its refs (1 hop). Reject deep-hop expansion. Apply 
 **Merge strategies:** `cans-wins` (default, only adds new nodes), `import-wins` (overwrites on conflict), `ask` (report conflicts, don't merge).
 
 **Import rules:** Preserve hierarchy. Convert bullets to `- `. Convert tasks. Strip app metadata. Preserve real identifiers. Convert `[[wiki-links]]` → `see:`. Strip YAML frontmatter. Extract code blocks → overflow files. Do NOT invent refs. Do NOT deduplicate. Let `cans check` report issues after.
+
+**Merge matching (conflict semantics):** when a target spec already exists, each imported node is matched in order: (1) exact normalized text; (2) near-match — word overlap ≥ 0.75 against any sibling under the same parent; (3) positional counterpart — overlap ≥ 0.5 on the same sibling slot; (4) diverged-sibling guard — the same concept reworded, by either signal: (a) *TBD-fill*: the existing node is unfinished (its trailing significant token is the `TBD` placeholder) and the incoming node repeats the existing node's concept head — the existing text minus the trailing TBD — verbatim as its leading words ("Sessions: TBD" → "Sessions: extended - changed externally"); or (b) *leading stem + overlap*: the first two significant words are identical ("sign up" == "sign up") — or the first word matches by prefix, one word being a ≥ 4-character prefix of the other's first word ("auth" ≈ "authentication") — AND corroboration: token-Jaccard ≥ 0.3, or at least half of the EXISTING sibling's distinct significant tokens survive in the import (shared ÷ |existing tokens| ≥ 0.5; a first-word prefix match is its own corroboration). The stem — not an overlap floor — is the discriminator: "Sign up: TBD" vs "Sign in: TBD" has Jaccard 0.50 yet is a genuinely distinct sibling (the concept heads differ), while "Sign up: DONE - changed externally" (Jaccard 0.33) and "Storage: TBD" → "Storage: postgres with PITR" (TBD fill) are the same concepts reworded. Root children are siblings too: the guard applies identically at the top level, and the merge target for a whole file falls back to the spec file whose ROOT guard-matches the imported root — so a diverged parent ("Authentication" reworded to "Auth and identity", on either side) records a conflict and its subtree merges under the matched parent, never a silently duplicated second root or forked duplicate file. A layer-2/3/4 hit with differing text is a conflict recorded in `conflicts[]` and resolved by the merge strategy — never a silent duplicate sibling appended. Logseq/Obsidian sources are normalized from their flat indent-annotated parse into a tree before the merge walk, so the sibling layers match against the real parent's children.
 
 **JSON result:**
 ```ts
@@ -1114,7 +1204,7 @@ tags: [api, backend]
   "issues": [
     { "file": "03-data.md", "line": 12, "level": "error", "category": "structure", "message": "node too long (140 > 120)" },
     { "file": "04-api.md", "line": 8, "level": "error", "category": "structure", "message": "\"Returns\" has exactly 1 child. Collapse." },
-    { "file": "05-frontend.md", "line": 5, "level": "error", "category": "refs", "message": "DEEP HOP: 05-frontend.md → 02-auth.md → 06-ops.md", "suggestion": "add \"see: 06-ops.md\" directly to 05-frontend.md" },
+    { "file": "05-frontend.md", "line": 5, "level": "error", "category": "refs", "message": "DEEP HOP: 05-frontend.md → 02-auth.md → 06-ops.md", "suggestion": "add \"see: 06-ops.md\" directly to 05-frontend.md and remove the intermediate hop via 02-auth.md: delete 05-frontend.md's \"see: 02-auth.md\" (line 3)" },
     { "file": "02-auth.md", "line": 4, "level": "warning", "category": "redundancy", "message": "\"authentication\" × 7 nodes (threshold: 4)" },
     { "file": "04-api.md", "line": 12, "level": "warning", "category": "redundancy", "message": "85% overlap: 02-auth.md:4 ↔ 04-api.md:12" }
   ],
@@ -1129,7 +1219,8 @@ tags: [api, backend]
   "files": 6, "nodes": 84, "maxDepth": 4,
   "refs": { "total": 12, "broken": 0, "deepHops": 0 },
   "backPointers": { "total": 12, "current": 12, "stale": 0 },
-  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 3
+  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 3,
+  "backPointersUpdatedFiles": ["01-auth.md", "03-data.md", "04-api.md"]
 }
 ```
 
@@ -1265,7 +1356,7 @@ References
   ✓ 12 see: refs, 0 broken, 0 deep hops
   ✓ back-pointers: 12/12 current
   ✗ 05-frontend.md:5 → 02-auth.md → 06-ops.md — DEEP HOP
-    Fix: add "see: 06-ops.md" directly to 05-frontend.md
+    Fix: add "see: 06-ops.md" directly to 05-frontend.md and remove the intermediate hop via 02-auth.md
 Redundancy
   ⚠ "authentication" × 7 nodes (threshold: 4)
   ⚠ 85% overlap: 02-auth.md:4 ↔ 04-api.md:12
@@ -1359,7 +1450,7 @@ Pattern: `✗ <what> \n <where>: <detail> \n <what to do>`
   Check the gate, then re-run cans done.
 
 ✗ DEEP HOP: 04-api.md → 02-auth.md → 06-ops.md
-  Fix: add "see: 06-ops.md" directly to 04-api.md
+  Fix: add "see: 06-ops.md" directly to 04-api.md and remove the intermediate hop via 02-auth.md
 ```
 
 Never: stack traces for expected errors, "An unexpected error occurred", error codes without messages.

@@ -76,7 +76,8 @@ describe('QA-06 CLI surface (red verification)', () => {
     expect(r.exit).toBe(0);
     expect(r.out).toContain('CANS — Canonical Agent-Native Spec');
     expect(r.out).toContain('Usage: cans <command> [args]');
-    expect(r.out).toContain('check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]');
+    // issue #41: check's flag surface grew --show <section>
+    expect(r.out).toContain('check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]');
     // Updated: help now mirrors §20:488 verbatim — the budget read line
     // documents the (working) --change flag (QA-10 A5).
     expect(r.out).toContain('budget read <concept> [--limit <tokens>] [--change <name>] [--json]');
@@ -322,7 +323,12 @@ describe('QA-06 CLI surface (red verification)', () => {
     let issues: Array<{ file?: string; message?: string }> = [];
     let json = true;
     try {
-      issues = (JSON.parse(r.out) as { issues?: Array<{ file?: string; message?: string }> }).issues ?? [];
+      // issue #41: flat issues view reconstituted from sections.{category}[].
+      const parsedJson = JSON.parse(r.out) as Record<string, unknown>;
+      const sections = (parsedJson.sections ?? {}) as Record<string, Array<{ file?: string; detail?: string; level?: string }>>;
+      issues = Object.entries(sections).flatMap(([, arr]) =>
+        arr.map((i) => ({ file: i.file, message: i.detail, level: i.level })),
+      );
     } catch {
       json = false; // human text fallback below
     }
