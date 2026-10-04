@@ -1,0 +1,30 @@
+name: release
+
+# npm publishing is tied to GitHub Releases: publishing a release with a v*
+# tag checks out the tagged tree and publishes it to npm with the NPM_TOKEN
+# secret. `prepublishOnly` in package.json gates the publish on typecheck +
+# the full test suite. Tag v0.4.0 points at an unpublished intermediate
+# snapshot; v0.5.0 is the first release-tagged publish of this line.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: publish to npm (prepublishOnly runs typecheck + bun test)
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
