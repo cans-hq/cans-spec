@@ -16,13 +16,22 @@
  *     all miss and the fall-through "new node" branch appends it.
  *
  * Fix under test (§27 merge semantics + the §35 import.json conflicts[] shape):
- *   a FINAL same-parent diverged-sibling guard before the append — an import
- *   node that shares the leading stem (first two significant words) with an
- *   existing sibling under the SAME parent AND corroborating word overlap
- *   (token-Jaccard ≥ 0.3, or ≥ half of the existing sibling's significant
- *   tokens surviving — robust to lengthening) is a CONFLICT: record
- *   { file, line, cansVersion, importVersion, resolution }, never a silent
- *   duplicate sibling.
+ *   root cause 1 — Logseq/Obsidian parsers yield a FLAT indent-annotated list,
+ *     which mergeInto walked as if every node were a ROOT: the sibling-level
+ *     layers (near-match, positional counterpart) never saw the real sibling
+ *     set below the root, so any diverged nested node fell straight to the
+ *     append branch (it only LOOKED correctly placed because serializeToCans
+ *     writes by `indent`). Fixed by normalizing the flat parse into a tree
+ *     (toTree) before the merge walk.
+ *   root cause 2 — a rewording below 0.5 word overlap escapes all three match
+ *     layers even on a correct tree. Fixed by a FINAL same-parent
+ *     diverged-sibling guard before the append: an import node that shares the
+ *     leading stem (first two significant words) with an existing sibling
+ *     under the SAME parent AND corroborating word overlap (token-Jaccard
+ *     ≥ 0.3, or ≥ half of the existing sibling's significant tokens surviving —
+ *     robust to lengthening) is a CONFLICT: record
+ *     { file, line, cansVersion, importVersion, resolution }, never a silent
+ *     duplicate sibling.
  *
  * Why the conjunction (documented in code + §27): the repro pair has Jaccard
  * 0.33 while the genuinely distinct "Sign up: TBD" vs "Sign in: TBD" has
@@ -37,6 +46,7 @@ import { join } from 'path';
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
 
 import { spawnCli, REPO } from '../runtime.ts';
+import { isDivergedSibling } from '../../src/commands/import.ts';
 
 const SCRATCH = join(REPO, '.tmp', 'issues', 'issue-20');
 
@@ -95,6 +105,58 @@ afterEach(() => {
   }
 });
 
+describe('issue #20 — unit: diverged-sibling guard predicate (isDivergedSibling)', () => {
+  test('the repro pair fires: leading stem "sign up" + token-Jaccard 2/6 ≈ 0.33', () => {
+    expect(isDivergedSibling('Sign up: TBD', 'Sign up: DONE - changed externally')).toBe(true);
+  });
+
+  test('lengthening the rewording still fires (containment path — Jaccard decays below the floor)', () => {
+    // shared {sign, up} / min(3, 12) = 0.67 ≥ 0.5 while Jaccard is 2/13 ≈ 0.15.
+    // This is the "I finished this and recorded what happened" edit: the more
+    // the node is lengthened, the guard must NOT grow more uncertain.
+    expect(isDivergedSibling(
+      'Sign up: TBD',
+      'Sign up: DONE and the ops team also recorded the external migration notes',
+    )).toBe(true);
+  });
+
+  test('genuinely distinct scaffold siblings never fire (pairwise stems differ)', () => {
+    expect(isDivergedSibling('Sign up: TBD', 'Sessions: TBD')).toBe(false);
+    expect(isDivergedSibling('Sign up: TBD', 'Passwords: TBD')).toBe(false);
+    expect(isDivergedSibling('Sessions: TBD', 'Passwords: TBD')).toBe(false);
+    expect(isDivergedSibling('Sign up: TBD', 'Email verification: TBD')).toBe(false);
+  });
+
+  test('the warned counterexample: "Sign in: TBD" is NOT "Sign up: TBD" despite Jaccard 0.50', () => {
+    // A Jaccard-only floor cannot separate this pair from the repro (0.33 vs
+    // 0.50); the two-word stem ("sign up" ≠ "sign in") is what keeps it clean.
+    expect(isDivergedSibling('Sign up: TBD', 'Sign in: TBD')).toBe(false);
+    expect(isDivergedSibling('Sign in: TBD', 'Sign up: DONE - changed externally')).toBe(false);
+  });
+
+  test('stem-equal but word-disjoint texts stay distinct (corroboration is required)', () => {
+    // First two words match ("rate limits") but no further shared vocabulary:
+    // Jaccard 2/11 ≈ 0.18 < 0.3 and containment 2/6 ≈ 0.33 < 0.5 → not diverged.
+    expect(isDivergedSibling(
+      'Rate limits apply per api key',
+      'Rate limits window resets at midnight utc',
+    )).toBe(false);
+  });
+
+  test('short nodes: one-significant-word siblings compare on that stem', () => {
+    // "Sessions" elaborated to "Sessions rotate keys every quarter" — same
+    // concept (stem falls back to 1 word, containment 1/1 = 1.0).
+    expect(isDivergedSibling('Sessions', 'Sessions rotate keys every quarter')).toBe(true);
+    // ... but a different single word stays distinct.
+    expect(isDivergedSibling('Sessions', 'Passwords rotate keys every quarter')).toBe(false);
+  });
+
+  test('empty/significant-token-less text never fires', () => {
+    expect(isDivergedSibling('', 'Sign up: TBD')).toBe(false);
+    expect(isDivergedSibling('a b', 'Sign up: TBD')).toBe(false); // 1-char tokens dropped
+  });
+});
+
 describe('issue #20 — CLI: diverged re-import is a conflict, never a silent duplicate', () => {
   test('(a) exact repro: --json reports the divergence in conflicts[] and NO duplicate sibling is appended', () => {
     const ws = reproWs('exact-repro', REWORDED);
@@ -134,10 +196,13 @@ describe('issue #20 — CLI: diverged re-import is a conflict, never a silent du
   test('(b) genuinely distinct new siblings still append cleanly with conflicts: []', () => {
     // "Sign in: TBD" is the issue's warned counterexample: Jaccard vs
     // "Sign up: TBD" is 0.50 (above any low floor) — only the two-word stem
-    // ("sign up" ≠ "sign in") keeps it distinct. It MUST stay a clean append.
+    // ("sign up" ≠ "sign in") keeps it distinct for the guard. It is placed in
+    // the SECOND slot so the PRE-EXISTING positional layer (unchanged, ≥ 0.5
+    // overlap on the same slot) is not exercised — this test pins the GUARD's
+    // non-interference, not the positional layer's semantics.
     const ws = seededWs('new-siblings');
     const page = join(ws.root, 'incoming.md');
-    writeFileSync(page, '- Authentication\n  - Sign in: TBD\n  - Email verification: TBD\n');
+    writeFileSync(page, '- Authentication\n  - Email verification: TBD\n  - Sign in: TBD\n');
     const r = runCli(['import', 'logseq', page, '--json'], ws.root);
     expect(r.exit).toBe(0);
     const j = JSON.parse(r.out);
@@ -150,8 +215,8 @@ describe('issue #20 — CLI: diverged re-import is a conflict, never a silent du
       '  - Sign up: TBD',
       '  - Sessions: TBD',
       '  - Passwords: TBD',
-      '  - Sign in: TBD',
       '  - Email verification: TBD',
+      '  - Sign in: TBD',
       '',
     ].join('\n'));
   });
