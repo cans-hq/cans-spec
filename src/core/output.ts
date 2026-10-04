@@ -246,7 +246,13 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
   const report = buildReport(r.issues);
   for (const name of SECTION_PRINT_ORDER) {
     if (refsOnly && name !== 'refs') continue;
-    const section = report.sections[name];
+    let section = report.sections[name];
+    // issue #11: a --fix run that rewrote back-pointer files always surfaces
+    // the REFS block — even when the refs engine has no findings of its own
+    // (the clean/healthy case), the run's writes stay visible there.
+    if (name === 'refs' && section === undefined && r.backPointersUpdatedFiles.length > 0) {
+      section = { name: 'refs', errorCount: 0, warningCount: 0, groups: [] };
+    }
     // Compact contract: STRUCTURE/STYLE/REDUNDANCY (and the small sections)
     // print only when they carry findings; REFS and OVERFLOW always print
     // (they carry the ✓ healthy state, as in the issue's expected output).
@@ -309,6 +315,11 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
   } else {
     const bp = r.backPointers.total > 0 ? ` · ${r.backPointers.current}/${r.backPointers.total} back-ptrs` : '';
     console.log(`REFS  ✓ ${r.refs.total} refs${bp}`);
+  }
+  // Issue #11: name the files --fix actually rewrote (099e858 wording) —
+  // never printed as an empty list (plain checks show nothing here).
+  if (r.backPointersUpdatedFiles.length > 0) {
+    console.log(`  --fix updated ref-by in: ${r.backPointersUpdatedFiles.join(', ')}`);
   }
 
   // issue #41 design rule 2: all missing-file refs coalesce into ONE block
@@ -416,6 +427,7 @@ Usage: cans <command> [args]
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
   check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
+        --fix + [file] rewrites ref-by comments in matching files only
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]

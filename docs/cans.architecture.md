@@ -305,7 +305,13 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 
 ### Back-pointers
 HTML comments in target file: `<!-- ref-by: 04-api.md, 05-frontend.md -->`
-Rebuilt from scratch every `--fix` run. Not incremental. Not authoritative.
+Rebuilt from scratch every `--fix` run (the desired-marks map is computed
+from the whole ref graph) — but the WRITES are scoped by the `[file]` filter
+(issue #11): a filtered `check --fix <file>` rewrites ref-by comments ONLY
+in the filter-matched spec files. A referrer filter (e.g. `04-api.md`)
+therefore leaves its targets' marks untouched that run — re-run with the
+target's filter, or unfiltered, to write them. Not incremental. Not
+authoritative.
 
 **Anchor-aware marks (issue #19):** a comment's FORM defines what it answers.
 - A ref WITH an anchor (`see: 02-authentication.md#Sessions`) earns its mark
@@ -555,6 +561,18 @@ Runs all validation engines. The most-used command.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits.
 
+**`--fix` honors the [file] filter (issue #11):** with a filter active,
+`--fix` rewrites ref-by comments ONLY in the filter-matched spec files —
+never in other files (the ref graph itself stays global, so ref findings
+still see the whole workspace). A referrer filter (e.g. `04-api.md`)
+therefore leaves its targets' marks untouched that run; re-run with the
+target's filter, or unfiltered, to write them. Unfiltered runs and
+`cans done` rewrite every spec source as before. Stale back-pointer
+warnings are dropped only for files the run actually rewrote — a stale
+comment still on disk stays reported. The report names the rewritten files:
+`backPointersUpdatedFiles` (sorted, JSON) and the human line
+`--fix updated ref-by in: ...` (printed under References).
+
 **`--fix` placement (issue #19):** an anchored ref's mark lands INLINE on the
 referenced node's bullet line (`  - Sessions <!-- ref-by: ... -->`); a
 file-level ref's mark stays the issue #6 form — a standalone comment line
@@ -577,8 +595,12 @@ byte-level preservation does.)
 { ok, command: 'check', exitCode, files, nodes, maxDepth,
   refs: { total, broken, deepHops },
   backPointers: { total, current, stale },
-  issues: Issue[], errorCount, warningCount, backPointersUpdated }
+  issues: Issue[], errorCount, warningCount, backPointersUpdated,
+  backPointersUpdatedFiles }
 ```
+`backPointersUpdatedFiles`: sorted spec-relative paths of the files `--fix`
+actually rewrote (issue #11) — empty without `--fix` or when nothing needed
+a write; with a `[file]` filter only matching files can ever appear there.
 
 ---
 
@@ -1180,7 +1202,8 @@ tags: [api, backend]
   "files": 6, "nodes": 84, "maxDepth": 4,
   "refs": { "total": 12, "broken": 0, "deepHops": 0 },
   "backPointers": { "total": 12, "current": 12, "stale": 0 },
-  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 3
+  "issues": [], "errorCount": 0, "warningCount": 0, "backPointersUpdated": 3,
+  "backPointersUpdatedFiles": ["01-auth.md", "03-data.md", "04-api.md"]
 }
 ```
 

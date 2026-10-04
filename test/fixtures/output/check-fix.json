@@ -6,5 +6,6 @@
   "counts": { "errors": 0, "warnings": 0 },
   "sections": { "structure": [], "style": [], "refs": [], "redundancy": [], "overflow": [], "other": [] },
   "backPointersUpdated": 3,
+  "backPointersUpdatedFiles": ["01-auth.md", "03-data.md", "04-api.md"],
   "rulesSummary": "node_length: 3–120 | siblings: 1–12 | depth: 1–5"
 }
