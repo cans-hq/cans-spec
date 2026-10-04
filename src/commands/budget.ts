@@ -1,5 +1,7 @@
 import { join, basename } from 'path';
-import type { BudgetReadResult, BudgetWriteResult, OutlineNode, Rules } from '../types.ts';
+import type {
+  BudgetReadResult, BudgetWriteResult, OutlineNode, Rules, TokenBudgetRules,
+} from '../types.ts';
 import { readText } from '../core/runtime.ts';
 import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists } from '../core/fs.ts';
 import { parseOutline } from '../core/outline.ts';
@@ -101,6 +103,47 @@ export function parseBudgetArgs(args: string[]): BudgetArgs {
   };
 }
 
+/** §18/§26 (QA-17 round 6, F16/F47/F50): the `token_budget` values are user
+ *  config consumed by BOTH budget commands — validated exactly like the
+ *  `--limit` flag, so a garbage value or a dead switch can never silently
+ *  succeed. Returns the §19 user-correctable error message naming the key and
+ *  the file, or null when the config is valid.
+ *
+ *  - `enabled` must be a boolean. `false` observably disables budget planning:
+ *    `budget read` / `budget write` refuse (F16 — the switch is real config,
+ *    not dead). An empty value (null) keeps the documented default (true),
+ *    the same §18 empty-value convention `prefer:`/`mode:` follow.
+ *  - `default_limit` gets the SAME validation as `--limit` (flag≡config
+ *    parity, issue #15): a finite non-negative integer. 0 stays a valid
+ *    (degenerate) limit that affords nothing — the truthful empty-plan
+ *    diagnosis names it, exactly like `--limit 0` does.
+ *  - `estimate_chars_per_token` must be a finite positive number. A value of
+ *    0 or less makes every estimate Infinity and no limit could ever fix it
+ *    (F50) — the error names the real cause instead of blaming the limit. */
+export function validateTokenBudgetRules(tb: TokenBudgetRules): string | null {
+  // Values arrive from the YAML merge at runtime; the static types describe
+  // the valid shape only, so compare through unknown.
+  const enabled: unknown = tb.enabled;
+  if (enabled !== null && typeof enabled !== 'boolean') {
+    return `invalid token_budget.enabled "${String(enabled)}" in _rules.yaml — pass true or false`;
+  }
+  if (enabled === false) {
+    return 'budget planning disabled: token_budget.enabled is false in _rules.yaml — set it to true (or delete the key) to plan budgets';
+  }
+  const defaultLimit: unknown = tb.default_limit;
+  if (
+    typeof defaultLimit !== 'number' || !Number.isFinite(defaultLimit) ||
+    !Number.isInteger(defaultLimit) || defaultLimit < 0
+  ) {
+    return `invalid token_budget.default_limit "${String(defaultLimit)}" in _rules.yaml — pass a positive integer`;
+  }
+  const cpt: unknown = tb.estimate_chars_per_token;
+  if (typeof cpt !== 'number' || !Number.isFinite(cpt) || cpt <= 0) {
+    return `invalid token_budget.estimate_chars_per_token "${String(cpt)}" in _rules.yaml — pass a positive number`;
+  }
+  return null;
+}
+
 function readFail(concept: string, error: string): BudgetReadResult {
   return {
     ok: false, command: 'budget-read', exitCode: 1, concept,
@@ -160,6 +203,18 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
   } catch (e) {
     const error = `invalid _rules.yaml: ${e instanceof Error ? e.message : String(e)}`;
     return opts.mode === 'write' ? writeFail(opts.concept, error) : readFail(opts.concept, error);
+  }
+
+  // §18/§26 (QA-17 round 6): both budget commands validate the token_budget
+  // VALUES the moment the rules load — flag≡config parity for limit values
+  // (issue #15, F47), a real `enabled` switch (F16), and finite token
+  // estimates (F50). A garbage config value is a user-correctable error even
+  // when a valid --limit is present: silently ignoring it was the F47 hole.
+  const budgetConfigError = validateTokenBudgetRules(rules.token_budget);
+  if (budgetConfigError !== null) {
+    return opts.mode === 'write'
+      ? writeFail(opts.concept, budgetConfigError)
+      : readFail(opts.concept, budgetConfigError);
   }
 
   const files = new Map<string, OutlineNode[]>();
