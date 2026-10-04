@@ -47,6 +47,28 @@
  *                    item" wording.
  *   h (CLI --json)   --limit 10 --json → ok:false, plan:[], budgetLimit:10
  *                    (truthful envelope), error names 01-auth.md + 32 tok.
+ *
+ * Round 6 (QA-17, issues #15/#16 re-verification) — test map:
+ *   f50-a (CLI)      estimate_chars_per_token: 0 → §19 user-correctable error
+ *                    naming the key, exit 1; NEVER "Infinity tok" estimates or
+ *                    unsatisfiable "raise the limit" advice.
+ *   f50-b (CLI --json) same → ok:false envelope carrying the error.
+ *   f50-c (CLI)      estimate_chars_per_token: -1 → same rejection shape.
+ *   f25-a (CLI --json) skipped lists EVERY file not in the plan: a task file
+ *                    with no connection to the concept appears in skipped
+ *                    (was invisible — in neither plan nor skipped).
+ *   f25-b (CLI human) the Skipped: section lists the no-connection task file.
+ *   f25-c (CLI --json) a mentioning task file that does not fit stays in
+ *                    skipped (F46 behavior preserved) alongside the
+ *                    no-connection task file.
+ *   f28-a (direct)   the §26 "forward ref (40)" tier is reachable: the target
+ *                    of a see: ref made FROM the canonical home scores 40.
+ *   f28-b (CLI --json) end-to-end: home refs 03-pw.md → 03-pw.md planned at
+ *                    score 40 with reason "forward ref", after back-refs.
+ *   f28-c (direct)   back-pointer (60) outranks forward ref (40) when a file
+ *                    is both (mutual refs) — highest applicable score wins.
+ *   f28-d (direct)   forward ref (40) outranks mentions concept (20) when a
+ *                    file is both a home ref target AND mentions the concept.
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
@@ -306,5 +328,240 @@ describe('issue #16: budget read --limit packs best-effort, never a sticky cut',
     expect(j.error).toContain('01-auth.md');
     expect(j.error).toContain('32 tok');
     expect(j.error).not.toContain('no files match');
+  });
+});
+
+// ── Round 6 (QA-17): shared scaffolding for F50 / F25 / F28 ──
+
+/** QA-17 F50: rules with a degenerate chars-per-token value. */
+function rulesCpt(cpt: string): string {
+  return [
+    'token_budget:',
+    '  default_limit: 4096',
+    `  estimate_chars_per_token: ${cpt}`,
+    '  warn_threshold: 0.8',
+    '',
+  ].join('\n');
+}
+
+/** QA-17 F28: the canonical home points at 03-pw.md (outbound see: ref). */
+const AUTH_FORWARD_MD = [
+  '- Authentication',
+  '  - Sessions',
+  '    - Expire after 24 hours',
+  '    - Password policy: see 03-pw.md',
+  '',
+].join('\n');
+
+const PW_MD = [
+  '- Passwords',
+  '  - Minimum 12 characters',
+  '    - Rotate every 90 days',
+  '',
+].join('\n');
+
+/** §30-shaped active task files. */
+function taskMd(title: string, task: string): string {
+  return [
+    `# ${title}`,
+    '',
+    'Owner: agent',
+    '',
+    '## Tasks',
+    '',
+    `- [ ] ${task}`,
+    '',
+  ].join('\n');
+}
+
+describe('issue #16 round 6 (QA-17 F50): estimate_chars_per_token is validated — never Infinity', () => {
+  // QA-17 F50: `estimate_chars_per_token: 0` made every estimate Infinity
+  // (`top-priority item 01-auth.md (Infinity tok)`), produced an unsatisfiable
+  // "raise the limit" advice, and never named the real cause. A chars-per-token
+  // of 0 or less is invalid config (§18): a §19 user-correctable error naming
+  // `token_budget.estimate_chars_per_token`, exit 1 — no limit can ever fix it.
+
+  test('f50-a (CLI): estimate_chars_per_token: 0 → §19 error naming the key, exit 1 — never "Infinity tok"', () => {
+    const ws = makeWs('r6-cpt-zero', rulesCpt('0'), false);
+    const r = runCli(['budget', 'read', 'sessions', '--limit', '999999999'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('✗');
+    expect(r.out).toContain('invalid token_budget.estimate_chars_per_token "0" in _rules.yaml');
+    expect(r.out).toContain('pass a positive number');
+    // The defect's garbage output is gone: no Infinity estimate, no
+    // unsatisfiable limit advice blaming --limit for a config problem.
+    expect(r.out).not.toContain('Infinity');
+    expect(r.out).not.toContain('raise the limit');
+    expect(r.out).not.toContain('Reading plan for');
+  });
+
+  test('f50-b (CLI --json): estimate_chars_per_token: 0 → ok:false envelope carrying the error (no Infinity anywhere)', () => {
+    const ws = makeWs('r6-cpt-zero-json', rulesCpt('0'), false);
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(1);
+    expect(j.ok).toBe(false);
+    expect(j.exitCode).toBe(1);
+    expect(j.error).toContain('invalid token_budget.estimate_chars_per_token "0" in _rules.yaml');
+    expect(j.error).toContain('pass a positive number');
+    expect(r.out).not.toContain('Infinity');
+  });
+
+  test('f50-c (CLI): estimate_chars_per_token: -1 → same §19 rejection shape (a negative ratio is equally invalid)', () => {
+    const ws = makeWs('r6-cpt-neg', rulesCpt('-1'), false);
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('invalid token_budget.estimate_chars_per_token "-1" in _rules.yaml');
+    expect(r.out).toContain('pass a positive number');
+    expect(r.out).not.toContain('Infinity');
+    expect(r.out).not.toContain('Reading plan for');
+  });
+});
+
+describe('issue #16 round 6 (QA-17 F25): skipped lists EVERY file not in the plan', () => {
+  // QA-17 F25: a task file with no connection to the concept appeared in
+  // NEITHER plan nor skipped — §26 says skipped lists every file not in the
+  // plan (didn't fit, or no connection). Budget scope = spec files + active
+  // _tasks/*.md files (§22), so every active task file is in plan-or-skipped.
+
+  function makeTaskWs(name: string): Ws {
+    const ws = makeWs(name, RULES_4096);
+    mkdirSync(join(ws.cans, '_tasks'), { recursive: true });
+    // fix-shipping.md: fixture-format task file that never mentions "sessions".
+    writeFileSync(join(ws.cans, '_tasks', 'fix-shipping.md'), taskMd('fix-shipping', 'Pick a carrier'), 'utf8');
+    // fix-sessions.md: mentions the concept → score-80 tier.
+    writeFileSync(join(ws.cans, '_tasks', 'fix-sessions.md'), taskMd('fix-sessions', 'Harden sessions'), 'utf8');
+    return ws;
+  }
+
+  test('f25-a (CLI --json): no-connection task file is listed in skipped — never invisible', () => {
+    const ws = makeTaskWs('r6-task-nomatch');
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(0);
+    expect(j.ok).toBe(true);
+    // The mentioning task file is planned (§26 step 3, score 80, after home).
+    expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', 'cans/_tasks/fix-sessions.md', '02-api.md']);
+    expect(j.plan[1].score).toBe(80);
+    expect(j.plan[1].reason).toBe('active task mentions concept');
+    // EVERY other file in budget scope is in skipped — including the
+    // no-connection task file and the no-connection spec file (sorted).
+    expect(j.skipped).toEqual(['00-overview.md', '03-notes.md', 'cans/_tasks/fix-shipping.md']);
+  });
+
+  test('f25-b (CLI human): the Skipped: section lists the no-connection task file', () => {
+    const ws = makeTaskWs('r6-task-nomatch-human');
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(0);
+    expect(r.out).toContain('Skipped:');
+    expect(r.out).toContain('cans/_tasks/fix-shipping.md');
+    expect(r.out).toContain('00-overview.md');
+  });
+
+  test('f25-c (CLI --json): a mentioning task file that does not fit stays in skipped alongside the no-connection task file', () => {
+    // QA-17 F46 (PASS, must keep working): task files that MATCH but do not
+    // fit are listed in skipped. With --limit 12 only the 12-tok back-ref
+    // fits; every other scoped file — home, both task files, notes, overview —
+    // is in skipped. skipped = plan ⊕ everything else, with no invisible files.
+    const ws = makeTaskWs('r6-task-noFit');
+    const r = runCli(['budget', 'read', 'sessions', '--limit', '12', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(0);
+    expect(j.ok).toBe(true);
+    expect(j.plan.map((p: any) => p.file)).toEqual(['02-api.md']);
+    expect(j.skipped).toContain('cans/_tasks/fix-sessions.md');
+    expect(j.skipped).toContain('cans/_tasks/fix-shipping.md');
+    expect(j.skipped).toContain('01-auth.md');
+    expect(j.skipped).toContain('00-overview.md');
+    expect(j.skipped).toContain('03-notes.md');
+  });
+});
+
+describe('issue #16 round 6 (QA-17 F28): the forward ref (40) scoring tier is reachable', () => {
+  // QA-17 F28: §26 step 3's scoring table lists "forward ref (40)" — a file
+  // the canonical home POINTS TO — but the tier never fired: the target of a
+  // see: ref made from the home file scored 0 and landed in skipped. The docs
+  // table is the contract (implementing is the honest reading): files that
+  // are targets of refs FROM the canonical home connect at 40.
+
+  function forwardFiles(): Map<string, OutlineNode[]> {
+    const entries: Array<[string, string]> = [
+      ['01-auth.md', AUTH_FORWARD_MD],
+      ['02-api.md', API_MD],
+      ['03-pw.md', PW_MD],
+    ];
+    return new Map(entries.map(([f, md]) => [f, parseOutline(md, f)]));
+  }
+
+  test('f28-a (direct unit): the target of a see: ref made FROM the canonical home scores 40 with reason "forward ref"', () => {
+    const files = forwardFiles();
+    const graph = buildRefGraph(files, '.');
+    const result = buildReadPlan('sessions', files, graph.back, rules);
+    expect(result.plan.map(p => p.file)).toEqual(['01-auth.md', '02-api.md', '03-pw.md']);
+    const pw = result.plan[2]!;
+    expect(pw.file).toBe('03-pw.md');
+    expect(pw.score).toBe(40);
+    expect(pw.reason).toBe('forward ref');
+    // 03-pw.md is no longer an unconnected "skipped" file: it is in the plan.
+    expect(result.skipped).not.toContain('03-pw.md');
+  });
+
+  test('f28-b (CLI --json): end-to-end — home refs 03-pw.md → 03-pw.md planned at 40 after the 60-tier back-ref', () => {
+    const ws = makeWs('r6-forward', RULES_4096, false);
+    writeFileSync(join(ws.cans, '01-auth.md'), AUTH_FORWARD_MD, 'utf8');
+    writeFileSync(join(ws.cans, '03-pw.md'), PW_MD, 'utf8');
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(0);
+    expect(j.ok).toBe(true);
+    expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', '02-api.md', '03-pw.md']);
+    expect(j.plan[0]).toMatchObject({ score: 100, reason: 'canonical home' });
+    expect(j.plan[1]).toMatchObject({ score: 60, reason: 'see: back-ref' });
+    expect(j.plan[2]).toMatchObject({ score: 40, reason: 'forward ref', estTokens: 16 });
+    expect(j.totalTokens).toBe(22 + 12 + 16);
+    // Human mode shows the tier too.
+    const rHuman = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(rHuman.out).toContain('03-pw.md ← forward ref (16 tok)');
+    expect(rHuman.out).not.toContain('Skipped:\n  03-pw.md');
+  });
+
+  test('f28-c (direct unit): a file that refs the home AND is ref\'d by the home (mutual refs) scores 60 — highest applicable tier wins', () => {
+    const files = new Map<string, OutlineNode[]>([
+      ['01-auth.md', parseOutline([
+        '- Authentication',
+        '  - Sessions',
+        '    - Expire after 24 hours',
+        '    - Helper: see 04-both.md',
+        '',
+      ].join('\n'), '01-auth.md')],
+      ['04-both.md', parseOutline([
+        '- Both',
+        '  - Session helper: see 01-auth.md#Sessions',
+        '',
+      ].join('\n'), '04-both.md')],
+    ]);
+    const graph = buildRefGraph(files, '.');
+    const result = buildReadPlan('sessions', files, graph.back, rules);
+    const both = result.plan.find(p => p.file === '04-both.md');
+    expect(both).toBeDefined();
+    expect(both!.score).toBe(60);
+    expect(both!.reason).toBe('see: back-ref');
+  });
+
+  test('f28-d (direct unit): a home ref target that also mentions the concept scores 40, not 20 — forward outranks mentions', () => {
+    const files = new Map<string, OutlineNode[]>([
+      ['01-auth.md', parseOutline(AUTH_MD.replace('    - Refresh allowed for 30 days\n', '    - Refresh allowed for 30 days\n    - Hardening: see 05-fw.md\n'), '01-auth.md')],
+      ['05-fw.md', parseOutline([
+        '- Firewall',
+        '  - Sessions are inspected here',
+        '',
+      ].join('\n'), '05-fw.md')],
+    ]);
+    const graph = buildRefGraph(files, '.');
+    const result = buildReadPlan('sessions', files, graph.back, rules);
+    const fw = result.plan.find(p => p.file === '05-fw.md');
+    expect(fw).toBeDefined();
+    expect(fw!.score).toBe(40);
+    expect(fw!.reason).toBe('forward ref');
   });
 });

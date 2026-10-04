@@ -39,6 +39,34 @@
  *   e (CLI)          genuine no-match preserved: unknown concept + small
  *                    default_limit → still "no files match concept" (the
  *                    distinction remains correct when nothing matches).
+ *
+ * Round 6 (QA-17, issues #15/#16 re-verification) — test map:
+ *   f47-a (CLI)       default_limit: abc → §19 user-correctable error naming
+ *                     the key and file, exit 1 — never `Budget: 44 / abc tokens`
+ *                     with ok:true and a STRING budgetLimit.
+ *   f47-b (CLI --json) same → ok:false envelope carrying the error.
+ *   f47-c (CLI)       default_limit: -5 → rejected as an invalid VALUE (flag
+ *                     parity: --limit -5 is rejected), not swallowed into the
+ *                     empty-plan message.
+ *   f47-d (CLI --json) default_limit: 2.5 → fractional value rejected (flag
+ *                     parity: --limit 2.5 is rejected as non-integer).
+ *   f47-e (CLI)       flag≡config parity for bogus values: the same bogus
+ *                     value through both sources → equivalent rejection.
+ *   f47-f (CLI)       a VALID --limit never launders a garbage config limit:
+ *                     default_limit: abc + --limit 4096 → still exit 1 naming
+ *                     the config key (never silently ignored).
+ *   f47-g (CLI)       degenerate 0 keeps flag≡config parity: both sources
+ *                     accept 0 and give the truthful empty-plan diagnosis.
+ *   f16-a (CLI)       enabled: false → budget read refuses, §19 error naming
+ *                     token_budget.enabled and _rules.yaml (the switch is no
+ *                     longer dead config).
+ *   f16-b (CLI)       enabled: false → budget write refuses the same way.
+ *   f16-c (CLI --json) enabled: false → ok:false envelope with the error.
+ *   f16-d (CLI)       enabled key deleted (section intact) → planning stays
+ *                     ON (§18 planning switch: delete ≠ off, parameter keeps
+ *                     its default) — pin the delete-key semantics.
+ *   f16-e (CLI)       enabled: "false" (string, not boolean) → §19 type error
+ *                     — a truthy string must never silently keep planning ON.
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
@@ -96,6 +124,11 @@ const createdDirs: string[] = [];
 let wsSeq = 0;
 
 function makeWs(name: string, defaultLimit: number): Ws {
+  return makeWsRules(name, rulesYaml(defaultLimit));
+}
+
+/** Round-6 helper: same spec files, arbitrary token_budget rules body. */
+function makeWsRules(name: string, rulesYamlText: string): Ws {
   const root = join(SCRATCH, `${name}-${++wsSeq}`);
   const cans = join(root, 'cans');
   mkdirSync(cans, { recursive: true });
@@ -107,8 +140,15 @@ function makeWs(name: string, defaultLimit: number): Ws {
   ] as Array<[string, string]>) {
     writeFileSync(join(cans, f), content, 'utf8');
   }
-  writeFileSync(join(cans, '_rules.yaml'), rulesYaml(defaultLimit), 'utf8');
+  writeFileSync(join(cans, '_rules.yaml'), rulesYamlText, 'utf8');
   return { root, cans };
+}
+
+/** token_budget section builder for round-6 value-validation cases. */
+function tokenBudgetRules(fields: Record<string, string>): string {
+  const lines = ['token_budget:'];
+  for (const [k, v] of Object.entries(fields)) lines.push(`  ${k}: ${v}`);
+  return `${lines.join('\n')}\n`;
 }
 
 function runCli(args: string[], cwd: string) {
@@ -230,5 +270,179 @@ describe('issue #15: config-derived default_limit never reports a false "no file
     expect(r.out).toContain('no files match concept "zzznope"');
     expect(r.out).not.toContain('plan empty');
     expect(r.out).not.toContain('token_budget.default_limit');
+  });
+});
+
+describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are validated and honored like the --limit flag', () => {
+  // QA-17 F47 (MAJOR): `default_limit: abc` sailed through — exit 0, human
+  // `Budget: 44 / abc tokens (0%)`, --json budgetLimit was the STRING "abc",
+  // ok:true — while the --limit flag rejected the same value. Issue #15's own
+  // claim ("both limit sources get the same diagnosis") extends to VALUE
+  // validation: non-numeric / negative / fractional config limits are §19
+  // user-correctable errors naming the key and the file. QA-17 F16 (MINOR):
+  // `enabled: false` was a dead switch (zero observable difference) — the
+  // switch is now real: budget read/write refuse with a §19 error.
+
+  const VALID_REST = { estimate_chars_per_token: '3.5', warn_threshold: '0.8' };
+
+  test('f47-a (CLI): default_limit: abc → §19 error naming the key and file, exit 1 — never a garbage success', () => {
+    const ws = makeWsRules('r6-limit-abc', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('✗');
+    expect(r.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
+    expect(r.out).toContain('pass a positive integer');
+    // Never the defect's garbage success: no plan, no string-limit math.
+    expect(r.out).not.toContain('Reading plan for');
+    expect(r.out).not.toContain('/ abc tokens');
+    expect(r.out).not.toContain('no files match');
+  });
+
+  test('f47-b (CLI --json): default_limit: abc → ok:false envelope carrying the error (budgetLimit is never the string "abc")', () => {
+    const ws = makeWsRules('r6-limit-abc-json', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(1);
+    expect(j.ok).toBe(false);
+    expect(j.exitCode).toBe(1);
+    expect(j.budgetLimit).not.toBe('abc');
+    expect(j.error).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
+    expect(j.error).toContain('pass a positive integer');
+    expect(r.out).not.toContain('Infinity');
+  });
+
+  test('f47-c (CLI): default_limit: -5 → rejected as an invalid value (flag parity), not swallowed into the empty-plan message', () => {
+    // The flag path rejects `--limit -5` with an invalid-value error; the
+    // config path must behave the same way for the same value — the old
+    // behavior folded -5 into "plan empty: token_budget.default_limit (-5) …".
+    const ws = makeWsRules('r6-limit-neg', tokenBudgetRules({ default_limit: '-5', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('invalid token_budget.default_limit "-5" in _rules.yaml');
+    expect(r.out).toContain('pass a positive integer');
+    expect(r.out).not.toContain('plan empty');
+    expect(r.out).not.toContain('below the top-priority item');
+  });
+
+  test('f47-d (CLI --json): default_limit: 2.5 → fractional value rejected (flag parity: --limit 2.5 is non-integer)', () => {
+    const ws = makeWsRules('r6-limit-frac', tokenBudgetRules({ default_limit: '2.5', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(1);
+    expect(j.ok).toBe(false);
+    expect(j.error).toContain('invalid token_budget.default_limit "2.5" in _rules.yaml');
+    // Flag parity control: the same value through the flag is non-integer too.
+    const wsFlag = makeWs('r6-limit-frac-flag', 4096);
+    const rFlag = runCli(['budget', 'read', 'sessions', '--limit', '2.5'], wsFlag.root);
+    expect(rFlag.exit).toBe(1);
+    expect(rFlag.out).toContain('invalid --limit value "2.5"');
+  });
+
+  test('f47-e (CLI): flag≡config parity for bogus values — the same bogus value through both sources → equivalent rejection', () => {
+    // "abc" through the flag: rejected, exit 1, names the value + fix.
+    const wsFlag = makeWs('r6-parity-flag', 4096);
+    const rFlag = runCli(['budget', 'read', 'sessions', '--limit', 'abc'], wsFlag.root);
+    expect(rFlag.exit).toBe(1);
+    expect(rFlag.out).toContain('invalid --limit value "abc"');
+    expect(rFlag.out).toContain('pass a positive integer');
+    expect(rFlag.out).not.toContain('Reading plan for');
+    // "abc" through the config: rejected, exit 1, names the value + fix (and
+    // the config key + file, its actual source).
+    const wsConfig = makeWsRules('r6-parity-config', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
+    const rConfig = runCli(['budget', 'read', 'sessions'], wsConfig.root);
+    expect(rConfig.exit).toBe(1);
+    expect(rConfig.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
+    expect(rConfig.out).toContain('pass a positive integer');
+    expect(rConfig.out).not.toContain('Reading plan for');
+    // Neither mode ever reports ok:true / a plan for the bogus value.
+    const rConfigJson = runCli(['budget', 'read', 'sessions', '--json'], wsConfig.root);
+    const j = parseJsonOut(rConfigJson.out);
+    expect(j.ok).toBe(false);
+  });
+
+  test('f47-f (CLI): a valid --limit never launders a garbage config limit — default_limit: abc + --limit 4096 still exits 1 naming the config key', () => {
+    // F47's exact hole was the SILENT pass-through of garbage config values; a
+    // flag override must not become a new laundering path for the same garbage.
+    const ws = makeWsRules('r6-limit-abc-flagged', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions', '--limit', '4096'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
+    expect(r.out).not.toContain('Reading plan for');
+  });
+
+  test('f47-g (CLI): degenerate 0 keeps flag≡config parity — both sources accept 0 and give the truthful empty-plan diagnosis', () => {
+    // QA-17 F11: the FLAG accepts --limit 0 as a degenerate limit (exit 1 with
+    // the truthful empty-plan diagnosis, never an invalid-value error). The
+    // config source applies the same validation, so 0 behaves identically.
+    const wsConfig = makeWsRules('r6-limit-zero-config', tokenBudgetRules({ default_limit: '0', ...VALID_REST }));
+    const rConfig = runCli(['budget', 'read', 'sessions'], wsConfig.root);
+    expect(rConfig.exit).toBe(1);
+    expect(rConfig.out).toContain('plan empty: token_budget.default_limit (0) in _rules.yaml is below the top-priority item 01-auth.md (32 tok) — raise default_limit or pass --limit');
+    expect(rConfig.out).not.toContain('invalid token_budget.default_limit');
+    expect(rConfig.out).not.toContain('no files match');
+
+    const wsFlag = makeWs('r6-limit-zero-flag', 4096);
+    const rFlag = runCli(['budget', 'read', 'sessions', '--limit', '0'], wsFlag.root);
+    expect(rFlag.exit).toBe(1);
+    expect(rFlag.out).toContain('plan empty: --limit 0 is below the top-priority item 01-auth.md (32 tok) — raise the limit');
+    expect(rFlag.out).not.toContain('invalid --limit value');
+  });
+
+  test('f16-a (CLI): token_budget.enabled: false → budget read refuses with a §19 error naming the switch and the file', () => {
+    // QA-17 F16: `enabled: false` had zero observable effect — a dead switch
+    // the docs list in §18. Decision (docs+code made to agree): false
+    // observably disables budget planning — both budget commands refuse.
+    const ws = makeWsRules('r6-enabled-false', tokenBudgetRules({ enabled: 'false', default_limit: '4096', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('✗');
+    expect(r.out).toContain('token_budget.enabled is false in _rules.yaml');
+    expect(r.out).toContain('set it to true');
+    expect(r.out).not.toContain('Reading plan for');
+    // The limit is NOT applied and NOT diagnosed as a budget problem.
+    expect(r.out).not.toContain('plan empty');
+    expect(r.out).not.toContain('Budget:');
+  });
+
+  test('f16-b (CLI): token_budget.enabled: false → budget write refuses the same way (the switch governs both budget commands)', () => {
+    const ws = makeWsRules('r6-enabled-false-write', tokenBudgetRules({ enabled: 'false', default_limit: '4096', ...VALID_REST }));
+    const r = runCli(['budget', 'write', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('token_budget.enabled is false in _rules.yaml');
+    expect(r.out).not.toContain('Writing scope for');
+  });
+
+  test('f16-c (CLI --json): token_budget.enabled: false → ok:false envelope with the error', () => {
+    const ws = makeWsRules('r6-enabled-false-json', tokenBudgetRules({ enabled: 'false', default_limit: '4096', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions', '--json'], ws.root);
+    const j = parseJsonOut(r.out);
+    expect(r.exit).toBe(1);
+    expect(j.ok).toBe(false);
+    expect(j.exitCode).toBe(1);
+    expect(j.error).toContain('token_budget.enabled is false in _rules.yaml');
+    expect(j.plan).toEqual([]);
+  });
+
+  test('f16-d (CLI): enabled key deleted (section intact) → planning stays ON — §18 planning switch: delete ≠ off', () => {
+    // §18 "delete a key = check turns off" applies to CHECK switches;
+    // token_budget.enabled is a planning switch (a parameter): deleted or
+    // omitted it keeps its documented default true, so budget planning runs.
+    const ws = makeWsRules('r6-enabled-deleted', tokenBudgetRules({ default_limit: '4096', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(0);
+    expect(r.out).toContain('Reading plan for: sessions');
+    expect(r.out).toContain('01-auth.md#Sessions ← canonical home');
+  });
+
+  test('f16-e (CLI): enabled: "false" (a string, not a boolean) → §19 type error — a truthy string must never silently keep planning ON', () => {
+    // YAML would happily hand the budget engine the STRING "false"; a plain
+    // `=== false` check would ignore it (dead config again, in the other
+    // direction). The switch accepts booleans only.
+    const ws = makeWsRules('r6-enabled-string', tokenBudgetRules({ enabled: '"false"', default_limit: '4096', ...VALID_REST }));
+    const r = runCli(['budget', 'read', 'sessions'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('invalid token_budget.enabled "false" in _rules.yaml');
+    expect(r.out).toContain('pass true or false');
+    expect(r.out).not.toContain('Reading plan for');
   });
 });
