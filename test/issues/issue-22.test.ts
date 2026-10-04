@@ -197,7 +197,12 @@ describe('issue #22: trailing-slash folder targets resolve to the same key', () 
     const files = loadFiles(spec);
     const back = rebuildBackPointers(files, buildRefGraph(files, '.'));
     // The ref earns auth/index.md its back-pointer group — same as `auth`.
-    expect(back.get('auth/index.md')).toBe('01-api.md');
+    // (Issue #19 made groups anchor-aware: Map<string, RefByGroup[]> — the
+    // trailing-slash ref must land in the LOADED key's group, never `auth/`.)
+    const groups = back.get('auth/index.md') ?? [];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.node).toBe(null); // file-level ref → node-less group
+    expect(groups[0]!.fromFiles).toEqual(['01-api.md']);
     expect(back.has('auth/')).toBe(false);
   });
 });
