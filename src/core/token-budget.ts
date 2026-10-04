@@ -182,10 +182,14 @@ export function buildReadPlan(
   const plan: BudgetReadPlanItem[] = [];
   const skipped: string[] = [];
   let totalTokens = 0;
-  let cut = false;
+  // §26 step 4 (issue #16): best-effort greedy packing. Items are walked in
+  // score order and each item that fits under the remaining budget is
+  // planned. An item that does not fit is skipped (listed in `skipped`) but
+  // does NOT cut the walk — cheaper lower-scored items that still fit are
+  // considered, so a limit below the canonical home (score 100) can still
+  // afford a cheaper back-ref (score 60) instead of yielding plan: [].
   for (const item of sorted) {
-    if (cut || totalTokens + item.estTokens > budgetLimit) {
-      cut = true;
+    if (totalTokens + item.estTokens > budgetLimit) {
       skipped.push(item.file);
       continue;
     }

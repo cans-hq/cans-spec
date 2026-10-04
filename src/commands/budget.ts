@@ -210,21 +210,37 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
       activeTaskPaths,
     );
     if (result.plan.length === 0) {
-      // §37 truthfulness: distinguish "the concept matches nothing" from
-      // "the limit is smaller than the cheapest matching item" — a limit
-      // problem must never be reported as a spelling problem (QA-10 M2b).
-      if (opts.limit !== null) {
-        const unbounded = buildReadPlan(
-          opts.concept, files, graph.back, rules.token_budget,
-          undefined, taskFile, activeTaskPaths,
-        );
-        if (unbounded.plan.length > 0) {
-          const cheapest = Math.min(...unbounded.plan.map(p => p.estTokens));
-          return readFail(
-            opts.concept,
-            `plan empty: --limit ${opts.limit} is below the cheapest item (${cheapest} tok) — raise the limit`,
-          );
-        }
+      // §37 truthfulness (issues #15/#16): distinguish "the concept matches
+      // nothing" from "the effective limit cannot afford any matching item" —
+      // a limit problem must never be reported as a spelling problem
+      // (QA-10 M2b), regardless of whether the limit came from an explicit
+      // --limit flag or from token_budget.default_limit in _rules.yaml (the
+      // two paths to the identical limit value must behave identically). The
+      // comparison plan is TRULY unbounded (Infinity — `undefined` would fall
+      // back to rules.default_limit and hide cases behind the same tiny
+      // limit), so it is non-empty exactly when the concept matches at least
+      // one file.
+      const unbounded = buildReadPlan(
+        opts.concept, files, graph.back, rules.token_budget,
+        Infinity, taskFile, activeTaskPaths,
+      );
+      if (unbounded.plan.length > 0) {
+        // Best-effort packing (§26 step 4) already includes every matching
+        // item that fits, so an empty plan means the limit is below EVERY
+        // item — name the top-priority item that busts it (file + estTokens),
+        // the actual source of the limit, and the matching remedy; never a
+        // false cause.
+        const top = unbounded.plan[0]!;
+        const source = opts.limit !== null
+          ? `--limit ${opts.limit}`
+          : `token_budget.default_limit (${result.budgetLimit}) in _rules.yaml`;
+        const remedy = opts.limit !== null
+          ? 'raise the limit'
+          : 'raise default_limit or pass --limit';
+        return {
+          ...result, ok: false, exitCode: 1,
+          error: `plan empty: ${source} is below the top-priority item ${top.file} (${top.estTokens} tok) — ${remedy}`,
+        };
       }
       return { ...result, ok: false, exitCode: 1, error: noMatchError(opts.concept) };
     }

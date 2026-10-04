@@ -610,8 +610,17 @@ Token budget planner. Deterministic. No LLM.
 1. Normalize concept. Find matching nodes.
 2. Pick canonical home: highest child count → lowest depth → earliest file sort.
 3. Score all files: canonical home (100), active task mentioning (80), back-pointer (60), forward ref (40), mentions concept (20), no connection (0).
-4. Sort by score. Greedily include until token limit.
+4. Sort by score. Pack best-effort (issues #15/#16): take each item in order while it fits under the token limit. An item that does not fit is skipped (listed in `skipped`) — it does NOT cut the walk, so cheaper lower-scored items that still fit are planned. `skipped` lists every file not in the plan (didn't fit, or no connection to the concept).
 5. Print plan.
+
+**Empty plan (§19/§37, issues #15/#16):** if the plan is empty while a truly unbounded plan for the same concept is non-empty, the concept matches — the limit is simply below every matching item. The user-correctable failure (exit 1) names the actual source of the limit and the top-priority item that busts it, never a spelling problem:
+
+```
+✗ plan empty: --limit 10 is below the top-priority item 01-auth.md (32 tok) — raise the limit
+✗ plan empty: token_budget.default_limit (10) in _rules.yaml is below the top-priority item 01-auth.md (32 tok) — raise default_limit or pass --limit
+```
+
+Both limit sources (`--limit` flag and `token_budget.default_limit`) get the same diagnosis; a concept that matches nothing is still reported as `no files match concept "…" — check spelling or run \`cans status\``. A limit that can afford some but not all matching items is a SUCCESS: the partial plan is printed with the unaffordable files in `skipped`.
 
 ### `budget write <concept>`
 1. Find canonical home.
