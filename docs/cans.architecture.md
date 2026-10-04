@@ -167,7 +167,7 @@ cans/
     └── decisions.md
 ```
 
-Folder mode alternative: `02-authentication/index.md` instead of `02-authentication.md`. Flat wins over folder. If both exist, `cans check` flags error.
+Folder mode alternative: `02-authentication/index.md` instead of `02-authentication.md`. Flat wins over folder. If both exist, `cans check` flags error — for any slug, numbered or plain (round 6).
 
 ---
 
