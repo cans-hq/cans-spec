@@ -211,12 +211,17 @@ export function checkRefs(
  *    making symmetric graphs flag asymmetrically depending on iteration
  *    order); only confirmed saturations at maxHops are cached, and those hold
  *    for every caller. Hop count above maxHops flags b.
- *  - The suggested fix (`add "see: <out>" directly to <from>`, where from is
- *    the deepest direct referrer of b, ties broken by file key sort so output
- *    is stable) is never a self-reference: from ≠ b holds because incoming
- *    lists exclude self, and from = out would place from, b and out in one
- *    SCC — guarded defensively anyway, so the advice can never convert a
- *    deep-hop error into a checkRefs self-reference error.
+ *  - The suggested fix never recommends a ref the deepest direct referrer
+ *    already holds (issue #22): `from`'s outgoing refs are resolved through
+ *    the same resolveKey, and an existing equivalent spelling (see auth vs
+ *    see: auth/index.md) flips the advice to "already refs … — remove the
+ *    intermediate hop via <b>" — following the "add" advice would have
+ *    appended a second see: to one node while leaving the hop in place.
+ *    The plain (no-existing-ref) advice likewise states the intermediate hop
+ *    must be removed, not just the direct ref added: from ≠ b holds because
+ *    incoming lists exclude self, and from = out would place from, b and out
+ *    in one SCC — guarded defensively anyway, so the advice can never convert
+ *    a deep-hop error into a checkRefs self-reference error.
  *  - §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
  *    skipped entirely. */
 export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
@@ -357,11 +362,23 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     // put from, b and out in one SCC. Skip rather than emit a broken fix.
     if (from === b || from === out.file) continue;
     const anchor = out.anchor !== null ? `#${out.anchor}` : '';
+    // Issue #22 defect 1: the advice must never recommend a ref `from`
+    // already holds. resolveKey maps equivalent spellings (auth, auth/,
+    // auth/index.md) onto one loaded key, so an existing match means the
+    // "add" advice would append a SECOND see: to the same target while the
+    // deep hop itself stays in place. Name the existing ref (verbatim raw
+    // spelling) and the hop to remove instead.
+    const outKey = resolveKey(out.file);
+    const existing = outKey !== null
+      ? (graph.forward.get(from) ?? []).find(r => resolveKey(r.file) === outKey)
+      : undefined;
     issues.push({
       file: b, line: out.line, level: 'error', category: 'refs',
       message: `DEEP HOP: ${from} → ${b} → ${out.file}`,
           rule: 'refs.deep_hop', // issue #41: machine-readable rule key
-      suggestion: `add "see: ${out.file}${anchor}" directly to ${from}`,
+      suggestion: outKey !== null && existing !== undefined
+        ? `${from} already refs ${outKey}${anchor} as "${existing.raw}" — remove the intermediate hop via ${b}`
+        : `add "see: ${out.file}${anchor}" directly to ${from} and remove the intermediate hop via ${b}`,
     });
   }
   return issues;
