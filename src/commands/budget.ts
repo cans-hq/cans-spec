@@ -210,20 +210,28 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
       activeTaskPaths,
     );
     if (result.plan.length === 0) {
-      // §37 truthfulness: distinguish "the concept matches nothing" from
-      // "the limit is smaller than the cheapest matching item" — a limit
-      // problem must never be reported as a spelling problem (QA-10 M2b).
+      // §37 truthfulness (issue #16): distinguish "the concept matches
+      // nothing" from "the limit cannot afford any matching item" — a limit
+      // problem must never be reported as a spelling problem (QA-10 M2b), and
+      // the diagnosis itself must be mathematically true. The comparison plan
+      // is TRULY unbounded (Infinity — `undefined` would fall back to
+      // rules.default_limit and hide cases behind the same tiny limit), so it
+      // is non-empty exactly when the concept matches at least one file.
       if (opts.limit !== null) {
         const unbounded = buildReadPlan(
           opts.concept, files, graph.back, rules.token_budget,
-          undefined, taskFile, activeTaskPaths,
+          Infinity, taskFile, activeTaskPaths,
         );
         if (unbounded.plan.length > 0) {
-          const cheapest = Math.min(...unbounded.plan.map(p => p.estTokens));
-          return readFail(
-            opts.concept,
-            `plan empty: --limit ${opts.limit} is below the cheapest item (${cheapest} tok) — raise the limit`,
-          );
+          // Best-effort packing (§26 step 4) already includes every matching
+          // item that fits, so an empty plan means the limit is below EVERY
+          // item — name the top-priority item that busts it (file + estTokens),
+          // never the false "below the cheapest item" claim.
+          const top = unbounded.plan[0]!;
+          return {
+            ...result, ok: false, exitCode: 1,
+            error: `plan empty: --limit ${opts.limit} is below the top-priority item ${top.file} (${top.estTokens} tok) — raise the limit`,
+          };
         }
       }
       return { ...result, ok: false, exitCode: 1, error: noMatchError(opts.concept) };

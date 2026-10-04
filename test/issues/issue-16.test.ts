@@ -180,20 +180,20 @@ afterEach(() => {
 });
 
 describe('issue #16: budget read --limit packs best-effort, never a sticky cut', () => {
-  test('a (direct unit): limit 30 → plan is NOT empty: the 12-tok back-ref is planned while the 32-tok home is skipped', () => {
+  test('a (direct unit): limit 30 → plan is NOT empty: the 12-tok back-ref (and every other affordable item) is planned while the 32-tok home is skipped', () => {
     // The issue repro: `cans budget read sessions --limit 30` returned plan: []
     // because the 32-tok canonical home busted the limit and the sticky cut
-    // discarded the affordable 12-tok back-ref.
+    // discarded the affordable 12-tok back-ref (and the 8-tok mentions file).
     const files = specFiles(true);
     const graph = buildRefGraph(files, '.');
     const result = buildReadPlan('sessions', files, graph.back, rules, 30);
 
     expect(result.ok).toBe(true);
-    expect(result.plan.map(p => p.file)).toEqual(['02-api.md']);
+    expect(result.plan.map(p => p.file)).toEqual(['02-api.md', '03-notes.md']);
     expect(result.plan[0].estTokens).toBe(TOK.api);
     expect(result.plan[0].score).toBe(60);
     expect(result.plan[0].reason).toBe('see: back-ref');
-    expect(result.totalTokens).toBe(TOK.api);
+    expect(result.totalTokens).toBe(TOK.api + TOK.notes);
     expect(result.budgetLimit).toBe(30);
     // The home that busts the limit is reported as skipped — not silently cut.
     expect(result.skipped).toContain('01-auth.md');
@@ -238,15 +238,21 @@ describe('issue #16: budget read --limit packs best-effort, never a sticky cut',
     expect(result.skipped).not.toContain('03-notes.md');
   });
 
-  test('e (CLI): --limit 12 / 21 / 30 → exit 0 with the affordable back-ref planned (was: exit 1 + false "plan empty")', () => {
+  test('e (CLI): --limit 12 / 21 / 30 → exit 0 with every affordable item planned (was: exit 1 + false "plan empty")', () => {
     const ws = makeWs('cli-best-effort', RULES_4096);
+    // limit 12 affords exactly the back-ref; 21 and 30 also afford the 8-tok
+    // mentions file (12 + 8 = 20 ≤ 21/30); none can afford the 32-tok home.
+    const expected: Record<number, string[]> = {
+      12: ['02-api.md'],
+      21: ['02-api.md', '03-notes.md'],
+      30: ['02-api.md', '03-notes.md'],
+    };
     for (const limit of [12, 21, 30]) {
       const r = runCli(['budget', 'read', 'sessions', '--limit', String(limit), '--json'], ws.root);
       const j = parseJsonOut(r.out);
       expect(r.exit).toBe(0);
       expect(j.ok).toBe(true);
-      expect(j.plan.map((p: any) => p.file)).toEqual(['02-api.md']);
-      expect(j.totalTokens).toBe(TOK.api);
+      expect(j.plan.map((p: any) => p.file)).toEqual(expected[limit]);
       expect(j.budgetLimit).toBe(limit);
       expect(j.skipped).toContain('01-auth.md');
       // The old false claim ("--limit N is below the cheapest item (12 tok)")
