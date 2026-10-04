@@ -290,12 +290,15 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 
 **Flat vs folder resolution:** Try `cans/02-authentication.md` first. Then `cans/02-authentication/index.md`. Flat wins. Both existing = error.
 
+**Trailing-slash folder targets (issue #22):** `see: auth/`, `see: auth` and `see: auth/index.md` are equivalent spellings of one folder-layout target — trailing slashes are trimmed in target-key resolution (targetMatchesKey / loadedKeyFor / resolveSpecFile), so all ref consumers (broken refs, anchors, deep-hop edges, orphans, back-pointer grouping, token budgets) treat them identically.
+
 ---
 
 ## 12. Refs Engine
 
 ### Resolution
 - Find target file (flat then folder).
+- Trailing-slash folder forms are equivalent spellings: `auth/` = `auth` = `auth/index.md` (issue #22) — never a broken ref on slash spelling alone.
 - If no anchor → file-level ref, resolved.
 - If anchor → find node by exact text match, then case-insensitive fallback.
 - No fuzzy anchor matching. Not found = broken ref error.
@@ -307,10 +310,12 @@ Rebuilt from scratch every `--fix` run. Not incremental. Not authoritative.
 ### Deep-hop detection
 For every file that IS referenced (has incoming refs): if it ALSO has outgoing refs → deep hop error. Report the full chain and suggest the fix.
 
+The suggested fix is two-part and never a duplicate (issue #22): adding the direct ref alone leaves the hop in place, so the advice also says to remove the intermediate hop via the flagged file. And before recommending any `add`, the engine checks the deepest direct referrer's existing refs — if one already resolves to the same target under an equivalent spelling (`see auth#Sessions` vs `see: auth/index.md#Sessions`), the advice names that existing ref instead of appending a second `see:` to the same node.
+
 **Example:**
 ```
 ✗ DEEP HOP: 04-api.md → 02-authentication.md → 06-operations.md
-Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md
+Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remove the intermediate hop via 02-authentication.md
 ```
 
 ### Edge cases
@@ -318,6 +323,8 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md
 | Case | Behavior |
 |---|---|
 | File not found | Broken ref error |
+| Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
+| Broken-ref suggestion | Never proposes creating an existing path (file or dir) — names the missing spec file or says fix the target |
 | Lowercase anchor | Case-insensitive fallback |
 | No anchor | Valid file-level ref |
 | Ref to `_tasks/` | Warning (transient) |
@@ -1125,7 +1132,7 @@ tags: [api, backend]
   "issues": [
     { "file": "03-data.md", "line": 12, "level": "error", "category": "structure", "message": "node too long (140 > 120)" },
     { "file": "04-api.md", "line": 8, "level": "error", "category": "structure", "message": "\"Returns\" has exactly 1 child. Collapse." },
-    { "file": "05-frontend.md", "line": 5, "level": "error", "category": "refs", "message": "DEEP HOP: 05-frontend.md → 02-auth.md → 06-ops.md", "suggestion": "add \"see: 06-ops.md\" directly to 05-frontend.md" },
+    { "file": "05-frontend.md", "line": 5, "level": "error", "category": "refs", "message": "DEEP HOP: 05-frontend.md → 02-auth.md → 06-ops.md", "suggestion": "add \"see: 06-ops.md\" directly to 05-frontend.md and remove the intermediate hop via 02-auth.md" },
     { "file": "02-auth.md", "line": 4, "level": "warning", "category": "redundancy", "message": "\"authentication\" × 7 nodes (threshold: 4)" },
     { "file": "04-api.md", "line": 12, "level": "warning", "category": "redundancy", "message": "85% overlap: 02-auth.md:4 ↔ 04-api.md:12" }
   ],
@@ -1276,7 +1283,7 @@ References
   ✓ 12 see: refs, 0 broken, 0 deep hops
   ✓ back-pointers: 12/12 current
   ✗ 05-frontend.md:5 → 02-auth.md → 06-ops.md — DEEP HOP
-    Fix: add "see: 06-ops.md" directly to 05-frontend.md
+    Fix: add "see: 06-ops.md" directly to 05-frontend.md and remove the intermediate hop via 02-auth.md
 Redundancy
   ⚠ "authentication" × 7 nodes (threshold: 4)
   ⚠ 85% overlap: 02-auth.md:4 ↔ 04-api.md:12
@@ -1370,7 +1377,7 @@ Pattern: `✗ <what> \n <where>: <detail> \n <what to do>`
   Check the gate, then re-run cans done.
 
 ✗ DEEP HOP: 04-api.md → 02-auth.md → 06-ops.md
-  Fix: add "see: 06-ops.md" directly to 04-api.md
+  Fix: add "see: 06-ops.md" directly to 04-api.md and remove the intermediate hop via 02-auth.md
 ```
 
 Never: stack traces for expected errors, "An unexpected error occurred", error codes without messages.
