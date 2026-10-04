@@ -13,7 +13,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
+    "test:node": "node --test --experimental-strip-types --test-concurrency=1 \"test/**/*.test.ts\"",
     "prepublishOnly": "npm run typecheck && bun test"
   },
   "files": [
