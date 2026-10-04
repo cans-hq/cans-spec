@@ -105,15 +105,26 @@ describe('refs extras', () => {
     expect(issues[0].message).not.toContain('00-overview.md');
   });
 
-  test('rebuildBackPointers groups incoming refs per target', () => {
+  test('rebuildBackPointers groups incoming refs per target (and anchor — issue #19)', () => {
     const files = new Map<string, any[]>();
     for (const f of ['02-authentication.md', '04-api.md', '06-operations.md']) {
       files.set(f, parseOutline(readFixture('flat-project', f), f));
     }
     const graph = buildRefGraph(files, '.');
     const rebuilt = rebuildBackPointers(files, graph);
-    expect(rebuilt.get('02-authentication.md')).toBe('04-api.md');
-    expect(rebuilt.get('03-data.md')).toBe('06-operations.md');
+    // 04-api refs `02-authentication.md#Sessions` (anchored): the group keys on
+    // the anchor node — the mark belongs ON the `- Sessions` bullet (issue #19).
+    const auth = rebuilt.get('02-authentication.md') ?? [];
+    expect(auth.length).toBe(1);
+    expect(auth[0]!.node?.text).toBe('Sessions');
+    expect(auth[0]!.node?.line).toBe(8);
+    expect(auth[0]!.fromFiles).toEqual(['04-api.md']);
+    // 06-operations refs `03-data.md` file-level (03-data not loaded here): the
+    // group keeps the raw target name, node null.
+    const data = rebuilt.get('03-data.md') ?? [];
+    expect(data.length).toBe(1);
+    expect(data[0]!.node).toBeNull();
+    expect(data[0]!.fromFiles).toEqual(['06-operations.md']);
   });
 
   test('no deep hops when middle file has no outgoing refs', () => {
@@ -317,8 +328,14 @@ describe('cans check --fix and folder mode', () => {
       expect(fixed.ok).toBe(true);
       expect(fixed.backPointersUpdated).toBeGreaterThanOrEqual(1);
       const content = readTextSync(join(tmp, 'flat-project', '02-authentication.md'));
-      expect(content.split('\n')[0]).toContain('ref-by: 04-api.md');
-      expect(content.split('\n')[0]).not.toContain('05-frontend.md');
+      const lines = content.split('\n');
+      // Issue #19: 04-api refs `02-authentication.md#Sessions` — the mark now
+      // lands ON the `- Sessions` bullet (line 8, inline form), and the stale
+      // 05-frontend.md credit is gone from the root bullet (line 1 has no
+      // comment at all).
+      expect(lines[0]).toBe('- Authentication');
+      expect(lines[7]).toBe('  - Sessions <!-- ref-by: 04-api.md -->');
+      expect(content).not.toContain('05-frontend.md');
       // re-check: no stale back-pointers remain
       const after = await run([]);
       expect(after.backPointers.stale).toBe(0);

@@ -242,9 +242,25 @@ export function extractBackPointers(source: string, file: string): BackPointer[]
     if (fenceOpen) continue;
     const m = lines[i]!.match(REF_BY_RE);
     if (!m) continue;
+    // Issue #19: the comment's FORM defines what it answers, and toAnchor
+    // records it. INLINE (comment on a bullet line) → a node mark: toAnchor is
+    // the text of the node whose line carries the comment, derived exactly the
+    // way parseOutline derives node text (bullet → strip comment → strip
+    // checkbox). STANDALONE (comment on its own line) → a file-level mark:
+    // toAnchor null. `check` compares toAnchor against the referrers' anchors
+    // to decide currency; `--fix` writes anchored marks inline and file-level
+    // marks as standalone lines.
+    const bullet = lines[i]!.match(BULLET_RE);
+    let toAnchor: string | null = null;
+    if (bullet !== null) {
+      let rest = bullet[2]!.replace(REF_BY_RE, '').trim();
+      const cb = rest.match(CHECKBOX_RE);
+      if (cb !== null) rest = rest.slice(cb[0].length).trim();
+      toAnchor = rest;
+    }
     const entries = m[1].split(',').map(s => s.trim()).filter(Boolean);
     for (const e of entries) {
-      out.push({ fromFile: e, fromLine: i + 1, toFile: file, toAnchor: null });
+      out.push({ fromFile: e, fromLine: i + 1, toFile: file, toAnchor });
     }
   }
   return out;

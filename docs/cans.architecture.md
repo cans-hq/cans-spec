@@ -307,6 +307,24 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 HTML comments in target file: `<!-- ref-by: 04-api.md, 05-frontend.md -->`
 Rebuilt from scratch every `--fix` run. Not incremental. Not authoritative.
 
+**Anchor-aware marks (issue #19):** a comment's FORM defines what it answers.
+- A ref WITH an anchor (`see: 02-authentication.md#Sessions`) earns its mark
+  INLINE on the referenced node's bullet line — the §34 convention:
+  `  - Sessions <!-- ref-by: 04-api.md -->`. The node is the first §12
+  anchorMatches hit in document order (exact → case-insensitive →
+  hyphen/space normalization).
+- A plain file-level ref (`see: 03-data.md`) earns the mark as a STANDALONE
+  comment line right after the target's first root bullet (issue #6 form —
+  never inside a code fence).
+- Currency: a standalone mark is current only while its referrer still holds
+  a FILE-LEVEL ref at the file; an inline mark on node X is current while the
+  referrer's anchor resolves to X, or while it refs the file itself (a
+  file-level ref satisfies any mark — the mark is at least as precise as the
+  ref). Retargeting an anchor (`#Sessions` → `#Passwords`) therefore turns
+  the old mark STALE — warning + `--fix` rewrite; a BROKEN anchor earns no
+  mark at all (it is already a `broken anchor` error) and can never read as
+  current. `back-pointers: N/M current` counts comments at this granularity.
+
 ### Deep-hop detection
 For every file that IS referenced (has incoming refs): if it ALSO has outgoing refs → deep hop error. Report the full chain and suggest the fix.
 
@@ -536,6 +554,21 @@ Runs all validation engines. The most-used command.
 **Excludes:** `_collab/`, `AGENTS.md`, `_rules.yaml` from structural checks.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits.
+
+**`--fix` placement (issue #19):** an anchored ref's mark lands INLINE on the
+referenced node's bullet line (`  - Sessions <!-- ref-by: ... -->`); a
+file-level ref's mark stays the issue #6 form — a standalone comment line
+right after the first root bullet outside any fence. Misplaced marks (e.g. a
+root-level mark for a ref that points at `#Sessions`) are moved, not kept.
+
+**`--fix` writes are byte-preserving (issue #21):** rewrites split the raw
+source per line, keeping each line's own terminator. Replaced or stripped
+comments never touch the line's `\r\n` / `\n`; a dropped comment line vanishes
+with its terminator; only INSERTED comment lines mint a new terminator, which
+is the file's DOMINANT EOL. A CRLF spec file stays fully CRLF through `--fix`,
+an LF file stays fully LF — no mixed line endings, no normalization warnings.
+(The parser is CRLF-tolerant by §45, so silence alone never proved integrity —
+byte-level preservation does.)
 
 **Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary.
 
