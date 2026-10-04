@@ -125,6 +125,7 @@ function zeroedCounts(): Omit<CheckResult, 'ok' | 'command' | 'exitCode'> {
     errorCount: 0,
     warningCount: 0,
     backPointersUpdated: 0,
+    backPointersUpdatedFiles: [],
     elapsedMs: 0, // issue #41: the static failure paths never ran a check
   };
 }
@@ -588,10 +589,25 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.
   // §18/§17: with the back-pointer check off (back_pointers false or deleted),
   // --fix must not write anything — backPointersUpdated stays 0, no file touched.
+  // Issue #11 (round 6): a [file] filter scopes the WRITES to the filter-matched
+  // spec files. The desired-marks map is still computed from the GLOBAL ref
+  // graph (refs stay global by design) — only the writes are scoped, so a
+  // filtered run never mutates a file the user did not name. A referrer filter
+  // (e.g. 04-api.md) therefore leaves its TARGETS' marks untouched this run
+  // (targets are not filter-matched); the user re-runs with the target's
+  // filter, or unfiltered, to write them. `cans done` (file: null) and
+  // unfiltered runs rewrite every spec source, exactly as before.
   let backPointersUpdated = 0;
+  const backPointersUpdatedFiles: string[] = [];
   if (opts.fix && backPointersOn) {
     const desired = rebuildBackPointers(allFiles, graph);
-    for (const [rel, source] of specSources) {
+    // Issue #11: filtered run → only the checkable (filter-matched) spec
+    // files; unfiltered run (and `cans done`, which fixes with file: null) →
+    // every spec source.
+    const fixable: string[] = opts.file !== null ? checkable : [...specSources.keys()];
+    for (const rel of fixable) {
+      const source = specSources.get(rel);
+      if (source === undefined) continue;
       // Issue #19: the desired marks are per (file, anchor). Anchored refs
       // earn an INLINE mark on the anchor node's line; file-level refs keep
       // the standalone after-first-root-bullet form (issue #6). Broken-anchor
@@ -607,11 +623,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         await writeText(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         backPointersUpdated++;
+        backPointersUpdatedFiles.push(rel);
       }
     }
 
     // §35 check-fix.json reports the POST-fix state: recompute back-pointer
     // counts from the rewritten sources and drop now-fixed stale issues.
+    // Issue #11: only a file the run ACTUALLY rewrote can have its stale
+    // warnings dropped — files outside a [file] filter keep theirs (the
+    // comment is still on disk, so it is still stale).
     bpTotal = 0;
     bpCurrent = 0;
     bpStale = 0;
@@ -625,8 +645,13 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         }
       }
     }
+    const rewrittenSet = new Set(backPointersUpdatedFiles);
     for (let i = issues.length - 1; i >= 0; i--) {
-      if (issues[i]!.category === 'refs' && issues[i]!.message.startsWith('stale back-pointer:')) {
+      if (
+        issues[i]!.category === 'refs' &&
+        issues[i]!.message.startsWith('stale back-pointer:') &&
+        rewrittenSet.has(issues[i]!.file)
+      ) {
         issues.splice(i, 1);
       }
     }
@@ -675,6 +700,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     errorCount,
     warningCount,
     backPointersUpdated,
+    // Issue #11: the report names the files --fix actually rewrote (sorted,
+    // spec-relative). Empty without --fix or when nothing needed a write;
+    // with a [file] filter only matching files can ever appear here.
+    backPointersUpdatedFiles: [...backPointersUpdatedFiles].sort(),
     // issue #41: whole-ms wall-clock duration of the run (never negative).
     elapsedMs: Math.max(0, Math.round(performance.now() - t0)),
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).

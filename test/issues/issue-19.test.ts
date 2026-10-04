@@ -428,14 +428,25 @@ describe('issue #19: check --fix end-to-end (CLI blackbox)', () => {
     expect(readFileSync(join(ws.cans, '01-auth.md'), 'utf-8')).toBe(once);
   });
 
-  test('[file] filter (issue #11): refs stay global — the anchored mark is still written when filtering another file', () => {
+  test('[file] filter (issue #11 round 6): --fix writes ONLY the filter-matched file — the unfiltered target is untouched', () => {
     const ws = authWs('file-filter', '01-auth.md#Sessions');
     writeFileSync(join(ws.cans, '03-misc.md'), '- Misc\n  - Filler content\n', 'utf8');
     const r = runCli(['check', '03-misc.md', '--fix', '--json'], ws.root);
     const j = parseJsonOut(r.out);
     expect(j.exitCode).not.toBe(2); // filter matched — no check-fail
+    // Refs stay global for CHECKING (the graph still sees 02-api → 01-auth),
+    // but the WRITES are scoped (issue #11): 01-auth.md is not filter-matched,
+    // so this run must not touch it — the user re-runs unfiltered (or filters
+    // 01-auth.md) to write the mark.
+    expect(j.backPointersUpdated).toBe(0);
+    expect(j.backPointersUpdatedFiles).toEqual([]);
     const auth = readFileSync(join(ws.cans, '01-auth.md'), 'utf-8');
-    expect(auth).toContain('  - Sessions <!-- ref-by: 02-api.md -->');
+    expect(auth).not.toContain('ref-by'); // byte-untouched by the filtered run
+    // Convergence: an unfiltered --fix still writes the anchored mark.
+    const all = parseJsonOut(runCli(['check', '--fix', '--json'], ws.root).out);
+    expect(all.backPointersUpdated).toBe(1);
+    expect(all.backPointersUpdatedFiles).toEqual(['01-auth.md']);
+    expect(readFileSync(join(ws.cans, '01-auth.md'), 'utf-8')).toContain('  - Sessions <!-- ref-by: 02-api.md -->');
   });
 });
 

@@ -170,6 +170,10 @@ export interface CheckResult extends CommandResult {
   errorCount: number;
   warningCount: number;
   backPointersUpdated: number;
+  /** Issue #11: spec-relative paths of the files --fix actually rewrote
+   *  (sorted). Empty without --fix or when nothing needed a write; with a
+   *  [file] filter only matching files can ever appear here. */
+  backPointersUpdatedFiles: string[];
   /** issue #41: wall-clock duration of the whole checkWorkspace run,
    *  rounded to whole ms (0 for the static checkFail paths). */
   elapsedMs: number;

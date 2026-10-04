@@ -106,6 +106,9 @@ export interface CheckResultLike {
   errorCount: number;
   warningCount: number;
   backPointersUpdated: number;
+  /** Issue #11: sorted spec-relative paths of the files --fix actually
+   *  rewrote (empty without --fix or when nothing needed a write). */
+  backPointersUpdatedFiles: string[];
   rulesSummary?: string;
   issues: IssueLike[];
   /** checkFail diagnosis (usage / no-workspace / invalid rules) — carried
@@ -563,6 +566,8 @@ export function checkReportJson(result: CheckResultLike): unknown {
     counts: { errors: result.errorCount, warnings: result.warningCount },
     sections,
     backPointersUpdated: result.backPointersUpdated,
+    // issue #11: name the files --fix actually rewrote (sorted, spec-relative).
+    backPointersUpdatedFiles: result.backPointersUpdatedFiles,
   };
   if (result.rulesSummary !== undefined) out.rulesSummary = result.rulesSummary;
   if (result.error !== undefined) out.error = result.error;

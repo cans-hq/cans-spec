@@ -386,6 +386,7 @@ describe('report core (issue #41)', () => {
       errorCount: 2,
       warningCount: 2,
       backPointersUpdated: 0,
+      backPointersUpdatedFiles: ['01-a.md', '03-c.md'],
       rulesSummary: 'node_length: 3–120 | siblings: 2–12 | depth: 1–5',
       issues: [
         { file: 'a.md', line: 5, level: 'error', category: 'refs', message: 'broken ref: see x.md — file not found', rule: 'refs.broken.file' },
@@ -398,7 +399,7 @@ describe('report core (issue #41)', () => {
     const json = checkReportJson(result) as Record<string, unknown>;
     expect(Object.keys(json)).toEqual([
       'ok', 'command', 'exitCode', 'summary', 'refs', 'backPointers',
-      'counts', 'sections', 'backPointersUpdated', 'rulesSummary',
+      'counts', 'sections', 'backPointersUpdated', 'backPointersUpdatedFiles', 'rulesSummary',
     ]);
     expect(json['ok']).toBe(false);
     expect(json['command']).toBe('check');
@@ -406,6 +407,8 @@ describe('report core (issue #41)', () => {
     expect(json['summary']).toEqual({ files: 12, nodes: 345, maxDepth: 4, elapsedMs: 12.5 });
     expect(json['refs']).toEqual({ total: 120, broken: 3, deepHops: 1 });
     expect(json['backPointers']).toEqual({ total: 10, current: 8, stale: 2 });
+    // issue #11: the wire shape names the files --fix actually rewrote.
+    expect(json['backPointersUpdatedFiles']).toEqual(['01-a.md', '03-c.md']);
     expect(json['counts']).toEqual({ errors: 2, warnings: 2 });
     // issue #41 integration: entries are a superset of the acceptance shape
     // (level always present; suggestion only when the issue carries one).
@@ -439,6 +442,7 @@ describe('report core (issue #41)', () => {
       errorCount: 0,
       warningCount: 0,
       backPointersUpdated: 0,
+      backPointersUpdatedFiles: [],
       issues: [],
     }) as { summary: Record<string, number>; rulesSummary?: string };
     expect('elapsedMs' in json.summary).toBe(false);
