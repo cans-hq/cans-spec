@@ -33,6 +33,12 @@ export interface BackPointer {
   fromFile: string;
   fromLine: number;
   toFile: string;
+  /** The anchor side of the back-pointer. For graph-built back-pointers
+   *  (buildRefGraph): the ref's raw anchor token, null for file-level refs.
+   *  For extracted `<!-- ref-by: ... -->` comments (extractBackPointers,
+   *  issue #19): the text of the node whose bullet line carries the comment
+   *  (INLINE form — a node mark), or null when the comment stands on its own
+   *  line (STANDALONE form — a file-level mark). */
   toAnchor: string | null;
 }
 

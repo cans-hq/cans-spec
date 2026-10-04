@@ -396,11 +396,27 @@ export function detectOrphans(
   return issues;
 }
 
+/** Issue #19: one desired ref-by comment — the referrers that point at one
+ *  anchor node (node !== null) or at the file itself (node === null) of one
+ *  target file. rebuildBackPointers groups incoming refs by (resolved target
+ *  file, anchor node): a ref WITH an anchor earns its mark INLINE on the
+ *  referenced node's bullet line, a plain file-level ref keeps the
+ *  file-level mark (standalone line after the first root bullet). */
+export interface RefByGroup {
+  /** Resolved target file key (workspace-relative). */
+  file: string;
+  /** The anchor node the refs point at (§12 anchorMatches resolution, first
+   *  match in document order); null for file-level refs. */
+  node: OutlineNode | null;
+  /** Sorted unique referrer file names — the comment body. */
+  fromFiles: string[];
+}
+
 export function rebuildBackPointers(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
-): Map<string, string> {
-  const groups = new Map<string, Set<string>>();
+): Map<string, RefByGroup[]> {
+  const groups = new Map<string, RefByGroup[]>();
   for (const bp of graph.back) {
     let target: string | null = null;
     for (const key of files.keys()) {
@@ -410,16 +426,42 @@ export function rebuildBackPointers(
       }
     }
     const name = target ?? bp.toFile;
-    let set = groups.get(name);
-    if (set === undefined) {
-      set = new Set<string>();
-      groups.set(name, set);
+    let node: OutlineNode | null = null;
+    if (bp.toAnchor !== null) {
+      // Issue #19: the anchor is now part of the group key. Resolve it in the
+      // target file's outline (the same §12 anchorMatches resolution
+      // checkRefs applies). An anchor that resolves to NO node is a broken
+      // anchor — already a checkRefs error — and earns no mark: dropped here
+      // so --fix never writes it and it can never read as current.
+      if (target === null) continue; // target not loaded: anchor unresolvable
+      node = flattenNodes(files.get(target)!).find(n => anchorMatches(n.text, bp.toAnchor!)) ?? null;
+      if (node === null) continue; // broken anchor — earns nothing
     }
-    set.add(bp.fromFile);
+    let list = groups.get(name);
+    if (list === undefined) {
+      list = [];
+      groups.set(name, list);
+    }
+    let group = list.find(g => g.node === node);
+    if (group === undefined) {
+      group = { file: name, node, fromFiles: [] };
+      list.push(group);
+    }
+    if (!group.fromFiles.includes(bp.fromFile)) group.fromFiles.push(bp.fromFile);
   }
-  const out = new Map<string, string>();
+  const out = new Map<string, RefByGroup[]>();
   for (const key of [...groups.keys()].sort()) {
-    out.set(key, [...groups.get(key)!].sort().join(', '));
+    const list = groups.get(key)!;
+    // Deterministic order: the file-level group first, then anchored groups by
+    // the anchor node's source line (document order).
+    list.sort((a, b) => {
+      if (a.node === null && b.node === null) return 0;
+      if (a.node === null) return -1;
+      if (b.node === null) return 1;
+      return a.node.line - b.node.line;
+    });
+    for (const g of list) g.fromFiles.sort();
+    out.set(key, list);
   }
   return out;
 }
