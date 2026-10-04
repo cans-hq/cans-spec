@@ -658,6 +658,8 @@ Centered on a task file. Add its refs (1 hop). Reject deep-hop expansion. Apply 
 
 **Import rules:** Preserve hierarchy. Convert bullets to `- `. Convert tasks. Strip app metadata. Preserve real identifiers. Convert `[[wiki-links]]` → `see:`. Strip YAML frontmatter. Extract code blocks → overflow files. Do NOT invent refs. Do NOT deduplicate. Let `cans check` report issues after.
 
+**Merge matching (conflict semantics):** when a target spec already exists, each imported node is matched in order: (1) exact normalized text; (2) near-match — word overlap ≥ 0.75 against any sibling under the same parent; (3) positional counterpart — overlap ≥ 0.5 on the same sibling slot; (4) diverged-sibling guard — the leading stem (first two significant words) is identical AND token-Jaccard ≥ 0.3, or at least half of the existing sibling's significant tokens survive. The stem — not an overlap floor — is the discriminator: "Sign up: TBD" vs "Sign in: TBD" has Jaccard 0.50 yet is a genuinely distinct sibling, while "Sign up: DONE - changed externally" (Jaccard 0.33, overlap 0.40) is the same concept reworded. A layer-2/3/4 hit with differing text is a conflict recorded in `conflicts[]` and resolved by the merge strategy — never a silent duplicate sibling appended. Logseq/Obsidian sources are normalized from their flat indent-annotated parse into a tree before the merge walk, so the sibling layers match against the real parent's children.
+
 **JSON result:**
 ```ts
 { ok, command: 'import', exitCode, format, source,

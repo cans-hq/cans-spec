@@ -127,6 +127,73 @@ function isNearMatch(a: string, b: string, minOverlap = 0.75): boolean {
   return shared / Math.max(wa.size, wb.size) >= minOverlap;
 }
 
+// ── diverged-sibling guard (issue #20 / §27) ────────────────────────────────
+
+/** Significant tokens of a node: normalized words of length > 1. */
+function sigTokens(text: string): string[] {
+  return normKey(text).split(' ').filter(w => w.length > 1);
+}
+
+/** DIVERGED_STEM: the leading-stem length for the guard — the first TWO
+ *  significant words when both sides have them (falls back to one). Two, not
+ *  one: "sign up" vs "sign in" share the first word but are distinct concepts,
+ *  while "sign up" vs "sign up …" is the same concept reworded. */
+const DIVERGED_STEM = 2;
+
+/** DIVERGED_JACCARD_FLOOR: corroborating token-set overlap for the guard.
+ *  Jaccard (shared / union) is preferred over isNearMatch's shared/max because
+ *  it does not decay monotonically as one side is lengthened. The floor is
+ *  deliberately low (0.3): the repro pair "Sign up: TBD" vs "Sign up: DONE -
+ *  changed externally" scores 2/6 ≈ 0.33, and the stem condition — not the
+ *  floor — carries the discrimination (see isDivergedSibling). */
+const DIVERGED_JACCARD_FLOOR = 0.3;
+
+/** DIVERGED_CONTAINMENT: length-robustness fallback. A rewording that keeps the
+ *  stem but lengthens far ("Sign up: DONE and the ops team also recorded the
+ *  external migration notes") decays Jaccard below any floor (2/13 ≈ 0.15),
+ *  yet it still preserves ≥ half of the EXISTING sibling's significant tokens
+ *  (shared/minSize ≥ 0.5) — that is the same concept elaborated, not a new one. */
+const DIVERGED_CONTAINMENT = 0.5;
+
+/**
+ * Diverged-sibling guard (issue #20): true when an import node that escaped all
+ * three match layers (exact → near-match ≥ 0.75 → positional ≥ 0.5) is still
+ * recognizably the SAME concept as an existing sibling under the same parent:
+ *
+ *   1. leading stem: the first min(2, ·) significant words are identical
+ *      ("sign up" == "sign up"), AND
+ *   2. word-overlap corroboration: token-Jaccard ≥ 0.3, OR ≥ 0.5 of the
+ *      existing sibling's significant tokens survive in the import node.
+ *
+ * Why a CONJUNCTION: the repro pair has Jaccard 0.33 while the genuinely
+ * distinct "Sign up: TBD" vs "Sign in: TBD" has Jaccard 0.50 — no Jaccard-only
+ * floor separates them. The two-word stem does ("sign up" ≠ "sign in"), and the
+ * overlap metrics corroborate the stem so stem-equal-but-unrelated texts stay
+ * distinct. Either signal alone is too noisy; together they catch the reworded
+ * re-import without flagging genuinely new siblings.
+ *
+ * Callers: mergeInto, as the FINAL same-parent check before the new-node append
+ * — a hit is a conflict per §27/§35 (recorded, strategy-resolved), never a
+ * silent duplicate sibling. Exported for unit tests only.
+ */
+export function isDivergedSibling(existing: string, incoming: string): boolean {
+  const ea = sigTokens(existing);
+  const ib = sigTokens(incoming);
+  if (ea.length === 0 || ib.length === 0) return false;
+  const stemLen = Math.min(DIVERGED_STEM, ea.length, ib.length);
+  for (let i = 0; i < stemLen; i++) {
+    if (ea[i] !== ib[i]) return false; // leading stem differs → distinct concept
+  }
+  const sa = new Set(ea);
+  const sb = new Set(ib);
+  let shared = 0;
+  for (const w of sa) if (sb.has(w)) shared++;
+  const union = sa.size + sb.size - shared;
+  const jaccard = union > 0 ? shared / union : 0;
+  const containment = shared / Math.min(sa.size, sb.size);
+  return jaccard >= DIVERGED_JACCARD_FLOOR || containment >= DIVERGED_CONTAINMENT;
+}
+
 /** Source files to import: a single file, or every supported file inside a directory. */
 function sourceFiles(path: string, format: string): string[] | null {
   if (isFile(path)) return [path];
@@ -148,6 +215,28 @@ function mapText(nodes: ExternalNode[], f: (t: string) => string): ExternalNode[
   return nodes.map((n) => ({ ...n, text: f(n.text), children: mapText(n.children, f) }));
 }
 
+/** Logseq/Obsidian parsers (§31) yield a FLAT indent-annotated list; the merge
+ *  walk (mergeInto/mergeNodes) needs a real TREE so the sibling-level match
+ *  layers (near-match, positional counterpart, diverged guard) scan the ACTUAL
+ *  sibling set under the matched parent. Without this, every non-root node of
+ *  a logseq/obsidian import was merged at the ROOT level: the sibling layers
+ *  never fired below the root, so any diverged nested node fell through to the
+ *  append branch — the silent duplicate of issue #20 (the appended node only
+ *  LOOKED correctly placed because serializeToCans writes by `indent`).
+ *  Stack-attach by indent, same rule as parseFromCans. OPML/Dynalist already
+ *  build trees (parseOpml), so only the flat formats are normalized. */
+function toTree(flat: ExternalNode[]): ExternalNode[] {
+  const roots: ExternalNode[] = [];
+  const stack: ExternalNode[] = [];
+  for (const n of flat) {
+    const node: ExternalNode = { ...n, children: [] };
+    while (stack.length > 0 && stack[stack.length - 1]!.indent >= node.indent) stack.pop();
+    (stack.length > 0 ? stack[stack.length - 1]!.children : roots).push(node);
+    stack.push(node);
+  }
+  return roots;
+}
+
 function parseSource(text: string, format: string): ExternalNode[] {
   if (format === 'opml' || format === 'dynalist') {
     let nodes = parseOpml(text);
@@ -160,8 +249,8 @@ function parseSource(text: string, format: string): ExternalNode[] {
     }
     return nodes;
   }
-  if (format === 'logseq') return parseLogseq(text);
-  if (format === 'obsidian') return parseObsidian(stripFrontmatter(text));
+  if (format === 'logseq') return toTree(parseLogseq(text));
+  if (format === 'obsidian') return toTree(parseObsidian(stripFrontmatter(text)));
   return [];
 }
 
@@ -190,14 +279,18 @@ interface MergeOutcome {
 }
 
 /**
- * Tree-level merge (QA-05 F8/F9). One single-pass walk of the import tree:
- * for each imported node, match it against the existing tree by normalized text
- * (global exact index) and, failing that, against its sibling slot by word
+ * Tree-level merge (QA-05 F8/F9, issue #20). One single-pass walk of the import
+ * tree: for each imported node, match it against the existing tree by normalized
+ * text (global exact index) and, failing that, against its sibling slot by word
  * overlap; brand-new nodes are inserted under the CORRECT parent so tree
  * position is preserved (the old flat-append corrupts the hierarchy).
  *   exact normalized match → conflict only if text differs
  *     (cans-wins keeps the CANS text, import-wins overwrites it)
  *   near-match (word overlap ≥ 0.75) → conflict + strategy
+ *   positional counterpart (overlap ≥ 0.5) → conflict + strategy
+ *   diverged sibling (leading stem + word overlap, issue #20) → conflict +
+ *     strategy — same concept reworded below the overlap layers, NEVER a
+ *     silent duplicate sibling appended
  *   new node → inserted under the matched/near parent; `ask` reports it, no write
  */
 function mergeInto(
@@ -284,6 +377,29 @@ function mergeInto(
         if (strategy === 'import-wins') counterpart.text = imp.text;
         // cans-wins / ask: keep the CANS version
         mergeNodes(imp.children, counterpart.children);
+        continue;
+      }
+
+      // Diverged-sibling guard (issue #20): all three match layers missed, but
+      // a node that shares the leading stem and corroborating word overlap with
+      // an EXISTING sibling under the same parent is the same concept reworded
+      // ("Sign up: TBD" → "Sign up: DONE - changed externally", overlap 0.4).
+      // Per §27/§35 that is a conflict to surface — never a silent duplicate
+      // sibling appended. cans-wins keeps the CANS text; import-wins
+      // overwrites; ask reports (no write) — same strategy semantics as the
+      // near-match and positional layers above.
+      const diverged = targetChildren.find(c => isDivergedSibling(c.text, imp.text));
+      if (diverged !== undefined) {
+        conflicts.push({
+          file: relName,
+          line: lineOfKey.get(normKey(diverged.text)) ?? 0,
+          cansVersion: diverged.text,
+          importVersion: imp.text,
+          resolution: strategy,
+        });
+        if (strategy === 'import-wins') diverged.text = imp.text;
+        // cans-wins / ask: keep the CANS version
+        mergeNodes(imp.children, diverged.children);
         continue;
       }
 
