@@ -108,15 +108,32 @@ export function buildReadPlan(
   }
 
   const backRefFiles = new Set<string>();
+  // §26 step 3 forward-ref tier (QA-17 F28): the files the canonical home
+  // POINTS TO — targets of see: refs made from the home file — connect at 40.
+  // (Back-refs, the files that point AT the home, stay 60; a file that is
+  // both keeps the higher tier.)
+  const forwardFiles = new Set<string>();
   if (home !== null) {
     for (const bp of backPointers) {
       if (targetMatchesKey(bp.toFile, home.file)) backRefFiles.add(bp.fromFile);
+      if (bp.fromFile === home.file) {
+        for (const key of allFiles.keys()) {
+          if (targetMatchesKey(bp.toFile, key)) {
+            forwardFiles.add(key);
+            break;
+          }
+        }
+      }
     }
   }
   for (const key of allFiles.keys()) {
     if (items.has(key)) continue;
     if (backRefFiles.has(key)) {
       items.set(key, { file: key, anchor: null, reason: 'see: back-ref', score: 60, estTokens: tokens(key), rank: 2 });
+      continue;
+    }
+    if (forwardFiles.has(key)) {
+      items.set(key, { file: key, anchor: null, reason: 'forward ref', score: 40, estTokens: tokens(key), rank: 3 });
       continue;
     }
     const mentions = flattenNodes(allFiles.get(key)!).some(n => n.text.toLowerCase().includes(lc));
@@ -201,6 +218,16 @@ export function buildReadPlan(
   }
   for (const key of allFiles.keys()) {
     if (!items.has(key)) skipped.push(key);
+  }
+  // §26 step 4 (QA-17 F25): skipped lists EVERY file not in the plan — active
+  // task files are in budget scope (§22), so a task file with no connection
+  // to the concept (never scored into `items`) is listed too, never
+  // invisible. Planned-but-unaffordable task files already landed in skipped
+  // via the packing loop above.
+  if (activeTaskPaths !== undefined) {
+    for (const taskPath of activeTaskPaths) {
+      if (!items.has(taskPath)) skipped.push(taskPath);
+    }
   }
   skipped.sort();
 

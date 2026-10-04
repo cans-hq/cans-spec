@@ -440,13 +440,16 @@ describe('issue #16 round 6 (QA-17 F25): skipped lists EVERY file not in the pla
     const j = parseJsonOut(r.out);
     expect(r.exit).toBe(0);
     expect(j.ok).toBe(true);
-    // The mentioning task file is planned (§26 step 3, score 80, after home).
-    expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', 'cans/_tasks/fix-sessions.md', '02-api.md']);
+    // The mentioning task file is planned (§26 step 3, score 80, after home);
+    // the affordable mention file (8 tok) is planned at the bottom.
+    expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', 'cans/_tasks/fix-sessions.md', '02-api.md', '03-notes.md']);
     expect(j.plan[1].score).toBe(80);
     expect(j.plan[1].reason).toBe('active task mentions concept');
     // EVERY other file in budget scope is in skipped — including the
-    // no-connection task file and the no-connection spec file (sorted).
-    expect(j.skipped).toEqual(['00-overview.md', '03-notes.md', 'cans/_tasks/fix-shipping.md']);
+    // no-connection task file and the no-connection spec file. (Task files
+    // carry cwd-relative absolute keys, so they sort first — the same order
+    // QA-17 F46 observed for unaffordable task files.)
+    expect(j.skipped).toEqual(['cans/_tasks/fix-shipping.md', '00-overview.md']);
   });
 
   test('f25-b (CLI human): the Skipped: section lists the no-connection task file', () => {
@@ -517,11 +520,11 @@ describe('issue #16 round 6 (QA-17 F28): the forward ref (40) scoring tier is re
     expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', '02-api.md', '03-pw.md']);
     expect(j.plan[0]).toMatchObject({ score: 100, reason: 'canonical home' });
     expect(j.plan[1]).toMatchObject({ score: 60, reason: 'see: back-ref' });
-    expect(j.plan[2]).toMatchObject({ score: 40, reason: 'forward ref', estTokens: 16 });
-    expect(j.totalTokens).toBe(22 + 12 + 16);
+    expect(j.plan[2]).toMatchObject({ score: 40, reason: 'forward ref', estTokens: 15 });
+    expect(j.totalTokens).toBe(22 + 12 + 15);
     // Human mode shows the tier too.
     const rHuman = runCli(['budget', 'read', 'sessions'], ws.root);
-    expect(rHuman.out).toContain('03-pw.md ← forward ref (16 tok)');
+    expect(rHuman.out).toContain('03-pw.md ← forward ref (15 tok)');
     expect(rHuman.out).not.toContain('Skipped:\n  03-pw.md');
   });
 
