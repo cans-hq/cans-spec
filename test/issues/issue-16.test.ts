@@ -518,9 +518,13 @@ describe('issue #16 round 6 (QA-17 F28): the forward ref (40) scoring tier is re
     expect(r.exit).toBe(0);
     expect(j.ok).toBe(true);
     expect(j.plan.map((p: any) => p.file)).toEqual(['01-auth.md', '02-api.md', '03-pw.md']);
-    expect(j.plan[0]).toMatchObject({ score: 100, reason: 'canonical home' });
-    expect(j.plan[1]).toMatchObject({ score: 60, reason: 'see: back-ref' });
-    expect(j.plan[2]).toMatchObject({ score: 40, reason: 'forward ref', estTokens: 15 });
+    expect(j.plan[0].score).toBe(100);
+    expect(j.plan[0].reason).toBe('canonical home');
+    expect(j.plan[1].score).toBe(60);
+    expect(j.plan[1].reason).toBe('see: back-ref');
+    expect(j.plan[2].score).toBe(40);
+    expect(j.plan[2].reason).toBe('forward ref');
+    expect(j.plan[2].estTokens).toBe(15);
     expect(j.totalTokens).toBe(22 + 12 + 15);
     // Human mode shows the tier too.
     const rHuman = runCli(['budget', 'read', 'sessions'], ws.root);
