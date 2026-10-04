@@ -208,8 +208,48 @@ export interface RefByPlacement {
   body: string;
 }
 
+/** Issue #21: one source line, split off its terminator. `eol` records the
+ *  bytes that ended the line ('\r\n' | '\n'); null only for a final line the
+ *  file left unterminated (possibly the empty tail after a trailing newline).
+ *  Splitting this way keeps every line's own terminator addressable so the
+ *  rejoin is byte-preserving: replaced/stripped content never touches the
+ *  terminator, dropped lines vanish with theirs, and only genuinely inserted
+ *  lines mint a new one (the file's dominant EOL). Line indices are identical
+ *  to normalizeEol + split('\n') — what parseOutline and extractBackPointers
+ *  see — because '\r' is peeled off the same '\n' boundaries. */
+interface SourceLine {
+  text: string;
+  eol: string | null;
+}
+
+function splitSourceLines(source: string): SourceLine[] {
+  const out: SourceLine[] = [];
+  let start = 0;
+  for (let i = 0; i < source.length; i++) {
+    if (source.charCodeAt(i) === 10 /* \n */) {
+      let end = i;
+      let eol = '\n';
+      if (end > start && source.charCodeAt(end - 1) === 13 /* \r */) {
+        end -= 1;
+        eol = '\r\n';
+      }
+      out.push({ text: source.slice(start, end), eol });
+      start = i + 1;
+    }
+  }
+  out.push({ text: source.slice(start), eol: null }); // unterminated tail (may be '')
+  return out;
+}
+
+function joinSourceLines(lines: SourceLine[]): string {
+  let out = '';
+  for (const l of lines) out += l.text + (l.eol ?? '');
+  return out;
+}
+
 /** Rewrite `<!-- ref-by: ... -->` comments in one spec file source.
- *  Fence-aware, prose-preserving, anchor-aware (issues #6 + #19):
+ *  Fence-aware, prose-preserving, anchor-aware, EOL-preserving
+ *  (issues #6 + #19 + #21):
  *  - Lines inside ``` fences (and the fence markers themselves) are preserved
  *    byte-for-byte: never scanned as hits, never rewritten, never dropped, and
  *    fenced "- fake bullets" are never insertion anchors. Anchored placements
@@ -228,9 +268,26 @@ export interface RefByPlacement {
  *    it sits (issue #6 contract); every other hit — stale, duplicate or
  *    misplaced — is stripped: bullets keep the bullet, non-bullet prose loses
  *    only the comment substring (the line is dropped only when bare).
+ *  - Issue #21 byte preservation: content edits never touch a line's own
+ *    terminator (a CRLF line stays CRLF through replace and strip; a dropped
+ *    line disappears with its terminator). Only INSERTED lines mint a new
+ *    terminator — the file's DOMINANT EOL — so a CRLF spec never acquires a
+ *    bare-LF comment line, and an LF spec never acquires \r. Appending after
+ *    an unterminated last line gives that line the dominant EOL as separator;
+ *    the appended comment stays unterminated, exactly like a join would.
  *  Exported for regression tests (issues #6/#19/#21); behavior lives here. */
 export function rewriteRefBy(source: string, body: string | null, anchored?: RefByPlacement[]): string {
-  const lines: Array<string | null> = source.split('\n');
+  const lines = splitSourceLines(source);
+  // Issue #21: the dominant terminator mints the EOL of inserted lines.
+  // Majority vote over the file's real terminators; a tie (or a file with no
+  // terminated lines) stays LF — the join default.
+  let crlf = 0;
+  let lf = 0;
+  for (const l of lines) {
+    if (l.eol === '\r\n') crlf++;
+    else if (l.eol === '\n') lf++;
+  }
+  const dominant = crlf > lf ? '\r\n' : '\n';
   const comment = body !== null && body !== '' ? `<!-- ref-by: ${body} -->` : null;
   // Merge anchored placements onto 0-based line indices (defensive: duplicate
   // lines union their bodies). Out-of-range lines — pathological sources whose
@@ -252,11 +309,12 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   };
 
   const hits: number[] = [];
+  const dropped = new Set<number>(); // issue #6: bare non-bullet comment lines vanish
   let fenceOpen = false;
   let fenceOpener = -1;
   const inFence: boolean[] = new Array(lines.length).fill(false);
   for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!;
+    const raw = lines[i]!.text;
     if (FENCE_RE.test(raw.trim())) {
       // Fence marker: toggles state; never a hit, never an anchor, never touched.
       inFence[i] = true;
@@ -279,8 +337,8 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   for (const i of hits) {
     if (replaced.has(i)) continue;
     const anchorBody = anchoredBody(i);
-    if (anchorBody !== null && /^\s*-\s/.test(lines[i]!)) {
-      lines[i] = lines[i]!.replace(REF_BY_RE, `<!-- ref-by: ${anchorBody} -->`);
+    if (anchorBody !== null && /^\s*-\s/.test(lines[i]!.text)) {
+      lines[i]!.text = lines[i]!.text.replace(REF_BY_RE, `<!-- ref-by: ${anchorBody} -->`);
       anchoredByLine.delete(i);
       replaced.add(i);
     }
@@ -291,7 +349,7 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   if (comment !== null) {
     for (const i of hits) {
       if (replaced.has(i)) continue;
-      lines[i] = lines[i]!.replace(REF_BY_RE, comment);
+      lines[i]!.text = lines[i]!.text.replace(REF_BY_RE, comment);
       replaced.add(i);
       fileSlotUsed = true;
       break;
@@ -300,36 +358,37 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   // 3. Every remaining hit is stale, duplicate or misplaced: strip it.
   for (const i of hits) {
     if (replaced.has(i)) continue;
-    const raw = lines[i]!;
+    const raw = lines[i]!.text;
     const isBullet = /^\s*-\s/.test(raw);
     if (isBullet) {
-      lines[i] = raw.replace(REF_BY_RE, '').replace(/[ \t]+$/, '');
+      lines[i]!.text = raw.replace(REF_BY_RE, '').replace(/[ \t]+$/, '');
     } else {
       // Issue #6: never delete a prose line whole — strip the comment only.
       const stripped = stripRefByKeepProse(raw);
-      lines[i] = stripped.trim() === '' ? null : stripped;
+      if (stripped.trim() === '') dropped.add(i);
+      else lines[i]!.text = stripped;
     }
   }
   // 4. Fresh anchored marks: append inline to the anchor node's bullet line
-  //    (after one space). A dropped line (null) can only be a bare non-bullet
-  //    comment line in pathological input — place the mark there plainly.
+  //    (after one space). The line keeps its own terminator (issue #21).
   for (const idx of [...anchoredByLine.keys()].sort((a, b) => a - b)) {
     const anchorBody = anchoredBody(idx);
     if (anchorBody === null) continue;
-    const current = lines[idx];
-    lines[idx] = current === null || current === undefined
+    const target = lines[idx];
+    target.text = target.text === ''
       ? `<!-- ref-by: ${anchorBody} -->`
-      : `${current} <!-- ref-by: ${anchorBody} -->`;
+      : `${target.text} <!-- ref-by: ${anchorBody} -->`;
   }
   // 5. Fresh file-level mark (only when no hit became the file-level slot):
   //    standalone line right after the first root bullet outside any fence,
   //    appended at end when none exists (issue #6) — never inside an
-  //    unterminated fence.
+  //    unterminated fence. The inserted line is terminated with the file's
+  //    dominant EOL (issue #21).
   if (comment !== null && !fileSlotUsed) {
     let insertAt = lines.length;
     for (let i = 0; i < lines.length; i++) {
       if (inFence[i]) continue; // fenced `- fake bullets` are not anchors
-      if (lines[i] !== null && /^- /.test(lines[i]!)) {
+      if (!dropped.has(i) && /^- /.test(lines[i]!.text)) {
         insertAt = i + 1;
         break;
       }
@@ -337,9 +396,20 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
     // Issue #6: never insert inside an open fence — appending at EOF while a
     // fence is unterminated would corrupt the fenced region.
     if (insertAt >= lines.length && fenceOpen) insertAt = fenceOpener;
-    lines.splice(insertAt, 0, comment);
+    if (insertAt < lines.length) {
+      lines.splice(insertAt, 0, { text: comment, eol: dominant });
+    } else {
+      // Appending at EOF: the current last line (an unterminated tail) gains
+      // the dominant EOL as separator; the comment becomes the unterminated
+      // tail — byte-identical to what a plain join would produce, with the
+      // file's own dominant terminator instead of a hard-coded '\n'.
+      const last = lines[lines.length - 1]!;
+      if (last.eol === null) last.eol = dominant;
+      lines.push({ text: comment, eol: null });
+    }
   }
-  return lines.filter((l): l is string => l !== null).join('\n');
+  const kept: SourceLine[] = lines.filter((_, i) => !dropped.has(i));
+  return joinSourceLines(kept);
 }
 
 /** The shared engine orchestrator used by `cans check` and `cans done`. */

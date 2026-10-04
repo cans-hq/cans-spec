@@ -244,7 +244,9 @@ describe('issue #21: check --fix end-to-end (CLI blackbox, bytes)', () => {
 
   test('anchored ref into a CRLF file: inline mark keeps the node-line CRLF terminator', () => {
     const ws = makeWs('anchored-crlf');
-    writeFileSync(join(ws.cans, '00-overview.md'), '- Overview\r\n  - API rules: see 01-api.md#Bearer\r\n');
+    // §12 anchor convention: hyphens ↔ spaces, so #Bearer-token-required
+    // names the node "Bearer token required".
+    writeFileSync(join(ws.cans, '00-overview.md'), '- Overview\r\n  - API rules: see 01-api.md#Bearer-token-required\r\n');
     writeFileSync(
       join(ws.cans, '01-api.md'),
       '- API\r\n  - Bearer token required\r\n  - Rate limited per key\r\n',
