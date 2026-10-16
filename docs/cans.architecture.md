@@ -573,10 +573,10 @@ Creates workspace skeleton. Idempotent. Skips existing files unless `--force`.
 Runs all validation engines. The most-used command.
 
 **Reads:** `_rules.yaml`, spec files, `_tasks/*.md` (light ref check only), `_adr/*.md` (ref check).
-**Writes:** Nothing by default. `--fix` updates back-pointer comments only.
+**Writes:** Nothing by default. `--fix` updates back-pointer comments; `--fix --yes` additionally repairs broken ref anchors (issue #53 Part 2.4, below). `--fix --dry-run` writes nothing at all.
 **Excludes:** `_collab/`, `AGENTS.md`, `_rules.yaml` from structural checks.
 
-**`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits.
+**`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits. (The one exception, gated behind `--fix --yes`: pure anchor-segment rewrites inside `see:` tokens — see the anchor-repair contract below. Node text is never touched.)
 
 **`--fix` honors the [file] filter (issue #11):** with a filter active,
 `--fix` rewrites ref-by comments ONLY in the filter-matched spec files —
@@ -603,7 +603,60 @@ with its terminator; only INSERTED comment lines mint a new terminator, which
 is the file's DOMINANT EOL. A CRLF spec file stays fully CRLF through `--fix`,
 an LF file stays fully LF — no mixed line endings, no normalization warnings.
 (The parser is CRLF-tolerant by §45, so silence alone never proved integrity —
-byte-level preservation does.)
+byte-level preservation does.) Anchor repairs share the same per-line
+discipline (they only ever edit a line's text, never its terminator).
+
+**`--fix` anchor repair (issue #53 Part 2.4):** a broken ref anchor is
+repaired ONLY when ALL of these hold for the failing `see: <file>#<anchor>`:
+
+1. **Target resolvable and parseable** — the same path checkRefs used
+   (loaded workspace key, or the file on disk via the spec resolver; YAML
+   mapping keys count as addressable candidates, issue #49). Missing or
+   unparseable targets are skipped cleanly — they keep their own findings.
+2. **Unambiguous intent** — EXACTLY ONE distinct node/key text in the target
+   fuzzy-matches the failing anchor at ≥ the suggestion threshold (0.8,
+   `nearSlugMatches` in `core/slug.ts`; synthetic placeholder nodes are
+   excluded). Two lookalike siblings one letter apart = ambiguous = no
+   repair, no proposal — the plain `refs.broken.anchor` error stays, never a
+   coin flip. Duplicate node texts collapse to one candidate: they spell the
+   same anchor, so the rewrite is still uniquely determined.
+3. **Pure anchor substitution** — the fix replaces ONLY the anchor segment of
+   the ref's `see:` token with the canonical slug (`anchorSlug`) of the
+   matched node. Node text, the file token, everything else on the line, and
+   the line's own EOL bytes survive verbatim. Lines inside ``` fences are
+   never touched (fence guard). A rewrite the engine cannot express as a
+   single anchor token (whitespace/`#` in the slug) or that would not resolve
+   is skipped.
+
+Transaction shape ("print each proposed rewrite first, require `--yes` to
+commit"):
+
+- **`cans check --fix`** — ref-by cleanup runs exactly as before, and anchor
+  repairs are PROPOSED in the report only (`anchorFixes` with
+  `applied:false`; the human line `--fix would rewrite: <file>:<line>
+  #<from> → #<to>`, folded to `--fix would rewrite anchors in: <files> (N) —
+  run with --yes to apply` when there are more than three). No anchor byte
+  is written.
+- **`cans check --fix --yes`** — ref-by cleanup PLUS the proposed anchor
+  rewrites, applied. The report reflects the POST-fix state: applied repairs
+  drop their `refs.broken.anchor` issues, `refs.broken` and the exit code
+  improve accordingly (2 → 0/1 when every error was a repaired anchor), and
+  the rebuilt ref graph feeds the ref-by phase in the SAME run — a repaired
+  ref earns its target's inline mark immediately. The human report names the
+  rewritten referrers: `--fix rewrote anchors in: <file> (N)`.
+- **`cans check --fix --dry-run`** — NO writes at all: anchor repairs and
+  ref-by rewrites are both previewed (`--fix would rewrite ref-by in: ...`;
+  `anchorFixes` all `applied:false`; `dryRun:true` on the JSON marks that
+  `backPointersUpdated*` describe WOULD-BE writes). Stale back-pointer
+  warnings stay (nothing was written, so nothing was resolved).
+- `--yes` or `--dry-run` without `--fix`, or both together, is a §20 usage
+  error (exit 2).
+
+The `[file]` filter scopes anchor proposals AND writes to the filter-matched
+referrer files (issue #11 discipline, same as ref-by): a broken anchor in a
+non-matched referrer is neither proposed nor rewritten; a matched referrer's
+TARGET files keep their ref-by marks untouched that run. `cans done`'s fix
+pass never sets `--yes` — it keeps today's ref-by-only behavior.
 
 **Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary.
 
@@ -613,11 +666,16 @@ byte-level preservation does.)
   refs: { total, broken, deepHops },   // broken = broken ref targets + broken anchors (round 6)
   backPointers: { total, current, stale },
   issues: Issue[], errorCount, warningCount, backPointersUpdated,
-  backPointersUpdatedFiles }
+  backPointersUpdatedFiles,
+  anchorFixes?,   // issue #53 (Part 2.4): [{file, line, from, to, applied}] — present on --fix runs only
+  dryRun?         // issue #53 (Part 2.4): true when --fix --dry-run previewed the run
+}
 ```
 `backPointersUpdatedFiles`: sorted spec-relative paths of the files `--fix`
 actually rewrote (issue #11) — empty without `--fix` or when nothing needed
 a write; with a `[file]` filter only matching files can ever appear there.
+Under `--dry-run` the same fields describe the WOULD-BE writes (`dryRun: true`
+marks the distinction; no byte changes on disk).
 
 ---
 
@@ -1229,6 +1287,14 @@ tags: [api, backend]
   "backPointersUpdatedFiles": ["01-auth.md", "03-data.md", "04-api.md"]
 }
 ```
+Issue #53 (Part 2.4): a `--fix` run additionally carries `anchorFixes`
+(`[{file, line, from, to, applied}]` — proposals `applied:false`, `--yes`
+rewrites `applied:true`; empty array when no anchor needed repair), and a
+`--fix --dry-run` run carries `dryRun: true` (the `backPointersUpdated*`
+figures then describe WOULD-BE writes). Both fields are ADDITIVE and appear
+only in `--fix` modes — plain-check JSON (like the fixtures above) is
+byte-identical to the pre-#53 wire shape, so the pinned fixtures stand
+unchanged.
 
 ### `output/status.json`
 ```json

@@ -19,21 +19,21 @@
  *      and every other byte on the line, is preserved (fence-safe, EOL-safe).
  *
  * Test map:
- *   a–e ... flag surface: --yes/--dry-run gate on --fix (§20 usage errors,
- *          exit 2 via checkFail), help lists them
- *   f–k ... repairAnchors unit: the pure byte-level rewriter (EOL
- *          preservation, raw-token disambiguation, fence guard, edge cases)
- *   l..... unambiguous one-letter-off anchor + em-dash node: plain check →
- *          error exit 2; plain --fix → proposal, referrer bytes unchanged,
- *          ref-by cleanup still writes; --fix --yes → only the anchor
- *          segment changes (full-file byte assert), refs.broken 0, exit < 2
- *   m..... CRLF referrer: every other byte preserved through the repair
- *   n..... --fix --dry-run writes NOTHING (anchors AND ref-by previewed)
- *   o..... ambiguous siblings → no proposal, no rewrite, error stays
- *   p..... unparseable target → skipped cleanly
- *   q..... [file] filter scopes proposals and writes to matched referrers
- *   r..... multiple see: refs on one line → only the broken one's anchor
- *   s..... --json: anchorFixes carries from/to/applied; dryRun when active
+ *   a–f ... flag surface: --yes/--dry-run gate on --fix (§20 usage errors,
+ *          exit 2 via checkFail), mutually exclusive together, help lists
+ *          them, arg diagnosis precedes workspace resolution
+ *   g–m ... repairAnchors unit: the pure byte-level rewriter (anchor-only
+ *          substitution, EOL preservation incl. CRLF/mixed, raw-token
+ *          disambiguation, fence guard, degenerate/edge cases, §48 trailing
+ *          punctuation, multi-fix independence)
+ *   n–x ... CLI end-to-end: plain check (error exit 2, no fix fields on the
+ *          wire); plain --fix (proposal only, referrer bytes unchanged,
+ *          ref-by cleanup still writes); --fix --yes (byte-exact rewrite,
+ *          marks earned same-run, refs.broken 0, exit 0; CRLF variant);
+ *          --fix --dry-run (nothing written, ref-by previewed via a stale
+ *          back-pointer); ambiguous siblings (no proposal, error stays);
+ *          unparseable target (skipped); [file] filter scoping both ways;
+ *          multiple see: on one line; many-proposal compact fold; --json shape
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
