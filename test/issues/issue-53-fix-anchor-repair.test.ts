@@ -26,14 +26,15 @@
  *          substitution, EOL preservation incl. CRLF/mixed, raw-token
  *          disambiguation, fence guard, degenerate/edge cases, §48 trailing
  *          punctuation, multi-fix independence)
- *   n–x ... CLI end-to-end: plain check (error exit 2, no fix fields on the
+ *   n–y ... CLI end-to-end: plain check (error exit 2, no fix fields on the
  *          wire); plain --fix (proposal only, referrer bytes unchanged,
  *          ref-by cleanup still writes); --fix --yes (byte-exact rewrite,
  *          marks earned same-run, refs.broken 0, exit 0; CRLF variant);
  *          --fix --dry-run (nothing written, ref-by previewed via a stale
  *          back-pointer); ambiguous siblings (no proposal, error stays);
  *          unparseable target (skipped); [file] filter scoping both ways;
- *          multiple see: on one line; many-proposal compact fold; --json shape
+ *          multiple see: on one line; many-proposal compact fold; --json
+ *          shape; YAML-key target via the issue #49 on-disk branch
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
@@ -612,6 +613,30 @@ describe('issue #53 2.4: --fix anchor repair (CLI end-to-end)', () => {
     expect(j.dryRun).toBeUndefined();
     const j2 = parseJsonOut(runCli(['check', '--fix', '--dry-run', '--json'], ws.tmp).out);
     expect(j2.dryRun).toBe(true);
+  });
+
+  test('y: YAML-key target — the issue #49 candidate path repairs a one-letter-off key anchor', () => {
+    // artifacts/*.yaml is not a loaded spec file, so the candidate resolution
+    // must take the on-disk branch (resolveSpecFile + extractYamlKeys) — the
+    // same path checkRefs used to declare the anchor broken.
+    const ws = makeWs('yaml-target', {
+      '00-overview.md': '- Overview\n  - Policy: see artifacts/policy.yaml#maintenance-windo\n  - Scope\n',
+      'artifacts/policy.yaml': 'policy:\n  maintenance window:\n    timeout: 30s\n  query:\n    owner: platform\n',
+    });
+    const plain = runCli(['check', '--json'], ws.tmp);
+    expect(plain.exit).toBe(2); // refs.broken.anchor: no node/key matches
+    const r = runCli(['check', '--fix', '--yes', '--json'], ws.tmp);
+    expect(r.exit).toBe(0);
+    const j = parseJsonOut(r.out);
+    expect(j.anchorFixes).toEqual([
+      { file: '00-overview.md', line: 2, from: 'maintenance-windo', to: 'maintenance-window', applied: true },
+    ]);
+    expect(j.refs.broken).toBe(0);
+    expect(readFileSync(join(ws.root, '00-overview.md'), 'utf-8'))
+      .toBe('- Overview\n  - Policy: see artifacts/policy.yaml#maintenance-window\n  - Scope\n');
+    // The YAML target itself is never touched (pure referrer-side repair).
+    expect(readFileSync(join(ws.root, 'artifacts/policy.yaml'), 'utf-8'))
+      .toBe('policy:\n  maintenance window:\n    timeout: 30s\n  query:\n    owner: platform\n');
   });
 });
 
