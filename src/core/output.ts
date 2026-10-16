@@ -391,7 +391,18 @@ function printGroup(g: IssueGroup, expanded: boolean): void {
       break;
     }
     case 'refs.broken.anchor': {
-      const details = (expanded ? (g.items ?? []).map(it => it.label) : (g.detail !== undefined ? [g.detail] : (g.items ?? []).slice(0, FOLD_OVERLAP_ITEMS).map(it => it.label)));
+      // Issue #53 Part 1.3: each member's own did-you-mean (or add-node
+      // advice) must reach the reader — the group hint is first-non-empty
+      // only, so a multi-anchor group would otherwise hide the other refs'
+      // fixes. Expanded view appends the per-item fix to every line; the
+      // folded view keeps the single first-member detail (the compact-output
+      // budget) with the group hint, which is that same member's fix.
+      const items = g.items ?? [];
+      const withFix = (it: { label: string; suggestion?: string }): string =>
+        it.suggestion !== undefined ? `${it.label} — ${it.suggestion}` : it.label;
+      const details = expanded
+        ? items.map(withFix)
+        : (g.detail !== undefined ? [g.detail] : items.slice(0, FOLD_OVERLAP_ITEMS).map(withFix));
       for (const d of details) console.log(`      ${d}`);
       break;
     }

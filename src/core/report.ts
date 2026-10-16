@@ -56,6 +56,11 @@ export interface GroupItem {
    *  keyword sprawl's node count (`"artifacts" × 105 nodes` → 105). Ranking
    *  and display use the metric; `count` stays the raw occurrence count. */
   metric?: number;
+  /** issue #53 Part 1.3: per-item fix hint. refs.broken.anchor items carry
+   *  each ref's own did-you-mean — the group-level suggestion is first-non-
+   *  empty only, so a multi-anchor group would otherwise hide the other
+   *  refs' advice from the expanded `--show refs` view. */
+  suggestion?: string;
 }
 
 export interface IssueGroup {
@@ -172,7 +177,7 @@ interface Normalized {
   key?: string;
   detail?: string;
   /** Per-member item (merged by label across the group). */
-  item?: { label: string; sort: number; metric?: number };
+  item?: { label: string; sort: number; metric?: number; suggestion?: string };
   /** How the merged items are ranked: by item count, by metric, or input order. */
   itemSort?: 'count' | 'pct' | 'metric' | 'appearance';
   /** refs.broken.file: single item {label: key, count: group count} at finalize. */
@@ -206,7 +211,19 @@ function normalizeMessage(issue: IssueLike): Normalized {
   }
   if ((mt = m.match(RE_BROKEN_ANCHOR)) !== null) {
     const detail = `${issue.file}:${issue.line} → ${mt[1]}#${mt[2]}`;
-    return { rule: 'refs.broken.anchor', pattern: 'broken anchor', detail, item: { label: detail, sort: 0 } };
+    return {
+      rule: 'refs.broken.anchor',
+      pattern: 'broken anchor',
+      detail,
+      // issue #53 Part 1.3: each member's own fix (did-you-mean with the
+      // canonical slug, or add-node advice) rides on its item — the group
+      // hint stays first-non-empty as before.
+      item: {
+        label: detail,
+        sort: 0,
+        ...(issue.suggestion !== undefined && issue.suggestion !== '' ? { suggestion: issue.suggestion } : {}),
+      },
+    };
   }
   if ((mt = m.match(RE_ANCHOR_NO_TARGET)) !== null) {
     // Issue #49: anchored ref to a target with nothing addressable — advisory
@@ -385,7 +402,7 @@ interface Acc {
   firstIndex: number;
   entries: Array<{ file: string; line: number }>;
   seenLoc: Set<string>;
-  itemMap: Map<string, { label: string; count: number; sort: number; order: number; locations: string[]; metric?: number }> | null;
+  itemMap: Map<string, { label: string; count: number; sort: number; order: number; locations: string[]; metric?: number; suggestion?: string }> | null;
   itemSort: 'count' | 'pct' | 'metric' | 'appearance';
   wantsTargetItem: boolean;
 }
@@ -404,6 +421,7 @@ function finalizeGroup(acc: Acc): IssueGroup {
       count: it.count,
       ...(it.metric !== undefined ? { metric: it.metric } : {}),
       ...(it.locations.length > 0 ? { locations: it.locations } : {}),
+      ...(it.suggestion !== undefined ? { suggestion: it.suggestion } : {}),
     }));
   } else if (acc.wantsTargetItem && group.key !== undefined) {
     // issue #41: missing-target groups show the target as their single item.
@@ -475,6 +493,7 @@ export function buildReport(issues: IssueLike[], opts?: { topN?: number }): Chec
         order: acc.itemMap.size,
         locations: [],
         ...(norm.item.metric !== undefined ? { metric: norm.item.metric } : {}),
+        ...(norm.item.suggestion !== undefined ? { suggestion: norm.item.suggestion } : {}),
       };
       entry.count++;
       if (issue.file !== '') {
