@@ -3,6 +3,7 @@ import { join } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
+import { normalizeForAnchor } from './slug.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -65,12 +66,15 @@ function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: str
  *  dash-like family (figure/en/em dash, horizontal bar, minus sign — U+2012,
  *  U+2013, U+2014, U+2015, U+2212) maps to a space exactly like `-` and `_`,
  *  so prose titles with typographic dashes resolve against hyphen anchors
- *  (norm() runs on both sides). Not fuzzy — exact after normalization. */
+ *  (norm() runs on both sides). Not fuzzy — exact after normalization.
+ *  Issue #53: the normalization now lives in core/slug.ts (single source of
+ *  truth, shared with the canonical `anchorSlug` algorithm) and folds the
+ *  FULL dash family (U+2010–U+2015, U+2043, U+2212, U+FE58, U+FE63,
+ *  U+FF0D) — a strict superset of the issue #50 class, so every anchor
+ *  that resolved before still resolves. */
 export function anchorMatches(nodeText: string, anchor: string): boolean {
   if (nodeText === anchor) return true;
-  const norm = (s: string): string =>
-    s.toLowerCase().replace(/[-_\u2012\u2013\u2014\u2015\u2212]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return norm(nodeText) === norm(anchor);
+  return normalizeForAnchor(nodeText) === normalizeForAnchor(anchor);
 }
 
 /** Does an UNRESOLVED ref target look like an intended spec reference

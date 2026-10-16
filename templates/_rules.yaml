@@ -1,3 +1,20 @@
+# Anchor slugs (issue #53) — documentation only: the algorithm is fixed, not
+# configurable. `cans slug "<node text>"` prints the exact anchor fragment.
+#   1. The dash family (hyphen `-`, figure dash, en dash, em dash, horizontal
+#      bar, minus sign, and their U+2010–U+2015 / U+2043 / U+2212 / U+FE58 /
+#      U+FE63 / U+FF0D variants) and the underscore `_` are SEPARATORS, exactly
+#      like every whitespace run.
+#   2. A run of separators collapses to ONE `-`.
+#   3. Every other character is preserved verbatim, case included.
+#   4. Leading/trailing separators are dropped.
+# Matching is tolerant (case- and separator-insensitive); the slug is the
+# canonical spelling refs should use.
+slug:
+  algorithm: dash-normalized
+  collapse: separator-runs-to-one-hyphen
+  case: preserved
+  example: 'Layer 1 — C authorizer -> Layer-1-C-authorizer'
+
 structure:
   node_length: { min: 3, max: 120 }
   siblings: { min: 1, max: 12 }

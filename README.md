@@ -112,6 +112,12 @@ Reference, don't duplicate:
   - Requires Bearer token
 ```
 
+Anchor spelling (`#Sessions`): the node title with every dash, `_`, and
+whitespace run collapsed to one `-` — everything else verbatim, case
+preserved (`Layer 1 — C authorizer` → `#Layer-1-C-authorizer`). Not sure?
+`cans slug "<node text>"` prints the exact fragment; `cans slug
+<file>:<line>` prints it for the node on that line.
+
 That's it. That's the whole spec format. Your agent reads this and knows what to build.
 
 </details>
@@ -234,6 +240,7 @@ cans budget read   token-budgeted reading plan for a concept
 cans budget write  what you can / can't edit for a concept
 cans import        bring in OPML / Logseq / Obsidian
 cans export        push out to OPML / Logseq / Obsidian
+cans slug          the canonical #anchor fragment for a node text or file:line
 ```
 
 Every command supports `--json` for agent consumption.

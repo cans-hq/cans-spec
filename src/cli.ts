@@ -23,6 +23,7 @@ async function dispatch(): Promise<CommandResult> {
     case 'budget':  return (await import('./commands/budget.ts')).run(args);
     case 'import':  return (await import('./commands/import.ts')).run(args);
     case 'export':  return (await import('./commands/export.ts')).run(args);
+    case 'slug':    return (await import('./commands/slug.ts')).run(args);
     case 'help':
     case '-h':      // §20/§44: conventional help shortcuts
     case '--help':
