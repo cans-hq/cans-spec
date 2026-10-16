@@ -295,6 +295,12 @@ lines + 91 fix hints. Fix hints appear once per pattern; every `file:line`
 stays present in compact comma lists. Exit codes: `0` clean · `1` warnings ·
 `2` errors.
 
+Info notes (`ℹ`) are hints, not findings: a node whose title slugs
+non-obviously (`Layer 1 — C authorizer` → `#Layer-1-C-authorizer`) gets an
+info-level note naming the exact anchor (and a broken-anchor error suggests
+the corrected ref — `did you mean <file>#<slug>?`). Info never changes the
+exit code, `ok`, or the error/warning counts.
+
 ---
 
 ## Workspace layout
