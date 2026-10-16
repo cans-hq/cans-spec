@@ -76,8 +76,9 @@ describe('QA-06 CLI surface (red verification)', () => {
     expect(r.exit).toBe(0);
     expect(r.out).toContain('CANS — Canonical Agent-Native Spec');
     expect(r.out).toContain('Usage: cans <command> [args]');
-    // issue #41: check's flag surface grew --show <section>
-    expect(r.out).toContain('check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]');
+    // issue #41: check's flag surface grew --show <section>; issue #53
+    // (Part 2.4) added the --yes / --dry-run anchor-repair transaction flags.
+    expect(r.out).toContain('check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]');
     // Updated: help now mirrors §20:488 verbatim — the budget read line
     // documents the (working) --change flag (QA-10 A5).
     expect(r.out).toContain('budget read <concept> [--limit <tokens>] [--change <name>] [--json]');

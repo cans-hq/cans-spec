@@ -438,8 +438,9 @@ Usage: cans <command> [args]
 
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
-  check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
+  check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
         --fix + [file] rewrites ref-by comments in matching files only
+        --fix proposes broken-anchor repairs; --yes applies, --dry-run previews
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]

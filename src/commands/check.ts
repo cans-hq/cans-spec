@@ -31,6 +31,17 @@ export interface CheckArgs {
    *  Emission-time concern only — the engine result is identical either way.
    *  Optional: internal callers (done.ts's ZERO_CHECK_ARGS) never set it. */
   show?: string[];
+  /** issue #53 (Part 2.4): with `--fix`, APPLY the proposed anchor repairs
+   *  (plus the usual ref-by cleanup). Never legal without --fix —
+   *  parseCheckArgs rejects that as a §20 usage error before any workspace
+   *  is touched. Optional: internal callers (done.ts's ZERO_CHECK_ARGS)
+   *  never set it — undefined reads as false. */
+  yes?: boolean;
+  /** issue #53 (Part 2.4): with `--fix`, PREVIEW every write (anchor repairs
+   *  AND ref-by rewrites) in the report and write nothing at all. Never
+   *  legal without --fix, and mutually exclusive with --yes (apply and
+   *  preview are different transactions). Optional, same rule as --yes. */
+  dryRun?: boolean;
   /** §24 (done): the archiving task's parsed nodes, injected under their
    *  former `_tasks/<name>.md` identity so refs held by the archived task
    *  still count for the back-pointer rebuild. Never set by `check` itself. */
@@ -39,6 +50,11 @@ export interface CheckArgs {
 
 const CHECK_FLAGS: FlagSpec[] = [
   { name: 'fix', boolean: true },
+  // issue #53 (Part 2.4): the anchor-repair transaction flags. Both are
+  // meaningless without --fix — parseCheckArgs enforces that (§20: a flag
+  // that silently does nothing is a typo hiding in plain sight, QA-10 M3).
+  { name: 'yes', boolean: true },
+  { name: 'dry-run', boolean: true },
   { name: 'strict', boolean: true },
   { name: 'refs-only', boolean: true },
   { name: 'no-redundancy', boolean: true },
@@ -102,8 +118,27 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
       }
     }
   }
+  // issue #53 (Part 2.4): --yes/--dry-run refine --fix's anchor-repair
+  // transaction (propose → apply). Alone they are user errors, never
+  // silently-ignored typos — and together they are contradictory (apply and
+  // preview are different transactions; a combined run must not surprise
+  // either expectation, so it is rejected instead of picking a winner).
+  const fix = parsed.flags.has('fix');
+  const yes = parsed.flags.has('yes');
+  const dryRun = parsed.flags.has('dry-run');
+  if (yes && !fix) {
+    errors.push('"--yes" requires --fix — it applies the anchor repairs --fix proposes');
+  }
+  if (dryRun && !fix) {
+    errors.push('"--dry-run" requires --fix — it previews the changes --fix would make');
+  }
+  if (yes && dryRun) {
+    errors.push('"--yes" and "--dry-run" are mutually exclusive — preview with --dry-run or apply with --yes, not both');
+  }
   return {
-    fix: parsed.flags.has('fix'),
+    fix,
+    yes,
+    dryRun,
     strict: parsed.flags.has('strict'),
     refsOnly: parsed.flags.has('refs-only'),
     noRedundancy: parsed.flags.has('no-redundancy'),

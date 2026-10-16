@@ -522,7 +522,7 @@ Every command builds a typed `CommandResult` subtype. `emit()` in `cli.ts` handl
 
 ```
 cans init [--flat|--folders] [--bare] [--force] [--tool <name>]
-cans check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
+cans check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
 cans new adr <title>
 cans new task <name>
 cans done <name> [--allow-incomplete] [--skip-check] [--json]
@@ -533,6 +533,12 @@ cans import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [-
 cans export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
 cans help
 ```
+
+`check --yes` / `check --dry-run` (issue #53 Part 2.4) refine `--fix`'s
+anchor-repair transaction: `--yes` applies the proposed repairs, `--dry-run`
+previews every `--fix` change without writing. Both are usage errors without
+`--fix` (and mutually exclusive with each other) — a flag that silently does
+nothing is a typo hiding in plain sight.
 
 ### Command contract
 - Each command is a single exported async function returning a `CommandResult` subtype.
