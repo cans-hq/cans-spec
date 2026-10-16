@@ -270,7 +270,11 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
     // issue #11: a --fix run that rewrote back-pointer files always surfaces
     // the REFS block — even when the refs engine has no findings of its own
     // (the clean/healthy case), the run's writes stay visible there.
-    if (name === 'refs' && section === undefined && r.backPointersUpdatedFiles.length > 0) {
+    // issue #53 (Part 2.4): a --fix run that proposes or applies anchor
+    // repairs surfaces it for the same reason — the transaction report lives
+    // under REFS and must never be silently swallowed by a clean refs state.
+    const hasFixReport = r.backPointersUpdatedFiles.length > 0 || (r.anchorFixes ?? []).length > 0;
+    if (name === 'refs' && section === undefined && hasFixReport) {
       section = { name: 'refs', errorCount: 0, warningCount: 0, infoCount: 0, groups: [] };
     }
     // Compact contract: STRUCTURE/STYLE/REDUNDANCY (and the small sections)
@@ -369,8 +373,36 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
   }
   // Issue #11: name the files --fix actually rewrote (099e858 wording) —
   // never printed as an empty list (plain checks show nothing here).
+  // issue #53 (Part 2.4): under --dry-run the same list is a PREVIEW — the
+  // wording says "would rewrite" and no byte changed on disk.
   if (r.backPointersUpdatedFiles.length > 0) {
-    console.log(`  --fix updated ref-by in: ${r.backPointersUpdatedFiles.join(', ')}`);
+    console.log(r.dryRun === true
+      ? `  --fix would rewrite ref-by in: ${r.backPointersUpdatedFiles.join(', ')}`
+      : `  --fix updated ref-by in: ${r.backPointersUpdatedFiles.join(', ')}`);
+  }
+
+  // issue #53 (Part 2.4): the anchor-repair transaction lines, compact per
+  // the #41 budget. Up to three proposals print individually (the from → to
+  // spellings are the actionable payload); four or more fold into one line
+  // naming the referrer files and the count. Applied rewrites (--yes) name
+  // each referrer with its count, alongside the ref-by line above.
+  const proposals = (r.anchorFixes ?? []).filter(f => !f.applied);
+  const applied = (r.anchorFixes ?? []).filter(f => f.applied);
+  if (proposals.length > 0) {
+    if (proposals.length <= 3) {
+      for (const f of proposals) {
+        console.log(`  --fix would rewrite: ${f.file}:${f.line} #${f.from} → #${f.to}`);
+      }
+    } else {
+      const files = [...new Set(proposals.map(f => f.file))].sort().join(', ');
+      console.log(`  --fix would rewrite anchors in: ${files} (${proposals.length}) — run with --yes to apply`);
+    }
+  }
+  if (applied.length > 0) {
+    const perFile = new Map<string, number>();
+    for (const f of applied) perFile.set(f.file, (perFile.get(f.file) ?? 0) + 1);
+    const parts = [...perFile.keys()].sort().map(k => `${k} (${perFile.get(k)})`);
+    console.log(`  --fix rewrote anchors in: ${parts.join(', ')}`);
   }
 
   // issue #41 design rule 2: all missing-file refs coalesce into ONE block
@@ -504,8 +536,9 @@ Usage: cans <command> [args]
 
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
-  check [--fix] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
+  check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [file] [--json]
         --fix + [file] rewrites ref-by comments in matching files only
+        --fix proposes broken-anchor repairs; --yes applies, --dry-run previews
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]

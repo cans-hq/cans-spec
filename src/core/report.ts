@@ -125,6 +125,14 @@ export interface CheckResultLike {
   /** Issue #11: sorted spec-relative paths of the files --fix actually
    *  rewrote (empty without --fix or when nothing needed a write). */
   backPointersUpdatedFiles: string[];
+  /** issue #53 (Part 2.4): the --fix anchor-repair transaction's items
+   *  ({file, line, from, to, applied}) — proposals applied:false, --yes
+   *  rewrites applied:true. Optional and additive: plain checks omit it. */
+  anchorFixes?: Array<{ file: string; line: number; from: string; to: string; applied: boolean }>;
+  /** issue #53 (Part 2.4): true when --fix --dry-run previewed the run —
+   *  the backPointersUpdated* fields and anchorFixes then describe WOULD-BE
+   *  writes. */
+  dryRun?: boolean;
   rulesSummary?: string;
   issues: IssueLike[];
   /** checkFail diagnosis (usage / no-workspace / invalid rules) — carried
@@ -639,6 +647,11 @@ export function checkReportJson(result: CheckResultLike): unknown {
     // issue #11: name the files --fix actually rewrote (sorted, spec-relative).
     backPointersUpdatedFiles: result.backPointersUpdatedFiles,
   };
+  // issue #53 (Part 2.4): additive anchor-repair transaction fields — carried
+  // through only when the check set them, so plain-check JSON shapes are
+  // byte-identical to the pre-#53 wire format (§35 fixtures stay pinned).
+  if (result.anchorFixes !== undefined) out.anchorFixes = result.anchorFixes;
+  if (result.dryRun === true) out.dryRun = true;
   if (result.rulesSummary !== undefined) out.rulesSummary = result.rulesSummary;
   if (result.error !== undefined) out.error = result.error;
   return out;
