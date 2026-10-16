@@ -531,6 +531,7 @@ cans budget read <concept> [--limit <tokens>] [--change <name>] [--json]
 cans budget write <concept> [--json]
 cans import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [--json]
 cans export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
+cans slug "<node text>" | <file>:<line>
 cans help
 ```
 
@@ -628,6 +629,50 @@ No git operations. No branch creation.
 **JSON result:**
 ```ts
 { ok, command: 'new', exitCode, change: string, file: string }
+```
+
+---
+
+## 23a. `cans slug`
+
+Prints the canonical anchor fragment for a node — the exact spelling a
+`see:` ref's `#anchor` must use (issue #53, Part 1.2). The fragment comes
+from `core/slug.ts` `anchorSlug` (Option A, published in
+`_rules.yaml#slug`): every dash-family character, `_`, and whitespace run
+collapses to one `-`; all other characters are verbatim, case preserved.
+`Layer 1 — C authorizer` → `Layer-1-C-authorizer`. Before this command
+authors reverse-engineered that mapping by trial and error — every miss
+minted a broken ref.
+
+**Text mode:** `cans slug "<node text>"` — all positional args joined with
+a single space (the `new` convention), so quoting is optional:
+`cans slug Layer 1 — C authorizer` and the quoted spelling print the same
+fragment. No workspace needed. Empty or separator-only input is rejected
+with the `new`-style empty-slug diagnosis.
+
+**File:line mode:** `cans slug <file>:<line>` (e.g.
+`cans slug 02-authentication.md:14`, folder spellings like
+`04-api/request-schema.md:3` included) — resolves the workspace, parses
+the file (§12 flat-then-folder resolution, containment-guarded), and prints
+the slug of the node whose bullet sits EXACTLY on that line; `nodeText` in
+the JSON result names the node found. This is the issue's
+`--explain-anchor` ask, delivered as a query command instead of a flag on
+`check` (which stays a pure validator). A non-node line is a §37 error
+naming the file's node lines — the full list when few, `first..last (N
+nodes)` when many; synthetic `(table)`/`(code fence)` placeholder lines
+are not node lines (issue #8). Requires a workspace.
+
+**Disambiguation** (`parseSlugTarget`, exported for tests): the joined
+input is a file:line target iff it ends in `.md:<line>`. An `.md:` tail
+whose line part is not a clean 1-based integer (`0`, `-14`, `abc`, `014`)
+is a malformed-line-number error — never silently slugged as prose.
+
+**Output:** the BARE fragment on its own stdout line — shell-composable:
+`see: 02-authentication.md#$(cans slug "Layer 1 — C authorizer")`.
+
+**JSON result:**
+```ts
+{ ok, command: 'slug', exitCode, input: string, slug: string, nodeText?: string }
 ```
 
 ---
