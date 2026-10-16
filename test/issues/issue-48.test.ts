@@ -101,12 +101,17 @@ afterEach(() => {
   }
 });
 
-// ── The issue's repro (numbered for CLI discovery; the unit tests keep the
-// issue's exact `effect.md` spelling — parseOutline does not care) ──
+// ── The issue's repro. The unit tests keep the issue's exact `effect.md`
+// spelling (parseOutline does not care about discovery); the workspace
+// variants retarget the same parenthesized shape at a numbered spec file —
+// only `NN-*.md` files are discovered and resolvable (fs.ts SPEC_FILE_RE). ──
 
 const ISSUE_LINE = '  - Audit — _audit (see effect.md#Audit-spine)\n';
+// Workspace variant: same parenthesized shape, retargeted at the numbered
+// file — and worded to stay under the default redundancy keyword threshold
+// (4 nodes) so the ONLY finding the fix removes is the broken anchor.
 const ISSUE_FILES = {
-  '01-audit.md': `- Audit\n${ISSUE_LINE}  - Audit trail\n`,
+  '01-audit.md': '- Audit\n  - Audit spine (see 02-effect.md#Audit-spine)\n  - Log retention\n',
   '02-effect.md': '- Effects\n  - Audit spine\n  - Side effects\n',
 };
 
@@ -247,7 +252,7 @@ describe('issue #48: cans check end-to-end', () => {
 
   test('n: negative control — a genuinely missing anchor (no punctuation) is STILL an error', () => {
     const ws = makeWs('cli-negative', {
-      '01-audit.md': '- Audit\n  - Audit spine — _audit: see 02-effect.md#Missing-node\n  - Audit trail\n',
+      '01-audit.md': '- Audit\n  - Trace (see 02-effect.md#Missing-node)\n  - Log retention\n',
       '02-effect.md': '- Effects\n  - Audit spine\n  - Side effects\n',
     });
     const r = runCli(['check', '--json'], ws.tmp);

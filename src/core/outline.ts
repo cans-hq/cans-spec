@@ -6,6 +6,30 @@ const OWNER_RE = /←\s*(@?\S+)/;
 // §11: `see:` parsed via regex — accepts `see:TARGET` (no space), `see: TARGET`, `see TARGET`.
 // The alternation keeps the no-colon form whitespace-required so words like "seed" never match.
 const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
+// Issue #48: trailing sentence punctuation stripped from see: tokens AFTER the
+// match. The capture groups above stay deliberately greedy — anchors keep
+// mid-token dots (`#Section-2.1` addresses a node titled "Section 2.1", and
+// anchorMatches normalizes `-`/`_` to spaces), so tightening the character
+// class would break legitimate spellings. The trailing junk is a PROSE
+// problem: natural parenthesized writing (`_audit (see effect.md#Audit-spine)`)
+// glued the closing `)` onto the anchor and minted a false `broken anchor:
+// effect.md#Audit-spine)` — 9 occurrences in the reporter's tree, all pointing
+// at existing nodes. The FILE token had the identical defect (`(see auth.md)`
+// captured `auth.md)`).
+// Strip set: closers and sentence punctuation — ASCII `)]},.;:!?'"` plus the
+// typographic closers `’ “ …` — one or more trailing occurrences. Deliberately
+// NOT stripped: `-`, `_`, `/` (trailing slash is a legitimate folder target,
+// `see auth/` — issue #22), openers `([{` and alphanumerics.
+const REF_TRAILING_PUNCT_RE = /[)\]},.;:!?'’”…]+$/;
+
+/** Issue #48: strip trailing prose punctuation from a captured see: token.
+ *  The match itself stays verbatim in `raw` (deep-hop advice quotes the
+ *  user's actual spelling, refs.ts detectDeepHops) — only the resolved
+ *  file/anchor tokens are cleaned. */
+function stripRefTrailingPunct(token: string): string {
+  return token.replace(REF_TRAILING_PUNCT_RE, '');
+}
+
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 const FENCE_RE = /^```/;
 
@@ -148,7 +172,18 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     let rm: RegExpExecArray | null;
     REF_RE.lastIndex = 0;
     while ((rm = REF_RE.exec(rest)) !== null) {
-      refs.push({ raw: rm[0], file: rm[1], anchor: rm[2] ?? null, line: lineNo });
+      // Issue #48: strip trailing punctuation the surrounding prose glued onto
+      // the tokens (`(see effect.md#Audit-spine)` must not mint anchor
+      // `Audit-spine)`). Empty FILE token after the strip is pure-punctuation
+      // prose ("see .") — not a ref, skip it entirely. An emptied ANCHOR token
+      // (`see x#)`) degrades to a file-level ref — the file target is real.
+      // REF_RE itself is unchanged: its `+` quantifiers already refuse to mint
+      // from nothing (`see #` and `see: #x` match no token at all), so the
+      // empty-token cases can only arise from stripping, never from the regex.
+      const refFile = stripRefTrailingPunct(rm[1]!);
+      if (refFile === '') continue;
+      const refAnchor = rm[2] !== undefined ? stripRefTrailingPunct(rm[2]) : null;
+      refs.push({ raw: rm[0], file: refFile, anchor: refAnchor === '' ? null : refAnchor, line: lineNo });
     }
 
     const node = makeNode(rest, lineNo, indent);
