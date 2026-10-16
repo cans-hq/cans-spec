@@ -168,6 +168,9 @@ function miscScenario(): Scenario {
     [issue({ file: 'a.md', line: 15, category: 'style', message: '3 siblings share prefix "configure". Group under nested style.' }), 'style.prefix.shared'],
     [issue({ file: 'a.md', line: 16, category: 'style', message: '"Auth" has 2 children. Collapse to sibling style.' }), 'style.nesting.prefer'],
     [issue({ file: 'b.md', line: 20, level: 'error', category: 'refs', message: 'broken anchor: interface.md#Refusals — no node matches', suggestion: 'fix the anchor or add a "Refusals" node to interface.md' }), 'refs.broken.anchor'],
+    // Issue #49: zero-addressable-target downgrade — rule path and fallback
+    // path must agree on the new warning family too.
+    [issue({ file: 'b.md', line: 21, category: 'refs', message: 'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref', suggestion: 'drop the #anything anchor (file-level refs are valid on any target), or add the anchor as a node/key in docs/notes.md' }), 'refs.anchor.no-target'],
     [issue({ file: 'b.md', line: 4, level: 'error', category: 'refs', message: 'self-reference: b.md → b.md', suggestion: 'remove the self-reference; point at the canonical file instead' }), 'refs.self'],
     [issue({ file: 'c.md', line: 0, category: 'refs', message: 'orphan: c.md has no incoming or outgoing refs', suggestion: 'link it from a related spec file, or fold it into one' }), 'refs.orphan'],
     [issue({ file: 'd.md', line: 7, level: 'error', category: 'refs', message: 'DEEP HOP: a.md → b.md → c.md', suggestion: 'add "see: c.md" directly to a.md' }), 'refs.deep_hop'],
@@ -326,6 +329,10 @@ describe('report core (issue #41)', () => {
     expect(byRule.get('style.prefix.shared')!.pattern).toBe('shared prefix "configure"');
     expect(byRule.get('style.nesting.prefer')!.pattern).toBe('collapse to sibling (2)');
     expect(byRule.get('refs.broken.anchor')!.detail).toBe('b.md:20 → interface.md#Refusals');
+    // Issue #49: the downgrade groups per file#anchor target under refs.
+    expect(byRule.get('refs.anchor.no-target')!.pattern).toBe('anchor on non-outline target');
+    expect(byRule.get('refs.anchor.no-target')!.key).toBe('docs/notes.md#anything');
+    expect(byRule.get('refs.anchor.no-target')!.level).toBe('warning');
     expect(byRule.get('refs.orphan')!.locations).toEqual(['c.md']);
     expect(byRule.get('refs.deep_hop')!.detail).toBe('a.md → b.md → c.md');
     expect(byRule.get('refs.chaining')!.category).toBe('refs'); // rule prefix wins over engine category

@@ -146,6 +146,47 @@ function brokenRefSuggestion(root: string, target: string): string {
     : `create ${clean}.md or fix the ref target`;
 }
 
+/** Issue #49: the mapping keys of a YAML document — the addressable anchor
+ *  vocabulary of a NON-outline ref target. `see: artifacts/policy.yaml#query`
+ *  points at the `query:` key, not at a bullet node (a YAML file has none),
+ *  so key resolution is what makes anchored refs to artifact files work at
+ *  all. Dependency-free BY DESIGN (the repo has zero runtime deps): line-
+ *  based extraction of `key:` shapes at any indentation depth —
+ *    maintenance:              key of a nested block
+ *    'maintenance window': x   quoted key (quotes stripped before use)
+ *    - name: x                 key inside a sequence item (list dashes stripped)
+ *    trinity: a b c            scalar value (the value is irrelevant)
+ *  A comment line (first non-space char `#`) is never a key, and the colon
+ *  must be followed by a space or end-of-line, so plain scalars, URLs
+ *  (`http://x`) and `nospace:value` prose stay out of the vocabulary.
+ *  Not a YAML parser: flow scalars and multiline block values are not deeply
+ *  handled — keys only ADD addressable targets on top of parseOutline's
+ *  bullet nodes, and any over-extraction can only turn a would-be error into
+ *  a hit (fail-safe direction). */
+export function extractYamlKeys(source: string): string[] {
+  const keys: string[] = [];
+  for (const raw of source.split(/\r?\n/)) {
+    // Sequence-item dashes may prefix a mapping key (`- name: x`, nested
+    // `- - k: v`); strip them so keys inside sequences are addressable too.
+    let line = raw.trimStart();
+    while (line.startsWith('- ')) line = line.slice(2).trimStart();
+    if (line === '' || line.startsWith('#')) continue; // blank / comment — never a key
+    // Quoted keys: the quoted span IS the key; quotes are stripped before use
+    // so anchors match the human-readable name (#maintenance window).
+    const quoted = line.match(/^'([^']+)'\s*:(?:\s|$)/) ?? line.match(/^"([^"]+)"\s*:(?:\s|$)/);
+    if (quoted !== null) {
+      keys.push(quoted[1]!);
+      continue;
+    }
+    // Plain keys: characters up to the first `:`/`#`, colon followed by a
+    // space or EOL (YAML's mapping shape). `key:value` without the space is a
+    // plain scalar, not a mapping — excluded.
+    const plain = line.match(/^([^:#]+?)\s*:(?:\s|$)/);
+    if (plain !== null) keys.push(plain[1]!.trim());
+  }
+  return keys;
+}
+
 export function checkRefs(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
@@ -234,14 +275,25 @@ export function checkRefs(
 
       const anchor = ref.anchor;
       if (anchor !== null) {
+        // Issue #49: an anchored ref may address bullet nodes OR — when the
+        // target is a YAML file — mapping keys. Both resolution paths flow
+        // through one coherent { nodes, yamlKeys } pair so the hit test and
+        // the zero-target downgrade below see a single addressable-target set.
         let nodes: OutlineNode[] | null = null;
+        let yamlKeys: string[] = [];
         if (key !== null) {
           nodes = flattenNodes(files.get(key)!);
         } else {
           const p = resolveSpecFile(root, ref.file);
           if (p !== null) {
             try {
-              nodes = flattenNodes(parseOutline(readFileSync(p, 'utf-8'), p));
+              const source = readFileSync(p, 'utf-8');
+              // Issue #49 (a): a .yaml/.yml target exposes its mapping keys
+              // as addressable anchors (#maintenance ↔ `maintenance:`) — YAML
+              // files hold their structure in keys, not bullets, and that is
+              // exactly what people point #anchors at.
+              if (/\.(yaml|yml)$/i.test(p)) yamlKeys = extractYamlKeys(source);
+              nodes = flattenNodes(parseOutline(source, p));
             } catch {
               nodes = null;
             }
@@ -250,15 +302,34 @@ export function checkRefs(
         if (nodes !== null) {
           // §12: exact text match, then case-insensitive fallback; the docs' own
           // anchor convention (`#Data-protection` for node "Data protection") also
-          // matches via hyphen/space normalization.
-          const hit = nodes.some(n => anchorMatches(n.text, anchor));
+          // matches via hyphen/space normalization. Issue #49: the SAME
+          // normalization runs over YAML mapping keys (#Data-protection matches
+          // key `data protection:`) — key matching is strictly additive; YAML
+          // block sequences keep minting bullet nodes via parseOutline.
+          const hit = nodes.some(n => anchorMatches(n.text, anchor))
+            || yamlKeys.some(k => anchorMatches(k, anchor));
           if (!hit) {
-            issues.push({
-              file, line: ref.line, level: 'error', category: 'refs',
-              message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
+            if (nodes.length === 0 && yamlKeys.length === 0) {
+              // Issue #49 (b): the target has NOTHING addressable — no bullet
+              // nodes, no YAML keys (prose .md, empty yaml, any non-outline
+              // file). No anchor can ever resolve there by construction, so
+              // the refs.broken.anchor error was a guaranteed false positive;
+              // a warning states the real fix instead. With addressable
+              // targets present, the miss below stays a truthful error.
+              issues.push({
+                file, line: ref.line, level: 'warning', category: 'refs',
+                message: `anchor on non-outline target: ${ref.file}#${anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
+                rule: 'refs.anchor.no-target', // issue #49
+                suggestion: `drop the #${anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${ref.file}`,
+              });
+            } else {
+              issues.push({
+                file, line: ref.line, level: 'error', category: 'refs',
+                message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
           rule: 'refs.broken.anchor', // issue #41: machine-readable rule key
-              suggestion: `fix the anchor or add a "${anchor}" node to ${ref.file}`,
-            });
+                suggestion: `fix the anchor or add a "${anchor}" node to ${ref.file}`,
+              });
+            }
           }
         }
       }
