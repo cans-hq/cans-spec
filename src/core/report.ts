@@ -134,6 +134,9 @@ function sectionFor(rule: string, category: string): string {
 
 const RE_BROKEN_FILE = /^broken ref: see (\S+) — file not found$/;
 const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
+// Issue #49: zero-addressable-target downgrade (prose .md, empty yaml) —
+// same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
+const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets or YAML keys\); use a file-level ref$/;
 const RE_STALE_BP = /^stale back-pointer: (\S+) no longer refs (\S+)$/;
 const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
@@ -204,6 +207,11 @@ function normalizeMessage(issue: IssueLike): Normalized {
   if ((mt = m.match(RE_BROKEN_ANCHOR)) !== null) {
     const detail = `${issue.file}:${issue.line} → ${mt[1]}#${mt[2]}`;
     return { rule: 'refs.broken.anchor', pattern: 'broken anchor', detail, item: { label: detail, sort: 0 } };
+  }
+  if ((mt = m.match(RE_ANCHOR_NO_TARGET)) !== null) {
+    // Issue #49: anchored ref to a target with nothing addressable — advisory
+    // downgrade, grouped per file#anchor target like the other ref families.
+    return { rule: 'refs.anchor.no-target', pattern: 'anchor on non-outline target', key: `${mt[1]}#${mt[2]}` };
   }
   if ((mt = m.match(RE_STALE_BP)) !== null) {
     // One group per stale target; items = referrer basenames, ranked by count.

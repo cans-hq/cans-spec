@@ -70,10 +70,20 @@ export function checkStructure(
         }
         // Issue #1: enforce siblings.min — a parent with 0 < count < min children
         // is under the configured fan-out. Warning level, consistent with the
-        // siblings.max side above. The single_child_collapse advisory below is a
-        // separate check and may fire for the same node — that is acceptable.
+        // siblings.max side above. Issue #51: when count === 1 AND the
+        // single_child_collapse advisory is enabled, the collapse warning below
+        // SUBSUMES the min violation for the same node (both are warnings about
+        // the same shape; the collapse advice is the strictly more actionable
+        // one) — siblings.min must NOT also fire, or the node is double-counted
+        // in the section total. With the advisory OFF (§18 config disabled it),
+        // the min check is that node's only remaining signal and still fires.
+        // Defaults (siblings.min: 1) never reach the subsumed branch (`1 < 1`
+        // is false), so default-rule workspaces are unaffected.
         const siblingsMin = rules.siblings !== null ? rules.siblings.min : null;
-        if (siblingsMin !== null && count > 0 && count < siblingsMin) {
+        if (
+          siblingsMin !== null && count > 0 && count < siblingsMin &&
+          !(count === 1 && rules.single_child_collapse)
+        ) {
           issues.push({
             file,
             line: node.line,
