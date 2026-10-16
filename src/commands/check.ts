@@ -4,9 +4,10 @@ import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
+  resolveSpecFile,
 } from '../core/fs.ts';
 import {
-  parseOutline, extractBackPointers, realNodes, maxDepth as outlineMaxDepth,
+  parseOutline, extractBackPointers, realNodes, flattenNodes, maxDepth as outlineMaxDepth,
   type ParseWarning,
 } from '../core/outline.ts';
 import { loadRules } from '../core/rules.ts';
@@ -16,8 +17,10 @@ import { checkOverflow, checkNoChaining } from '../core/overflow.ts';
 import { checkRedundancy } from '../core/redundancy.ts';
 import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
-  rebuildBackPointers, targetMatchesKey, anchorMatches, type RefByGroup, type RefGraph,
+  rebuildBackPointers, targetMatchesKey, anchorMatches, extractYamlKeys,
+  type RefByGroup, type RefGraph,
 } from '../core/refs.ts';
+import { anchorSlug, nearSlugMatches, SLUG_SUGGEST_THRESHOLD } from '../core/slug.ts';
 import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args.ts';
 
 export interface CheckArgs {
@@ -72,6 +75,19 @@ const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 // trimmed form starts with ``` toggles fence state. Kept as a regex to reuse
 // the outline.ts FENCE_RE convention; the two must never diverge.
 const FENCE_RE = /^```/;
+// Issue #48 trailing-punctuation strip set, mirrored from src/core/outline.ts
+// (REF_TRAILING_PUNCT_RE): the parser strips a trailing run of these from
+// see: tokens AFTER the match, so a ref's raw token carries `anchor` +
+// optional strippable punctuation while the parsed anchor is bare. The anchor
+// repair replaces only the anchor prefix — the punctuation belongs to the
+// surrounding sentence. The mirror must never diverge from the original.
+const REF_TRAILING_PUNCT = /[)\]},.;:!?'\u2019\u201D\u2026]+$/;
+// The refs.broken.anchor message shape, mirrored from src/core/refs.ts
+// (checkRefs) and test/report.ts (RE_BROKEN_ANCHOR): the --fix anchor repair
+// captures its failing (file, line, anchor) tuples FROM the issues list — the
+// same list the report prints — so a repair can never target a ref the run did
+// not flag. The three spellings must never diverge.
+const RE_BROKEN_ANCHOR_MSG = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 
 // globFiles throws ENOENT on missing dirs — guard the optional ones.
 function safeActiveTasks(root: string): string[] {
@@ -448,6 +464,108 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   return joinSourceLines(kept);
 }
 
+/** Issue #53 (Part 2.4): one anchor repair for `repairAnchors`. `line` is the
+ *  ref's 1-based source line, `from` the failing anchor spelling (the parsed
+ *  anchor token — exactly what the refs.broken.anchor error names) and `to`
+ *  the canonical replacement (`anchorSlug` of the unique near-matching node).
+ *  `raw`, when present, is the ref's FULL raw token from the ref graph
+ *  (`see: 02-auth.md#Sesions`, §11 verbatim match) and disambiguates lines
+ *  holding several see: refs — the parser mints them all, so the rewrite must
+ *  hit the RIGHT one, never the first `#from` substring that happens by. */
+export interface AnchorRewrite {
+  line: number;
+  from: string;
+  to: string;
+  raw?: string;
+}
+
+/** Where does the `from` anchor sit inside the `#<anchor>` fragment of the
+ *  RIGHT ref on this line? Returns the [start, end) span to substitute, or
+ *  null when the ref (or its anchor) cannot be located — the caller skips the
+ *  fix rather than rewriting blind. */
+function anchorSpan(text: string, f: AnchorRewrite): { start: number; end: number } | null {
+  // Preferred path: the ref's raw token pins the exact ref on the line. The
+  // raw is the parser's verbatim match, so its anchor portion is `from` plus
+  // any trailing prose punctuation the issue #48 strip set removed — only the
+  // `from` prefix is replaced; the punctuation belongs to the sentence.
+  if (f.raw !== undefined && f.raw !== '') {
+    const at = text.indexOf(f.raw);
+    if (at >= 0) {
+      // The raw is the parser's MAXIMAL [^\s#]+ match, so on the real source
+      // line it is always followed by whitespace, another '#' or the line
+      // end. A raw that stops MID-token is a caller's stale spelling — fall
+      // through to the scan instead of corrupting the longer anchor.
+      const after = text.charAt(at + f.raw.length);
+      if (after === '' || after === '#' || /\s/.test(after)) {
+        const h = f.raw.indexOf('#');
+        if (h >= 0 && f.raw.slice(h + 1).startsWith(f.from)) {
+          return { start: at + h + 1, end: at + h + 1 + f.from.length };
+        }
+      }
+    }
+  }
+  // Fallback (raw absent, or not found on the line): the first `#<from>`
+  // fragment whose anchor run — the maximal [^\s#]+ span the §11 ref regex
+  // would capture — is exactly `from`, or `from` plus a strippable trailing
+  // punctuation suffix (same §48 strip set, so `(see x.md#Anchor)` shapes
+  // match without eating the paren).
+  for (let h = text.indexOf('#'); h >= 0; h = text.indexOf('#', h + 1)) {
+    let end = h + 1;
+    while (end < text.length && text.charAt(end) !== '#' && !/\s/.test(text.charAt(end))) end++;
+    const run = text.slice(h + 1, end);
+    if (run === f.from || (run.startsWith(f.from) && REF_TRAILING_PUNCT.test(run.slice(f.from.length)))) {
+      return { start: h + 1, end: h + 1 + f.from.length };
+    }
+  }
+  return null;
+}
+
+/** Rewrite the anchor segment of see: tokens in one spec file source — the
+ *  write half of the issue #53 (Part 2.4) `--fix` anchor-repair transaction.
+ *  PURE function over bytes, exactly like `rewriteRefBy`:
+ *  - Issue #21 byte preservation: the source is split per line keeping each
+ *    line's own terminator, and only a line's TEXT is ever edited — a CRLF
+ *    file stays fully CRLF, an LF file stays LF, mixed files stay mixed, and
+ *    no line is ever added or dropped.
+ *  - Fence safety (issue #6 class): lines inside ``` fences and the fence
+ *    markers themselves are never touched. A graph-derived fix always targets
+ *    a bullet line OUTSIDE fences (parseOutline mints no refs inside them),
+ *    so the guard is pure defense — a fix landing on a fenced line is
+ *    skipped, leaving the source byte-identical, rather than corrupting a
+ *    fenced example.
+ *  - Precision (§11): each fix replaces ONLY the anchor segment of the
+ *    matching see: token (located via the ref's raw token when available, see
+ *    `anchorSpan`) — the file token, the rest of the line, and any other refs
+ *    on the same line survive verbatim.
+ *  - Degenerate fixes (empty `from`, `to === from`, out-of-range line, or a
+ *    `#from` fragment that is not on the line) are skipped, never errors.
+ *  Exported for regression tests (issue #53); behavior lives here. */
+export function repairAnchors(source: string, fixes: AnchorRewrite[]): string {
+  if (fixes.length === 0) return source;
+  const lines = splitSourceLines(source);
+  // Fence map, same toggling rule as rewriteRefBy (FENCE_RE on trimmed text).
+  let fenceOpen = false;
+  const inFence: boolean[] = new Array(lines.length).fill(false);
+  for (let i = 0; i < lines.length; i++) {
+    if (FENCE_RE.test(lines[i]!.text.trim())) {
+      inFence[i] = true; // the marker line itself is never rewritten
+      fenceOpen = !fenceOpen;
+      continue;
+    }
+    inFence[i] = fenceOpen;
+  }
+  for (const f of fixes) {
+    if (f.from === '' || f.from === f.to) continue;
+    const idx = f.line - 1;
+    if (idx < 0 || idx >= lines.length) continue;
+    if (inFence[idx]) continue;
+    const span = anchorSpan(lines[idx]!.text, f);
+    if (span === null) continue;
+    lines[idx]!.text = lines[idx]!.text.slice(0, span.start) + f.to + lines[idx]!.text.slice(span.end);
+  }
+  return joinSourceLines(lines);
+}
+
 /** The shared engine orchestrator used by `cans check` and `cans done`. */
 export async function checkWorkspace(root: string, opts: CheckArgs): Promise<CheckResult> {
   const t0 = performance.now(); // issue #41: elapsedMs timing (global in Bun + Node ≥16)
@@ -529,14 +647,19 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
-  const allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
+  // `let` (not `const`): the --fix --yes anchor repair rewrites referrer
+  // sources below and rebuilds both on the post-repair parses, so every later
+  // consumer — the back-pointer sweep, the ref-by phase, refs.total — sees the
+  // POST-fix state (§35: a --fix report describes the workspace the run
+  // leaves behind, not the one it found).
+  let allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
   // §24 (done): the archiving task has already been renamed into _archive/, so
   // its parsed nodes join the graph here under their former _tasks/ identity —
   // its see: refs still earn their targets' ref-by marks.
   if (opts.extraReferrer !== undefined && opts.extraReferrer !== null) {
     allFiles.set(opts.extraReferrer.key, opts.extraReferrer.nodes);
   }
-  const graph = buildRefGraph(allFiles, root);
+  let graph = buildRefGraph(allFiles, root);
 
   // File filter: restrict structure/style/overflow/redundancy to one file (refs stay global).
   const checkable = opts.file !== null
@@ -572,6 +695,163 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   issues.push(...deepHops);
   if (rules.references.orphan_check) {
     issues.push(...detectOrphans(specFiles, graph));
+  }
+
+  // ── issue #53 (Part 2.4): the --fix anchor-repair transaction ──
+  // A broken anchor is repaired ONLY when the intended target is unambiguous:
+  //   1. the target file exists and is parseable — the same resolution path
+  //      checkRefs used (loaded key first, then resolveSpecFile + parse; YAML
+  //      mapping keys count as candidates too, issue #49),
+  //   2. EXACTLY ONE distinct node/key text fuzzy-matches the failing anchor
+  //      at ≥ SLUG_SUGGEST_THRESHOLD — two lookalike siblings stay a plain
+  //      error (never a coin flip), while duplicate node texts collapse to
+  //      one candidate because they spell the SAME anchor,
+  //   3. the change is a pure anchor substitution in the see: token
+  //      (repairAnchors) — node text and every other byte survive.
+  // Transaction shape: plain --fix PROPOSES in the report only (nothing
+  // written; the proposal tells the user to pass --yes — the issue's
+  // "print each proposed rewrite first, require --yes to commit"); --fix --yes
+  // APPLIES the repairs and then the ref-by phase below runs on the rebuilt
+  // graph, so repaired refs earn their marks in the same run; --fix --dry-run
+  // previews everything and writes nothing at all. The [file] filter scopes
+  // proposals AND writes to the filter-matched referrers (issue #11: a
+  // filtered run never mutates a file the user did not name).
+  // parseCheckArgs already rejects --yes/--dry-run without --fix and the two
+  // together; the modes are re-derived defensively for direct callers (cans
+  // done) whose CheckArgs never set them.
+  const fixDryRun = opts.fix === true && opts.dryRun === true;
+  const applyAnchors = opts.fix === true && opts.yes === true && !fixDryRun;
+  const anchorFixes: NonNullable<CheckResult['anchorFixes']> = [];
+  if (opts.fix) {
+    // Which referrers may be rewritten at all: exactly the ref-by fixable set
+    // (spec sources; the [file] filter narrows it). Refs held by _tasks/ or
+    // _adr/ files are reported but never rewritten — --fix writes spec files
+    // only, today's contract.
+    const fixableReferrers = new Set<string>(
+      opts.file !== null ? checkable : [...specSources.keys()],
+    );
+    // Capture the failing (referrer, line, anchor) tuples from the issues
+    // list — the same list the report prints — so a repair can never target a
+    // ref this run did not flag as refs.broken.anchor.
+    const proposed: Array<{ file: string; line: number; from: string; to: string; raw: string }> = [];
+    for (const issue of issues) {
+      if (issue.rule !== 'refs.broken.anchor') continue;
+      const m = issue.message.match(RE_BROKEN_ANCHOR_MSG);
+      if (m === null) continue; // defensive: a foreign message shape is never a repair target
+      if (!fixableReferrers.has(issue.file)) continue; // issue #11 scoping
+      const ref = (graph.forward.get(issue.file) ?? [])
+        .find(r => r.line === issue.line && r.anchor === m[2] && r.file === m[1]);
+      if (ref === undefined || ref.anchor === null) continue;
+      // Condition 1: resolve the target on checkRefs' path — loaded key
+      // first (flat/folder spellings via targetMatchesKey), else the file on
+      // disk (YAML keys + parsed bullets, issue #49).
+      const key = refTargetKey(ref.file, allFiles.keys());
+      let candidates: string[] | null = null;
+      if (key !== null) {
+        const nodes = flattenNodes(allFiles.get(key)!).filter(n => n.synthetic !== true);
+        candidates = nodes.map(n => n.text);
+      } else {
+        const p = resolveSpecFile(root, ref.file);
+        if (p !== null) {
+          try {
+            const text = await readText(p);
+            const yamlKeys = /\.(yaml|yml)$/i.test(p) ? extractYamlKeys(text) : [];
+            const nodes = flattenNodes(parseOutline(text, p)).filter(n => n.synthetic !== true);
+            candidates = [...nodes.map(n => n.text), ...yamlKeys];
+          } catch {
+            candidates = null; // unparseable target: nothing addressable, nothing to match
+          }
+        }
+      }
+      if (candidates === null) continue; // missing/unparseable target → skipped cleanly
+      // Condition 2: exactly one distinct fuzzy match ≥ threshold. Distinct
+      // TEXTS: two nodes sharing a spelling spell the same anchor, so the
+      // rewrite stays uniquely determined; two different spellings are a
+      // genuine "which node did you mean" — no repair, no proposal.
+      const ranked = nearSlugMatches([...new Set(candidates)], ref.anchor, SLUG_SUGGEST_THRESHOLD);
+      if (ranked.length !== 1) continue;
+      const to = anchorSlug(ranked[0]!.text);
+      // Condition 3: a pure, well-formed anchor substitution.
+      if (to === '' || to === ref.anchor) continue; // degenerate — already canonical
+      if (/[\s#]/.test(to)) continue; // could never re-parse as one §11 anchor token
+      if (!anchorMatches(ranked[0]!.text, to)) continue; // defense: the rewrite must resolve
+      proposed.push({ file: issue.file, line: ref.line, from: ref.anchor, to, raw: ref.raw });
+    }
+    // Deterministic report order (referrer file, then source line) and one
+    // entry per distinct rewrite — duplicate see: tokens on one line mint one
+    // ref each, but they spell the same fix.
+    proposed.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
+    const seen = new Set<string>();
+    const unique = proposed.filter(p => {
+      const k = `${p.file}\0${p.line}\0${p.from}\0${p.to}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    const appliedKeys = new Set<string>();
+    if (applyAnchors && unique.length > 0) {
+      const byFile = new Map<string, Array<{ line: number; from: string; to: string; raw: string }>>();
+      for (const p of unique) {
+        const list = byFile.get(p.file) ?? [];
+        list.push(p);
+        byFile.set(p.file, list);
+      }
+      for (const [rel, fileFixes] of byFile) {
+        const source = specSources.get(rel);
+        if (source === undefined) continue; // referrer is not a spec source — never written
+        const rewritten = repairAnchors(source, fileFixes);
+        if (rewritten === source) continue; // fence guard / fragment miss — nothing landed
+        await writeText(join(root, rel), rewritten);
+        specSources.set(rel, rewritten);
+        // Post-repair parse for the graph rebuild below. The rewrite only
+        // substitutes an anchor spelling inside an existing see: token (the
+        // replacement never contains whitespace — guarded above), so the
+        // parse cannot newly fail.
+        specFiles.set(rel, parseOutline(rewritten, rel));
+        // Per-fix verification: the ref's raw token with its anchor segment
+        // swapped must now sit on the target line — a fix the rewriter
+        // skipped (fence guard) is reported as a proposal, never as applied.
+        const outLines = splitSourceLines(rewritten);
+        for (const f of fileFixes) {
+          const h = f.raw.indexOf('#');
+          if (h < 0) continue;
+          const expected = f.raw.slice(0, h + 1) + f.to + f.raw.slice(h + 1 + f.from.length);
+          const line = outLines[f.line - 1]?.text ?? '';
+          if (line.includes(expected)) appliedKeys.add(`${rel}\0${f.line}\0${f.from}`);
+        }
+      }
+    }
+    for (const f of unique) {
+      anchorFixes.push({
+        file: f.file,
+        line: f.line,
+        from: f.from,
+        to: f.to,
+        applied: appliedKeys.has(`${f.file}\0${f.line}\0${f.from}`),
+      });
+    }
+    if (appliedKeys.size > 0) {
+      // §35 post-fix state: the applied repairs resolved their refs — drop
+      // exactly those refs.broken.anchor issues (skipped fixes keep their
+      // errors), so the refs.broken counter and the exit code below reflect
+      // the workspace the run leaves behind.
+      for (let i = issues.length - 1; i >= 0; i--) {
+        const iss = issues[i]!;
+        if (iss.rule !== 'refs.broken.anchor') continue;
+        const m = iss.message.match(RE_BROKEN_ANCHOR_MSG);
+        if (m === null) continue;
+        if (appliedKeys.has(`${iss.file}\0${iss.line}\0${m[2]}`)) issues.splice(i, 1);
+      }
+      // Rebuild the graph on the post-repair parses BEFORE the back-pointer
+      // sweep and the ref-by phase, so the whole rest of the run is coherent:
+      // repaired refs are no longer broken (they earn ref-by marks in this
+      // same run) and pre-existing comments they satisfy read as current.
+      allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
+      if (opts.extraReferrer !== undefined && opts.extraReferrer !== null) {
+        allFiles.set(opts.extraReferrer.key, opts.extraReferrer.nodes);
+      }
+      graph = buildRefGraph(allFiles, root);
+    }
   }
 
   // Back-pointers: ref-by comments in spec sources vs actual incoming refs.
@@ -632,6 +912,12 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // (targets are not filter-matched); the user re-runs with the target's
   // filter, or unfiltered, to write them. `cans done` (file: null) and
   // unfiltered runs rewrite every spec source, exactly as before.
+  // Issue #53 (Part 2.4): --fix --dry-run writes NOTHING here either — the
+  // would-be ref-by rewrites are recorded in backPointersUpdated* and rendered
+  // as `--fix would rewrite ref-by in: ...`; the result's dryRun: true marks
+  // the whole report as a preview. When --yes applied anchor repairs above,
+  // this phase already runs on the rebuilt (post-repair) graph, so repaired
+  // refs earn their marks in the same run.
   let backPointersUpdated = 0;
   const backPointersUpdatedFiles: string[] = [];
   if (opts.fix && backPointersOn) {
@@ -655,6 +941,14 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         .map(g => ({ line: g.node!.line, body: g.fromFiles.join(', ') }));
       const rewritten = rewriteRefBy(source, fileBody, anchored);
       if (rewritten !== source) {
+        if (fixDryRun) {
+          // issue #53: preview only — no byte changes. The would-be file list
+          // rides backPointersUpdated* (the human printer renders the
+          // "would rewrite" wording when dryRun is set).
+          backPointersUpdated++;
+          backPointersUpdatedFiles.push(rel);
+          continue;
+        }
         await writeText(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         backPointersUpdated++;
@@ -662,32 +956,36 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       }
     }
 
-    // §35 check-fix.json reports the POST-fix state: recompute back-pointer
-    // counts from the rewritten sources and drop now-fixed stale issues.
-    // Issue #11: only a file the run ACTUALLY rewrote can have its stale
-    // warnings dropped — files outside a [file] filter keep theirs (the
-    // comment is still on disk, so it is still stale).
-    bpTotal = 0;
-    bpCurrent = 0;
-    bpStale = 0;
-    for (const [rel, source] of specSources) {
-      for (const bp of extractBackPointers(source, rel)) {
-        bpTotal++;
-        if (backPointerIsCurrent(bp, rel, allFiles, graph)) {
-          bpCurrent++;
-        } else {
-          bpStale++;
+    if (!fixDryRun) {
+      // §35 check-fix.json reports the POST-fix state: recompute back-pointer
+      // counts from the rewritten sources and drop now-fixed stale issues.
+      // Issue #11: only a file the run ACTUALLY rewrote can have its stale
+      // warnings dropped — files outside a [file] filter keep theirs (the
+      // comment is still on disk, so it is still stale). A --dry-run run
+      // wrote nothing, so every stale warning stays (and the counts above,
+      // computed before any write, already describe the on-disk truth).
+      bpTotal = 0;
+      bpCurrent = 0;
+      bpStale = 0;
+      for (const [rel, source] of specSources) {
+        for (const bp of extractBackPointers(source, rel)) {
+          bpTotal++;
+          if (backPointerIsCurrent(bp, rel, allFiles, graph)) {
+            bpCurrent++;
+          } else {
+            bpStale++;
+          }
         }
       }
-    }
-    const rewrittenSet = new Set(backPointersUpdatedFiles);
-    for (let i = issues.length - 1; i >= 0; i--) {
-      if (
-        issues[i]!.category === 'refs' &&
-        issues[i]!.message.startsWith('stale back-pointer:') &&
-        rewrittenSet.has(issues[i]!.file)
-      ) {
-        issues.splice(i, 1);
+      const rewrittenSet = new Set(backPointersUpdatedFiles);
+      for (let i = issues.length - 1; i >= 0; i--) {
+        if (
+          issues[i]!.category === 'refs' &&
+          issues[i]!.message.startsWith('stale back-pointer:') &&
+          rewrittenSet.has(issues[i]!.file)
+        ) {
+          issues.splice(i, 1);
+        }
       }
     }
   }
@@ -739,6 +1037,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // spec-relative). Empty without --fix or when nothing needed a write;
     // with a [file] filter only matching files can ever appear here.
     backPointersUpdatedFiles: [...backPointersUpdatedFiles].sort(),
+    // issue #53 (Part 2.4): the anchor-repair transaction report — present
+    // only on --fix runs. Proposals (plain --fix, --dry-run) carry
+    // applied:false; a --yes run's landed rewrites carry applied:true.
+    // Absent on plain checks (additive-only JSON, §35).
+    ...(opts.fix ? { anchorFixes } : {}),
+    // issue #53 (Part 2.4): --dry-run preview marker. When true,
+    // backPointersUpdated* and anchorFixes describe WOULD-BE writes and no
+    // byte changed on disk.
+    ...(fixDryRun ? { dryRun: true } : {}),
     // issue #41: whole-ms wall-clock duration of the run (never negative).
     elapsedMs: Math.max(0, Math.round(performance.now() - t0)),
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).

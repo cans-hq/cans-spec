@@ -174,6 +174,16 @@ export interface CheckResult extends CommandResult {
    *  (sorted). Empty without --fix or when nothing needed a write; with a
    *  [file] filter only matching files can ever appear here. */
   backPointersUpdatedFiles: string[];
+  /** issue #53 (Part 2.4): the --fix anchor-repair transaction's items —
+   *  every proposed pure-anchor rewrite (applied:false — plain --fix and
+   *  --fix --dry-run propose only) and every one a --fix --yes run actually
+   *  wrote (applied:true). Present only on --fix runs; absent on plain
+   *  checks (additive-only result fields). */
+  anchorFixes?: Array<{ file: string; line: number; from: string; to: string; applied: boolean }>;
+  /** issue #53 (Part 2.4): true when --fix --dry-run previewed the run —
+   *  the backPointersUpdated* fields and anchorFixes then describe WOULD-BE
+   *  writes and no byte changed on disk. */
+  dryRun?: boolean;
   /** issue #41: wall-clock duration of the whole checkWorkspace run,
    *  rounded to whole ms (0 for the static checkFail paths). */
   elapsedMs: number;
