@@ -286,6 +286,18 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
   // Header: per-root-cause counts (issue #41 example: `REFS  ✗ 96 broken · ⚠ 8 stale · ⚠ 1 orphan`).
   // Level-aware: named buckets subtract from the section totals, the residue
   // prints as `✗ N` / `⚠ N` — no finding is ever hidden or double-counted.
+  //
+  // Issue #52: the `✗ N broken` part derives from `r.refs.broken` — the EXACT
+  // counter `cans check --json` emits (refs.broken.file + refs.broken.anchor
+  // errors, check.ts) — so the text header and the JSON counter share one
+  // source of truth and can never disagree. The old byRule sum counted
+  // refs.broken.file groups only, leaving broken ANCHORS in the anonymous
+  // residue (reporter's tree: `✗ 1 broken · ⚠ 54 stale · ✗ 115` beside json
+  // refs.broken: 113 = 112 anchors + 1 file). refs.broken.anchor joins
+  // `named` so its groups subtract from the residue — they are displayed
+  // inside the broken count, never double-counted — and since both broken
+  // rules are only ever emitted at error level (refs.ts), the displayed
+  // counts still sum to errorCount + warningCount exactly.
   const byRule = new Map<string, { err: number; warn: number }>();
   for (const g of section.groups) {
     const cur = byRule.get(g.rule) ?? { err: 0, warn: 0 };
@@ -293,12 +305,12 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
     else cur.warn += g.count;
     byRule.set(g.rule, cur);
   }
-  const named = ['refs.broken.file', 'refs.backpointer.stale', 'refs.orphan', 'refs.deep_hop'];
+  const named = ['refs.broken.file', 'refs.broken.anchor', 'refs.backpointer.stale', 'refs.orphan', 'refs.deep_hop'];
   const namedErr = named.reduce((a, rl) => a + (byRule.get(rl)?.err ?? 0), 0);
   const namedWarn = named.reduce((a, rl) => a + (byRule.get(rl)?.warn ?? 0), 0);
   const parts: string[] = [];
-  const broken = byRule.get('refs.broken.file');
-  if (broken !== undefined && broken.err + broken.warn > 0) parts.push(`✗ ${broken.err + broken.warn} broken`);
+  // Issue #52: the JSON counter, not a byRule sum — see comment above.
+  if (r.refs.broken > 0) parts.push(`✗ ${r.refs.broken} broken`);
   const stale = byRule.get('refs.backpointer.stale');
   if (stale !== undefined && stale.err + stale.warn > 0) parts.push(`⚠ ${stale.err + stale.warn} stale`);
   const orphan = byRule.get('refs.orphan');
