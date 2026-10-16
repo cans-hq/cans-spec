@@ -225,6 +225,11 @@ const FOLD_TOP_GROUPS = 5;
 const FOLD_KEYWORD_ITEMS = 5;
 const FOLD_OVERLAP_ITEMS = 3;
 const FOLD_TARGETS = 8;
+// Issue #53 Part 1.5: slug-hint items shown in the folded view. Emission
+// caps at 5 notes per file + 1 summary line (check.ts SLUG_HINT_CAP), so 6
+// keeps a single-file hint group fully visible; only MULTI-file hint groups
+// fold — same compact budget as keywords.
+const FOLD_HINT_ITEMS = 6;
 const WRAP_COLS = 72;
 
 function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>): void {
@@ -240,6 +245,8 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
   const expanded = (name: string): boolean => show !== undefined && (show.has('all') || show.has(name));
 
   // issue #41: summary line first — severity mark, workspace shape, elapsed ms.
+  // Issue #53 Part 1.5: info notes NEVER change this mark — a clean workspace
+  // with hints still reads ✓ (hints are advice, not findings).
   const mark = r.errorCount > 0 ? '✗' : r.warningCount > 0 ? '⚠' : '✓';
   console.log(`${mark} ${r.files} files · ${r.nodes} nodes · depth ${r.maxDepth} · ${r.elapsedMs ?? 0}ms`);
 
@@ -251,7 +258,7 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
     // the REFS block — even when the refs engine has no findings of its own
     // (the clean/healthy case), the run's writes stay visible there.
     if (name === 'refs' && section === undefined && r.backPointersUpdatedFiles.length > 0) {
-      section = { name: 'refs', errorCount: 0, warningCount: 0, groups: [] };
+      section = { name: 'refs', errorCount: 0, warningCount: 0, infoCount: 0, groups: [] };
     }
     // Compact contract: STRUCTURE/STYLE/REDUNDANCY (and the small sections)
     // print only when they carry findings; REFS and OVERFLOW always print
@@ -275,8 +282,17 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
 }
 
 function printSection(section: SectionReport, expanded: boolean): void {
-  const mark = section.errorCount > 0 ? '✗' : '⚠';
-  console.log(`${DISPLAY_NAMES[section.name] ?? section.name.toUpperCase()}  ${mark} ${section.errorCount + section.warningCount}`);
+  // Issue #53 Part 1.5: info notes never change a section's mark — errors
+  // still print ✗, warnings ⚠, and a section carrying ONLY hints prints ℹ
+  // with the hint count (never a fake ⚠ over a zero finding count).
+  const findings = section.errorCount + section.warningCount;
+  const infoPart = section.infoCount > 0 ? ` · ℹ ${section.infoCount}` : '';
+  if (findings > 0) {
+    const mark = section.errorCount > 0 ? '✗' : '⚠';
+    console.log(`${DISPLAY_NAMES[section.name] ?? section.name.toUpperCase()}  ${mark} ${findings}${infoPart}`);
+  } else {
+    console.log(`${DISPLAY_NAMES[section.name] ?? section.name.toUpperCase()}  ℹ ${section.infoCount}`);
+  }
   const { shown, folded } = expanded ? { shown: section.groups, folded: 0 } : topGroups(section, FOLD_TOP_GROUPS);
   for (const g of shown) printGroup(g, expanded);
   if (folded > 0) console.log(`   … ${folded} more → cans check --show ${section.name}`);
@@ -298,11 +314,14 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
   // inside the broken count, never double-counted — and since both broken
   // rules are only ever emitted at error level (refs.ts), the displayed
   // counts still sum to errorCount + warningCount exactly.
-  const byRule = new Map<string, { err: number; warn: number }>();
+  const byRule = new Map<string, { err: number; warn: number; info: number }>();
   for (const g of section.groups) {
-    const cur = byRule.get(g.rule) ?? { err: 0, warn: 0 };
+    const cur = byRule.get(g.rule) ?? { err: 0, warn: 0, info: 0 };
+    // Issue #53 Part 1.5: three-way classification (not error/else) — an
+    // info group must never inflate the warning side of the residue math.
     if (g.level === 'error') cur.err += g.count;
-    else cur.warn += g.count;
+    else if (g.level === 'warning') cur.warn += g.count;
+    else cur.info += g.count;
     byRule.set(g.rule, cur);
   }
   const named = ['refs.broken.file', 'refs.broken.anchor', 'refs.backpointer.stale', 'refs.orphan', 'refs.deep_hop'];
@@ -322,11 +341,18 @@ function printRefsSection(r: CheckResult, section: SectionReport, expanded: bool
   const warnOther = section.warningCount - namedWarn;
   if (errOther > 0) parts.push(`✗ ${errOther}`);
   if (warnOther > 0) parts.push(`⚠ ${warnOther}`);
+  // Issue #53 Part 1.5: the hint band rides at the END of the header —
+  // `· ℹ N notes` — never inside the error/warning parts, and never
+  // displacing the healthy `✓` line when notes are the ONLY refs findings:
+  // a hint-only REFS block reads `✓ N refs · M/N back-ptrs · ℹ K notes`.
+  const infoPart = section.infoCount > 0
+    ? `ℹ ${section.infoCount} note${section.infoCount === 1 ? '' : 's'}`
+    : '';
   if (parts.length > 0) {
-    console.log(`REFS  ${parts.join(' · ')}`);
+    console.log(`REFS  ${infoPart !== '' ? `${parts.join(' · ')} · ${infoPart}` : parts.join(' · ')}`);
   } else {
     const bp = r.backPointers.total > 0 ? ` · ${r.backPointers.current}/${r.backPointers.total} back-ptrs` : '';
-    console.log(`REFS  ✓ ${r.refs.total} refs${bp}`);
+    console.log(`REFS  ✓ ${r.refs.total} refs${bp}${infoPart !== '' ? ` · ${infoPart}` : ''}`);
   }
   // Issue #11: name the files --fix actually rewrote (099e858 wording) —
   // never printed as an empty list (plain checks show nothing here).
@@ -359,7 +385,10 @@ function printBrokenFileBlock(groups: IssueGroup[]): void {
 }
 
 function printGroup(g: IssueGroup, expanded: boolean): void {
-  console.log(`  ${String(g.count).padStart(2)}× ${g.pattern}`);
+  // Issue #53 Part 1.5: info-level groups print with the ℹ mark, so a hint
+  // band is never mistaken for a warning finding.
+  const lead = g.level === 'info' ? `ℹ ${g.count}×` : `${String(g.count).padStart(2)}×`;
+  console.log(`  ${lead} ${g.pattern}`);
   switch (g.rule) {
     case 'redundancy.keyword': {
       const items = g.items ?? [];
@@ -405,6 +434,19 @@ function printGroup(g: IssueGroup, expanded: boolean): void {
         : (g.detail !== undefined ? [g.detail] : items.slice(0, FOLD_OVERLAP_ITEMS).map(withFix));
       for (const d of details) console.log(`      ${d}`);
       break;
+    }
+    case 'refs.slug.hint': {
+      // Issue #53 Part 1.5: the items ARE the value — self-contained
+      // `file:line — "text" → #slug` pairs naming each node's canonical
+      // anchor (emission caps at 5 per file + a summary; the fold keeps the
+      // same compact budget for multi-file groups).
+      const items = g.items ?? [];
+      const shownItems = expanded ? items : items.slice(0, FOLD_HINT_ITEMS);
+      for (const line of wrapText(shownItems.map(it => it.label).join('  '), WRAP_COLS, 6)) console.log(line);
+      const hidden = items.slice(shownItems.length).reduce((a, it) => a + it.count, 0);
+      if (!expanded && hidden > 0) console.log(`      ↳ ${hidden} more → cans check --show refs`);
+      else if (g.suggestion !== undefined) console.log(`      ↳ ${g.suggestion}`);
+      return;
     }
     default: {
       for (const line of wrapText(g.locations.join('  '), WRAP_COLS, 6)) console.log(line);

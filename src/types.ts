@@ -44,7 +44,13 @@ export interface BackPointer {
 
 // ── Issues ──
 
-export type IssueLevel = 'error' | 'warning';
+/** 'info' is the author-time hint band (issue #53 Part 1.5): advisory
+ *  notes — e.g. refs.slug.hint, which names the canonical anchor of a node
+ *  containing slug-confusable characters — that must NEVER affect `ok`,
+ *  exit codes, `--strict`, or the error/warning counts. Every count filter
+ *  in the codebase is an equality test (`=== 'error'` / `=== 'warning'`),
+ *  so info is invisible to them by construction. */
+export type IssueLevel = 'error' | 'warning' | 'info';
 export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow';
 
 export interface Issue {
@@ -169,6 +175,11 @@ export interface CheckResult extends CommandResult {
   issues: Issue[];
   errorCount: number;
   warningCount: number;
+  /** Issue #53 Part 1.5: count of level:'info' issues (author-time hints,
+   *  e.g. refs.slug.hint slug-safety notes). Additive/optional: internal
+   *  callers that never emit info leave it unset. NEVER affects `ok`,
+   *  exitCode, `--strict` or errorCount/warningCount. */
+  infoCount?: number;
   backPointersUpdated: number;
   /** Issue #11: spec-relative paths of the files --fix actually rewrote
    *  (sorted). Empty without --fix or when nothing needed a write; with a

@@ -500,10 +500,13 @@ describe('report core (issue #41)', () => {
     expect(topGroups(section, 200)).toEqual({ shown: section.groups, folded: 0 });
     expect(topGroups(section, 0).folded).toBe(112);
     // folded sums issue counts, not group counts
+    // (infoCount: 0 — issue #53 Part 1.5 made it a required SectionReport
+    //  field; this synthetic literal carries no info notes.)
     const synthetic: SectionReport = {
       name: 'refs',
       errorCount: 10,
       warningCount: 0,
+      infoCount: 0,
       groups: [
         { ...section.groups[0]!, count: 5 },
         { ...section.groups[1]!, count: 3 },

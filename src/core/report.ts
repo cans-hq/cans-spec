@@ -29,7 +29,9 @@
  *    category — e.g. content.tbd.* lands under `content`, refs.chaining
  *    under `refs` even though the overflow engine emits it).
  *  - `level` is the first member's level; sections count errors/warnings
- *    from the raw issues, so a hypothetically mixed group never skews them.
+ *    (and, since issue #53 Part 1.5, info — its own bucket, never folded
+ *    into the other two) from the raw issues, so a hypothetically mixed
+ *    group never skews them.
  *  - topGroups: `folded` is the number of issue OCCURRENCES hidden in the
  *    tail groups (the "…and K more" line), not the group count.
  *  - Engine message formats with no id in the rule vocabulary (transient
@@ -41,7 +43,10 @@
 export interface IssueLike {
   file: string;
   line: number;
-  level: 'error' | 'warning';
+  /** Issue #53 Part 1.5: 'info' is the author-time hint band — grouped and
+   *  counted (SectionReport.infoCount) but deliberately excluded from
+   *  errorCount/warningCount, exit codes and `ok`. */
+  level: 'error' | 'warning' | 'info';
   category: string;
   message: string;
   suggestion?: string;
@@ -72,7 +77,9 @@ export interface IssueGroup {
   pattern: string;
   /** Occurrences. */
   count: number;
-  level: 'error' | 'warning';
+  /** Issue #53 Part 1.5: first member's level — 'info' groups (refs.slug.hint)
+   *  render with the ℹ mark and never touch section error/warning counts. */
+  level: 'error' | 'warning' | 'info';
   /** Compact per-file strings `action:30,111,143` (dedup, stable order). */
   locations: string[];
   /** Metric-ranked sub-items (keywords, missing targets, overlap pairs, …). */
@@ -89,6 +96,10 @@ export interface SectionReport {
   name: string;
   errorCount: number;
   warningCount: number;
+  /** Issue #53 Part 1.5: level:'info' occurrences in the section (author-
+   *  time hints). Counted SEPARATELY — never folded into errorCount or
+   *  warningCount, never affecting exit codes or `ok`. */
+  infoCount: number;
   groups: IssueGroup[];
 }
 
@@ -142,6 +153,12 @@ const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 // Issue #49: zero-addressable-target downgrade (prose .md, empty yaml) —
 // same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
 const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets or YAML keys\); use a file-level ref$/;
+// Issue #53 Part 1.5: info-level slug-safety notes — one per confusable node
+// (first SLUG_HINT_CAP per file) plus one per-file cap summary line. Greedy
+// first group: a node text containing `"` still matches (backtracking lands
+// on the LAST `" → #` — the message's own shape).
+const RE_SLUG_HINT = /^non-obvious slug: "(.*)" → #(.+) \(contains (.+)\)$/;
+const RE_SLUG_HINT_MORE = /^non-obvious slug: (\d+) more in (\S+) \((\d+) total\)$/;
 const RE_STALE_BP = /^stale back-pointer: (\S+) no longer refs (\S+)$/;
 const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
@@ -229,6 +246,26 @@ function normalizeMessage(issue: IssueLike): Normalized {
     // Issue #49: anchored ref to a target with nothing addressable — advisory
     // downgrade, grouped per file#anchor target like the other ref families.
     return { rule: 'refs.anchor.no-target', pattern: 'anchor on non-outline target', key: `${mt[1]}#${mt[2]}` };
+  }
+  if ((mt = m.match(RE_SLUG_HINT)) !== null) {
+    // Issue #53 Part 1.5: info-level slug-safety note. All notes (per-node
+    // + per-file cap summaries) share ONE group — the items are the
+    // self-contained `file:line — "text" → #slug` pairs, because the note's
+    // whole value is naming the anchor.
+    return {
+      rule: 'refs.slug.hint',
+      pattern: 'non-obvious slug',
+      item: { label: `${issue.file}:${issue.line} — "${mt[1]}" → #${mt[2]}`, sort: 0 },
+    };
+  }
+  if ((mt = m.match(RE_SLUG_HINT_MORE)) !== null) {
+    // Issue #53 Part 1.5: the per-file cap summary rides in the same group
+    // as its file's notes (appearance order keeps it after them).
+    return {
+      rule: 'refs.slug.hint',
+      pattern: 'non-obvious slug',
+      item: { label: `${mt[2]}: +${mt[1]} more (${mt[3]} total)`, sort: 0 },
+    };
   }
   if ((mt = m.match(RE_STALE_BP)) !== null) {
     // One group per stale target; items = referrer basenames, ranked by count.
@@ -437,7 +474,7 @@ function finalizeGroup(acc: Acc): IssueGroup {
  *  complete — nothing is dropped silently). */
 export function buildReport(issues: IssueLike[], opts?: { topN?: number }): CheckReport {
   const byKey = new Map<string, Acc>();
-  const sectionCounts = new Map<string, { errorCount: number; warningCount: number }>();
+  const sectionCounts = new Map<string, { errorCount: number; warningCount: number; infoCount: number }>();
 
   for (let i = 0; i < issues.length; i++) {
     const issue = issues[i]!;
@@ -445,9 +482,12 @@ export function buildReport(issues: IssueLike[], opts?: { topN?: number }): Chec
     const rule = issue.rule ?? norm.rule; // issue #41: explicit rule wins, fallback agrees
     const section = sectionFor(rule, issue.category);
 
-    const counts = sectionCounts.get(section) ?? { errorCount: 0, warningCount: 0 };
+    const counts = sectionCounts.get(section) ?? { errorCount: 0, warningCount: 0, infoCount: 0 };
+    // Issue #53 Part 1.5: info is its OWN bucket — an else-if chain (not the
+    // old error/else binary) so a hint can never leak into warningCount.
     if (issue.level === 'error') counts.errorCount++;
-    else counts.warningCount++;
+    else if (issue.level === 'warning') counts.warningCount++;
+    else counts.infoCount++;
     sectionCounts.set(section, counts);
 
     const gkey = `${rule}|${norm.key ?? norm.pattern}`;
@@ -517,7 +557,7 @@ export function buildReport(issues: IssueLike[], opts?: { topN?: number }): Chec
   for (const group of groups) {
     let s = sections[group.category];
     if (s === undefined) {
-      s = { name: group.category, errorCount: 0, warningCount: 0, groups: [] };
+      s = { name: group.category, errorCount: 0, warningCount: 0, infoCount: 0, groups: [] };
       sections[group.category] = s;
     }
     s.groups.push(group);
@@ -526,6 +566,7 @@ export function buildReport(issues: IssueLike[], opts?: { topN?: number }): Chec
     const counts = sectionCounts.get(section.name)!;
     section.errorCount = counts.errorCount;
     section.warningCount = counts.warningCount;
+    section.infoCount = counts.infoCount;
   }
   if (opts?.topN !== undefined) {
     for (const section of Object.values(sections)) {
@@ -556,7 +597,9 @@ export function estimateTokens(text: string): number {
  *  plus `level` and `suggestion` — agents must be able to filter errors from
  *  warnings and read fix hints without re-deriving them, so the wire format
  *  is a strict superset of the acceptance shape. Unknown engine categories
- *  land in `other`; no folding. */
+ *  land in `other`; no folding. Issue #53 Part 1.5: info-level hints carry
+ *  `level: 'info'` here; `counts` stays `{errors, warnings}` (info is NOT a
+ *  finding — hint totals are countable from the sections). */
 export function checkReportJson(result: CheckResultLike): unknown {
   const sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>> = {};
   for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow', 'other']) {
