@@ -33,6 +33,27 @@ function fmt(v: unknown): string {
   }
 }
 
+/** bun:test `toMatchObject` semantics: recursive SUBSET match.
+ *  Objects: every expected key must exist on the actual object and match —
+ *  expected objects recurse as subsets, primitives via deep equality; keys
+ *  absent from `expected` are ignored. Arrays: index-wise subset match, extra
+ *  actual elements ignored (same as Jest/bun). A missing key fails even when
+ *  the expected value is `undefined` (`k in actual` guard).
+ */
+function subsetMatches(actual: unknown, expected: unknown): boolean {
+  if (expected === null || typeof expected !== 'object') return deepEqual(actual, expected);
+  if (actual === null || typeof actual !== 'object') return false;
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    return expected.every((e, i) => subsetMatches(actual[i], e));
+  }
+  if (Array.isArray(actual)) return false;
+  const a = actual as Record<string, unknown>;
+  return Object.entries(expected as Record<string, unknown>).every(
+    ([k, v]) => k in a && subsetMatches(a[k], v),
+  );
+}
+
 function sizeOf(v: unknown): number | undefined {
   if (v === null || v === undefined || typeof v === 'boolean') return undefined;
   if (typeof v === 'string' || Array.isArray(v)) return v.length;
@@ -58,6 +79,7 @@ interface ExpectApi {
   toBeLessThan(n: number): void;
   toBeLessThanOrEqual(n: number): void;
   toHaveLength(n: number): void;
+  toMatchObject(expected: Record<string, unknown>): void;
   toThrow(expected?: string | RegExp): void;
   readonly not: ExpectApi;
 }
@@ -139,6 +161,10 @@ function makeExpect(actual: unknown, message?: string): ExpectApi {
           negated ? !pass : pass,
           `expected length ${n}${negated ? ' NOT' : ''}, got ${fmt(size)}`,
         );
+      },
+      toMatchObject(expected) {
+        const pass = subsetMatches(actual, expected);
+        check(negated ? !pass : pass, that(`to match object ${fmt(expected)}`));
       },
       get not() { return build(!negated); },
       toThrow(expected?: string | RegExp) {
