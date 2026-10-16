@@ -34,6 +34,8 @@
  *          refs.broken 0, zero refs issues (unit)
  *   a2 .... same workspace, §12 anchor normalization across the key path
  *          (#Data-protection ↔ key `data protection:`)
+ *   a3 .... extension variants: .yml and uppercase .YAML resolve through the
+ *          same key path; empty yaml → the (b) downgrade
  *   b ..... yaml#nonexistent-key → truthful refs.broken.anchor ERROR (nodes
  *          and keys exist, none match)
  *   c ..... prose .md#anchor (docs/notes.md, no bullets) → refs.anchor.no-
@@ -230,6 +232,28 @@ describe('issue #49: checkRefs — YAML mapping keys as addressable anchors', ()
     const files = loadFiles({ '00-overview.md': QUOTED_KEY_FILES['00-overview.md']! });
     const issues = checkRefs(files, buildRefGraph(files, ws.root), ws.root);
     expect(issues.filter(i => i.category === 'refs')).toHaveLength(0);
+  });
+
+  test('a3: extension variants (.yml, uppercase .YAML) and empty yaml', () => {
+    const ws = makeWs('unit-ext', {
+      '00-overview.md': '- Overview\n  - A: see artifacts/config.yml#Data-protection\n  - B: see up/gov.YAML#maintenance\n  - C: see artifacts/empty.yaml#anything\n',
+      'artifacts/config.yml': "deploy:\n  'data protection': strict\n",
+      'up/gov.YAML': 'maintenance: weekly\n',
+      'artifacts/empty.yaml': '',
+    });
+    const files = loadFiles({ '00-overview.md': '- Overview\n  - A: see artifacts/config.yml#Data-protection\n  - B: see up/gov.YAML#maintenance\n  - C: see artifacts/empty.yaml#anything\n' });
+    const issues = checkRefs(files, buildRefGraph(files, ws.root), ws.root);
+
+    // .yml and .YAML targets resolve through the same key path (extension
+    // test is case-insensitive); an EMPTY yaml has no keys and no nodes, so
+    // its anchor takes the zero-addressable-target downgrade instead.
+    expect(issues.filter(i => i.message.includes('config.yml'))).toHaveLength(0);
+    expect(issues.filter(i => i.message.includes('gov.YAML'))).toHaveLength(0);
+    const downgraded = issues.filter(i => i.rule === 'refs.anchor.no-target');
+    expect(downgraded).toHaveLength(1);
+    expect(downgraded[0]!.message).toBe(
+      'anchor on non-outline target: artifacts/empty.yaml#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref',
+    );
   });
 
   test('b: yaml#nonexistent-key stays a truthful refs.broken.anchor ERROR', () => {
