@@ -27,8 +27,8 @@
  *          and still addresses node "Section 2.1" (anchorMatches unchanged)
  *   e ..... trailing slash preserved: `see auth/` mints `auth/`, and
  *          `(see auth/)` mints `auth/` too (issue #22 contract intact)
- *   f ..... typographic closers (’ ” …) and stacked closers (`”).`) stripped
- *          from both tokens
+ *   f ..... typographic closers (’ ” …), straight quotes (' ") and stacked
+ *          closers (`”).`) stripped from both tokens
  *   g ..... pure-punctuation prose ("see .") mints NO ref at all
  *   h ..... punctuation-only anchor (`see 02-a.md#)`) degrades to file-level
  *          (anchor null), the ref itself survives
@@ -174,6 +174,13 @@ describe('issue #48: trailing punctuation never lands in the ref tokens', () => 
 
     const r4 = refsOf('- Four: “see auth.md”\n');
     expect(r4[0].file).toBe('auth.md'); // was `auth.md”` — the opening “ is prose, not part of the token
+
+    // Straight quotes are stripped too — same set as the typographic closers.
+    const r5 = refsOf('- Five: see 02-a.md#Audit-spine"\n');
+    expect(r5[0].anchor).toBe('Audit-spine'); // was `Audit-spine"`
+
+    const r6 = refsOf("- Six: 'see auth.md'\n");
+    expect(r6[0].file).toBe('auth.md'); // was `auth.md'`
   });
 
   test('g: pure-punctuation prose ("see .") mints NO ref at all', () => {

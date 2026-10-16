@@ -20,7 +20,7 @@ const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
 // typographic closers `’ “ …` — one or more trailing occurrences. Deliberately
 // NOT stripped: `-`, `_`, `/` (trailing slash is a legitimate folder target,
 // `see auth/` — issue #22), openers `([{` and alphanumerics.
-const REF_TRAILING_PUNCT_RE = /[)\]},.;:!?'’”…]+$/;
+const REF_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
 
 /** Issue #48: strip trailing prose punctuation from a captured see: token.
  *  The match itself stays verbatim in `raw` (deep-hop advice quotes the
