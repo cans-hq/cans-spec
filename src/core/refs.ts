@@ -61,12 +61,15 @@ function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: str
 }
 
 /** Anchor ↔ node-text equivalence (§12 docs' own `#Data-protection` convention):
- *  case-insensitive, hyphens/underscores ↔ spaces. Not fuzzy — exact after
- *  normalization. */
+ *  case-insensitive, hyphens/underscores ↔ spaces. Issue #50: the full
+ *  dash-like family (figure/en/em dash, horizontal bar, minus sign — U+2012,
+ *  U+2013, U+2014, U+2015, U+2212) maps to a space exactly like `-` and `_`,
+ *  so prose titles with typographic dashes resolve against hyphen anchors
+ *  (norm() runs on both sides). Not fuzzy — exact after normalization. */
 export function anchorMatches(nodeText: string, anchor: string): boolean {
   if (nodeText === anchor) return true;
   const norm = (s: string): string =>
-    s.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    s.toLowerCase().replace(/[-_\u2012\u2013\u2014\u2015\u2212]+/g, ' ').replace(/\s+/g, ' ').trim();
   return norm(nodeText) === norm(anchor);
 }
 

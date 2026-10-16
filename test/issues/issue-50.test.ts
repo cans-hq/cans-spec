@@ -54,18 +54,20 @@ const MINUS = '\u2212'; // minus sign
 
 /** The issue's shape: the node title carries a spaced em-dash, the ref
  *  spells the anchor with ASCII hyphens. Before the fix this ref was a
- *  broken anchor (refs.broken.anchor error, exit 2). */
+ *  broken anchor (refs.broken.anchor error, exit 2). Siblings are padded to
+ *  two-per-parent so the structure.single_child warning stays out of the
+ *  way — the exit code then reflects refs alone. */
 const REPRO_FILES = {
-  '00-overview.md': `- Overview\n  - Authorizer: see 02-authentication.md#Layer-1-C-authorizer\n`,
-  '02-authentication.md': `- Authentication\n  - Layer 1 ${EM} C authorizer\n`,
+  '00-overview.md': `- Overview\n  - Authorizer: see 02-authentication.md#Layer-1-C-authorizer\n  - Scope\n`,
+  '02-authentication.md': `- Authentication\n  - Layer 1 ${EM} C authorizer\n  - Token hygiene\n`,
 };
 
 /** Same shape, reversed: the anchor itself is written with the em-dash and
  *  the node title uses the ASCII hyphen. norm() normalizes both sides, so
  *  this spelling resolves too. */
 const REVERSE_FILES = {
-  '00-overview.md': `- Overview\n  - Authorizer: see 02-authentication.md#Layer-1${EM}C-authorizer\n`,
-  '02-authentication.md': `- Authentication\n  - Layer 1-C authorizer\n`,
+  '00-overview.md': `- Overview\n  - Authorizer: see 02-authentication.md#Layer-1${EM}C-authorizer\n  - Scope\n`,
+  '02-authentication.md': `- Authentication\n  - Layer 1-C authorizer\n  - Token hygiene\n`,
 };
 
 // ── CLI scaffolding (mirrors test/issues/issue-22.test.ts) ──
