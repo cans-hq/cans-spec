@@ -291,6 +291,24 @@ export interface ExportResult extends CommandResult {
   dryRun?: boolean;
 }
 
+export interface SlugResult extends CommandResult {
+  command: 'slug';
+  /** The raw user input: the joined text-mode args, or the `<file>:<line>`
+   *  token. Echoed verbatim so --json consumers can correlate the answer
+   *  with the ask (issue #53 Part 1.2). */
+  input: string;
+  /** The canonical anchor fragment (anchorSlug, core/slug.ts — the Option A
+   *  algorithm). Empty string on failure paths. */
+  slug: string;
+  /** §37: real diagnosis (no text given, empty slug, malformed line number,
+   *  no workspace, file not found, line not a node line, parse error). */
+  error?: string;
+  /** File:line mode only: the source node's text the slug was derived from —
+   *  the answer to "which node did line N point at?". Never set in text
+   *  mode (there is no source node, only the given text). */
+  nodeText?: string;
+}
+
 export interface VersionResult extends CommandResult {
   command: 'version';
   version: string;

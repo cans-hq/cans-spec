@@ -1,6 +1,6 @@
 import type {
   CommandResult, CheckResult, InitResult, NewResult, DoneResult, StatusResult,
-  BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, VersionResult,
+  BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, SlugResult, VersionResult,
 } from '../types.ts';
 import {
   buildReport, topGroups, checkReportJson,
@@ -195,6 +195,19 @@ export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set
         console.log(`[dry-run] Would export ${r.format} → ${r.outputDir} (${r.filesExported} files). No files written.`);
       } else {
         console.log(`Exported ${r.format} → ${r.outputDir} (${r.filesExported} files)`);
+      }
+      break;
+    }
+    case 'slug': {
+      const r = result as SlugResult;
+      if (r.ok) {
+        // BARE fragment on its own stdout line — shell-composable, so
+        // `see: file.md#$(cans slug "...")` works verbatim. No decoration,
+        // no trailing prose: anything but the fragment would corrupt the
+        // composition (issue #53 Part 1.2).
+        console.log(r.slug);
+      } else {
+        console.log(`✗ ${r.error ?? 'failed to slug'}`);
       }
       break;
     }
@@ -448,6 +461,7 @@ Commands:
   budget write <concept> [--json]
   import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [--json]
   export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
+  slug "<node text>" | <file>:<line> [--json]
   help
   version
 
