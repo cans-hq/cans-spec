@@ -308,6 +308,48 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - If anchor → find node by exact text match, then case-insensitive fallback.
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
+### Broken-anchor suggestions (issue #53)
+A broken anchor keeps its `refs.broken.anchor` error — but the ADVICE follows
+the node, never the other way around (the old `fix the anchor or add a
+"<anchor>" node` wording invited renaming spec nodes to satisfy a bad ref).
+On a miss, the target's addressable vocabulary — real bullet texts + YAML
+mapping keys, synthetic placeholder nodes excluded (issue #8) — is
+fuzzy-ranked against the failing anchor (`nearSlugMatches`, normalized
+similarity ≥ 0.8; resolution itself stays exact-after-normalization, the
+fuzzy layer exists only for suggestions and the gated `--fix` repair):
+- **one near candidate** → `did you mean <file>#<slug>? — fix the ref
+  anchor`, with the CANONICAL `anchorSlug` spelling (the same form
+  `cans slug` prints) — a pure ref fix.
+- **two or more** → named, capped at 3 + `…` (`did you mean <file>#a,
+  <file>#b? — fix the ref anchor`) — the ambiguity is surfaced, never
+  resolved by coin flip.
+- **zero** → `no near match in <file> — add the "<anchor>" node there, or
+  fix the anchor spelling` — add-node advice that never invites renaming
+  the nodes that do exist.
+
+Per-ref reachability: every `refs.broken.anchor` group item carries its own
+fix (report.ts `GroupItem.suggestion`); the folded view shows the group hint
+(first member's fix), `--show refs` appends each member's did-you-mean to
+its line.
+
+### Slug-safety notes (issue #53, Part 1.5)
+`cans check` additionally emits an INFO-level note (`refs.slug.hint`) on
+every real node whose text contains characters outside the slug-safe set —
+typographic dashes, NBSP, zero-width/format characters, curly quotes, any
+non-ASCII letter — because all of them produce anchors a human cannot
+predict from the prose. The message names the node's EXACT canonical anchor
+and the offending characters by label:
+
+```
+non-obvious slug: "Layer 1 — C authorizer" → #Layer-1-C-authorizer (contains —(U+2014))
+```
+
+Capped at 5 notes per file plus one summary line naming the counts (the
+issue #41 compact-output budget). Info is a hint band, NOT a finding: it
+never affects `ok`, exit codes, `--strict` or the error/warning counts —
+JSON entries carry `level: "info"` while `counts` stays `{errors,
+warnings}`; human output marks them `ℹ` without changing any ✓/⚠/✗ mark.
+
 ### Back-pointers
 HTML comments in target file: `<!-- ref-by: 04-api.md, 05-frontend.md -->`
 Rebuilt from scratch every `--fix` run (the desired-marks map is computed
@@ -358,6 +400,7 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remov
 | Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
+| Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
 | No anchor | Valid file-level ref |
 | Ref to `_tasks/` | Warning (transient) |
@@ -607,12 +650,18 @@ byte-level preservation does.)
 { ok, command: 'check', exitCode, files, nodes, maxDepth,
   refs: { total, broken, deepHops },   // broken = broken ref targets + broken anchors (round 6)
   backPointers: { total, current, stale },
-  issues: Issue[], errorCount, warningCount, backPointersUpdated,
+  issues: Issue[], errorCount, warningCount, infoCount?, backPointersUpdated,
   backPointersUpdatedFiles }
 ```
 `backPointersUpdatedFiles`: sorted spec-relative paths of the files `--fix`
 actually rewrote (issue #11) — empty without `--fix` or when nothing needed
 a write; with a `[file]` filter only matching files can ever appear there.
+
+**Info notes (issue #53 Part 1.5):** `infoCount` (optional, additive) counts
+level:'info' hints — `refs.slug.hint` slug-safety notes naming a node's exact
+canonical anchor when its text contains slug-confusable characters. In
+`--json` each hint entry carries `level: "info"` while `counts` stays
+`{errors, warnings}`; info never affects `ok`, exit codes or `--strict`.
 
 ---
 
@@ -1412,6 +1461,23 @@ Rules (_rules.yaml)
 
 3 errors, 2 warnings.
 ```
+
+### `cans check` (info note present — exit 0, summary mark unchanged)
+```
+✓ 2 files · 6 nodes · depth 2 · 7ms
+
+REFS  ✓ 1 refs · ℹ 1 note
+  ℹ 1× non-obvious slug
+      02-authentication.md:3 — "Layer 1 — C authorizer" → #Layer-1-C-authorizer
+      ↳ the anchor above is the exact form see: refs must use — cans slug prints it for any text
+
+OVERFLOW  ✓
+
+RULES  ✓ len 3–120 · sib 1–12 · depth 1–5
+```
+Info notes (issue #53 Part 1.5) mark their group with `ℹ` and append
+`· ℹ N notes` to the REFS header — they never change the summary-line
+✓/⚠/✗, the exit code, or the error/warning counts.
 
 ### `cans done` (blocked)
 ```

@@ -18,6 +18,7 @@ import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey, anchorMatches, type RefByGroup, type RefGraph,
 } from '../core/refs.ts';
+import { anchorSlug, charLabel, slugConfusables } from '../core/slug.ts';
 import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args.ts';
 
 export interface CheckArgs {
@@ -413,6 +414,51 @@ export function rewriteRefBy(source: string, body: string | null, anchored?: Ref
   return joinSourceLines(kept);
 }
 
+/** Issue #53 Part 1.5: per-file cap for refs.slug.hint notes. The issue #41
+ *  compact-output budget never pays for unbounded hint lines: the first
+ *  SLUG_HINT_CAP confusable nodes per file get a note, the rest ride in ONE
+ *  summary line naming the count (never silently dropped). */
+const SLUG_HINT_CAP = 5;
+
+/** Issue #53 Part 1.5: author-time slug-safety notes. A node whose text
+ *  contains characters outside the slug-safe set (slugConfurables — the
+ *  typographic-dash / zero-width / curly-quote zoo) produces an anchor a
+ *  human cannot predict from the prose; the note names the EXACT canonical
+ *  anchor (anchorSlug — the same form `cans slug` prints), turning the
+ *  broken-ref discovery loop into "you typed it, the tool told you the
+ *  anchor". Info level BY DESIGN (the issue: "Not a hard failure — just a
+ *  hint"): never an error or warning, so it cannot touch `ok`, exit codes,
+ *  `--strict` or the error/warning counts. Real nodes only — synthetic
+ *  placeholders (issue #8) carry fixed ASCII parser text, not author
+ *  content, and a hint on them would be noise. */
+function slugSafetyHints(nodes: OutlineNode[], file: string): Issue[] {
+  const flagged: Array<{ text: string; line: number; labels: string }> = [];
+  for (const n of realNodes(nodes)) {
+    const confusables = slugConfusables(n.text);
+    if (confusables.length > 0) {
+      flagged.push({ text: n.text, line: n.line, labels: confusables.map(charLabel).join(', ') });
+    }
+  }
+  const issues: Issue[] = [];
+  for (const n of flagged.slice(0, SLUG_HINT_CAP)) {
+    issues.push({
+      file, line: n.line, level: 'info', category: 'refs',
+      message: `non-obvious slug: "${n.text}" → #${anchorSlug(n.text)} (contains ${n.labels})`,
+      suggestion: 'the anchor above is the exact form see: refs must use — cans slug prints it for any text',
+      rule: 'refs.slug.hint', // issue #53 Part 1.5
+    });
+  }
+  if (flagged.length > SLUG_HINT_CAP) {
+    issues.push({
+      file, line: 0, level: 'info', category: 'refs',
+      message: `non-obvious slug: ${flagged.length - SLUG_HINT_CAP} more in ${file} (${flagged.length} total)`,
+      suggestion: `cans slug "<node text>" prints the exact anchor for any node — the first ${SLUG_HINT_CAP} in this file are noted above`,
+      rule: 'refs.slug.hint', // issue #53 Part 1.5
+    });
+  }
+  return issues;
+}
+
 /** The shared engine orchestrator used by `cans check` and `cans done`. */
 export async function checkWorkspace(root: string, opts: CheckArgs): Promise<CheckResult> {
   const t0 = performance.now(); // issue #41: elapsedMs timing (global in Bun + Node ≥16)
@@ -530,6 +576,12 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // §18 content policy: TBD nodes per file (QA-13 F4 — the knobs were inert).
     for (const key of checkable) {
       issues.push(...checkTbdPolicy(specFiles.get(key)!, key, rules.content));
+    }
+    // Issue #53 Part 1.5: author-time slug-safety notes (info level — never
+    // counted among errors/warnings, never touching ok/exit codes). Scoped
+    // by the [file] filter like every other per-file check (issue #11).
+    for (const key of checkable) {
+      issues.push(...slugSafetyHints(specFiles.get(key)!, key));
     }
   }
 
@@ -682,6 +734,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   const errorCount = issues.filter(i => i.level === 'error').length;
   const warningCount = issues.filter(i => i.level === 'warning').length;
+  // Issue #53 Part 1.5: info is its own band — counted and reported, but
+  // deliberately outside every decision above and below (ok / exitCode /
+  // --strict read errorCount/warningCount only).
+  const infoCount = issues.filter(i => i.level === 'info').length;
   const ok = errorCount === 0 && (!opts.strict || warningCount === 0);
 
   return {
@@ -699,6 +755,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     issues,
     errorCount,
     warningCount,
+    infoCount,
     backPointersUpdated,
     // Issue #11: the report names the files --fix actually rewrote (sorted,
     // spec-relative). Empty without --fix or when nothing needed a write;

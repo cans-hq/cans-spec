@@ -3,7 +3,7 @@ import { join } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
-import { normalizeForAnchor } from './slug.ts';
+import { anchorSlug, nearSlugMatches, normalizeForAnchor } from './slug.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -194,6 +194,57 @@ export function extractYamlKeys(source: string): string[] {
   return keys;
 }
 
+/** Issue #53 Part 1.3: the suggestion for a `refs.broken.anchor` error. The
+ *  old advice — `fix the anchor or add a "<anchor>" node to <file>` — was
+ *  INVERTED: it invited renaming (or adding) nodes to satisfy a bad anchor,
+ *  when the outline is the source of truth and THE REF SHOULD FOLLOW THE
+ *  NODE. Now the target's addressable vocabulary (real bullet texts + YAML
+ *  mapping keys — synthetic placeholders excluded: they are parser artifacts,
+ *  issue #8, not content a human could have meant) is fuzzy-ranked against
+ *  the failing anchor via nearSlugMatches (≥ SLUG_SUGGEST_THRESHOLD; the
+ *  fuzzy layer exists ONLY here — resolution itself stays exact-after-
+ *  normalization, see anchorMatches):
+ *    ONE near candidate → `did you mean <file>#<slug>?` with the CANONICAL
+ *                         anchorSlug spelling (the same form `cans slug`
+ *                         prints) — a pure ref-anchor fix.
+ *    TWO or more        → name the top 3 (`file#slug, file#slug, …`): the
+ *                         ambiguity is surfaced, never resolved by coin flip.
+ *    none               → the node genuinely does not exist there — add-node
+ *                         advice, worded so it never invites renaming the
+ *                         nodes that DO exist.
+ *  Candidates collapse to their canonical slug and dedupe first: two sibling
+ *  texts that slug identically are one suggestion, not a false ambiguity, and
+ *  a candidate whose slug is empty (separators-only text) can never be
+ *  addressed — dropped rather than proposing a nonsense `file#?`. A 1.0-score
+ *  candidate is impossible here by construction (it would have normalized
+ *  equal to the anchor and resolved via anchorMatches), so every suggestion
+ *  names an anchor that genuinely differs from the failing one. */
+function brokenAnchorSuggestion(
+  target: string,
+  anchor: string,
+  nodes: readonly OutlineNode[],
+  yamlKeys: readonly string[],
+): string {
+  const candidates: string[] = [];
+  for (const n of nodes) {
+    if (n.synthetic !== true) candidates.push(n.text);
+  }
+  candidates.push(...yamlKeys);
+  const slugs = [...new Set(nearSlugMatches(candidates, anchor).map(m => anchorSlug(m.text)))]
+    .filter(slug => slug !== '');
+  if (slugs.length === 1) {
+    return `did you mean ${target}#${slugs[0]}? — fix the ref anchor`;
+  }
+  if (slugs.length >= 2) {
+    // Top 3 by score (nearSlugMatches order), the rest folded into `…` so the
+    // line stays inside the compact-output budget.
+    const named = slugs.slice(0, 3).map(s => `${target}#${s}`).join(', ');
+    const more = slugs.length > 3 ? ', …' : '';
+    return `did you mean ${named}${more}? — fix the ref anchor`;
+  }
+  return `no near match in ${target} — add the "${anchor}" node there, or fix the anchor spelling`;
+}
+
 export function checkRefs(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
@@ -334,7 +385,10 @@ export function checkRefs(
                 file, line: ref.line, level: 'error', category: 'refs',
                 message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
           rule: 'refs.broken.anchor', // issue #41: machine-readable rule key
-                suggestion: `fix the anchor or add a "${anchor}" node to ${ref.file}`,
+                // Issue #53 Part 1.3: the ref follows the node — a near match
+                // proposes the corrected ref (canonical slug), never a node
+                // rename; only a truly missing node earns add-node advice.
+                suggestion: brokenAnchorSuggestion(ref.file, anchor, nodes, yamlKeys),
               });
             }
           }
