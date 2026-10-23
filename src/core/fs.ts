@@ -32,19 +32,42 @@ export function globFiles(dir: string, pattern: string): string[] {
 }
 
 /** Spec files: root-level *.md (excluding _-prefixed, AGENTS.md and other tool
- *  artifacts) plus per-folder index.md. */
+ *  artifacts) plus folder `index.md` at ANY depth (issue #54: `plugins/topic/
+ *  index.md` is a first-class spec file, not invisible content — 0.6.0 only
+ *  looked one level deep). _-prefixed directories (_tasks/, _adr/, …) and
+ *  tool artifacts are skipped at every level, exactly like the root.
+ *
+ *  Only `index.md` counts below the root: a NON-index subfolder .md (e.g.
+ *  `plugins/pty.md`) is §16 overflow-target material (leaf content) unless a
+ *  loaded spec file references it — the check engine's promotion pass (issue
+ *  #54) promotes those; discovery itself never loads them.
+ *
+ *  Relative keys are '/'-joined (the same convention as discoverOverflow
+ *  Targets and toRelative, never path.join's platform separator) so ref
+ *  targets like `plugins/topic/index.md` always match a discovered key. */
 export function discoverSpecFiles(root: string): string[] {
   const out: string[] = [];
   if (!dirExists(root)) return out;
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
-    if (entry.isFile() && entry.name.endsWith('.md')) {
-      out.push(entry.name);
-    } else if (entry.isDirectory()) {
-      const idx = join(entry.name, 'index.md');
-      if (exists(join(root, idx))) out.push(idx);
+  const walk = (dir: string, prefix: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
     }
-  }
+    for (const entry of entries) {
+      if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        // Loose .md files are spec files at the ROOT level only.
+        if (prefix === '') out.push(entry.name);
+      } else if (entry.isDirectory()) {
+        const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+        if (exists(join(dir, entry.name, 'index.md'))) out.push(`${rel}/index.md`);
+        walk(join(dir, entry.name), rel);
+      }
+    }
+  };
+  walk(root, '');
   return out.sort();
 }
 
@@ -53,7 +76,14 @@ export function discoverSpecFiles(root: string): string[] {
  *  the condition is slug-AGNOSTIC — any pair (numbered `02-authentication.md` +
  *  `02-authentication/index.md`, or plain `auth.md` + `auth/index.md`) is a
  *  duplicate home; the old NN--only gate let unnumbered pairs coexist
- *  silently. Returns pairs of [flatRel, folderRel]. */
+ *  silently. Returns pairs of [flatRel, folderRel].
+ *
+ *  ROOT-LEVEL (depth-1) semantics by design (issue #54): recursive folder-
+ *  index discovery now also LOADS deeper pairs (e.g. `plugins/pty.md` +
+ *  `plugins/pty/index.md`), but the duplicate-home ERROR class stays a
+ *  root-level check — the root is the spec's table of contents, the place
+ *  where a duplicated home misleads every reader. Deeper collisions are not
+ *  flagged (the flat file simply wins refs by resolution order). */
 export function detectFlatFolderConflicts(root: string): Array<[string, string]> {
   const conflicts: Array<[string, string]> = [];
   if (!dirExists(root)) return conflicts;
@@ -97,7 +127,11 @@ export function detectMalformedSpecDirs(root: string): string[] {
 
 /** Overflow target files: `.md` content files inside workspace subfolders
  *  (e.g. `04-api/request-schema.md`) that are not spec files themselves.
- *  §16: these must NOT contain their own `see:` refs (no chaining). */
+ *  §16: these must NOT contain their own `see:` refs (no chaining).
+ *  Issue #54: a subfolder .md that the check engine PROMOTED to a first-class
+ *  spec file (a loaded spec file references it) is excluded from this set by
+ *  the caller — its `see:` refs are ordinary graph edges. Only the
+ *  UNREFERENCED subfolder .md files remain §16 leaf content here. */
 export function discoverOverflowTargets(root: string): string[] {
   const out: string[] = [];
   if (!dirExists(root)) return out;
@@ -167,6 +201,42 @@ export function resolveSpecFile(root: string, name: string): string | null {
     if (isInsideRoot(root, folderIdx) && exists(folderIdx)) return folderIdx;
   }
   return null;
+}
+
+/** Issue #54: map a raw `see:` target to the workspace-relative key of a
+ *  subfolder .md file the check engine may PROMOTE to a first-class spec
+ *  file — null when the target is not promotable.
+ *
+ *  Resolution mirrors the ref engines' own order (§11 flat-first): the target
+ *  as spelled, then — for extensionless stems — `<stem>.md`, both through
+ *  resolveSpecFile (whose folder-index fallback keeps `auth`, `auth.md` and
+ *  `auth/` naming one folder-layout home). Guards, in order:
+ *  - the target must resolve INSIDE the workspace (resolveSpecFile's
+ *    containment guard, issue #10);
+ *  - only `.md` files promote — YAML artifacts keep their issue #49
+ *    read-from-disk treatment (addressable keys, never loaded, never
+ *    rewritten by --fix);
+ *  - no `_`-prefixed path segment and no tool artifact at any level:
+ *    `_tasks/`/`_adr/` files stay aux (parsed for refs only) and AGENTS.md
+ *    is not spec, exactly as in discovery.
+ *  The returned key uses the '/'-joined relative convention shared by
+ *  discoverSpecFiles / discoverOverflowTargets / toRelative. */
+export function promotableSpecKey(root: string, name: string): string | null {
+  const target = name.replace(/\/+$/, '');
+  if (target === '') return null;
+  let p = resolveSpecFile(root, target);
+  if (p === null && !target.endsWith('.md')) {
+    // §11 flat-first extensionless stem: `see plugins/pty` names
+    // plugins/pty.md exactly like `see 02-b` names 02-b.md.
+    p = resolveSpecFile(root, `${target}.md`);
+  }
+  if (p === null) return null;
+  const rel = toRelative(root, p);
+  if (!rel.endsWith('.md')) return null; // .yaml/.yml/.ts artifacts never promote
+  for (const part of rel.split('/')) {
+    if (part.startsWith('_') || TOOL_ARTIFACTS.has(part)) return null;
+  }
+  return rel;
 }
 
 // ── Workspace discovery ──

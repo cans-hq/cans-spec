@@ -419,10 +419,15 @@ describe('issue #54 case 5: referencing the catalog deep-hops BY DESIGN', () => 
     expect(r.exit).toBe(2);
     expect(j.ok).toBe(false);
     expect(j.summary.files).toBe(4);
-    expect(j.refs.deepHops).toBe(1);
-    const hop = j.issues.find((i: any) => i.rule === 'refs.deep_hop');
-    expect(hop).toBeDefined();
-    expect(hop.message).toBe('DEEP HOP: 00-overview.md → plugins/index.md → plugins/pty.md');
+    // The issue reports "deep-hop errors" (plural) — with the catalog and
+    // pty.md now first-class graph nodes, §5 fires on BOTH hops the
+    // reference introduces: the catalog refs out (00-overview → catalog →
+    // pty), and 00-overview itself refs out past its mesh with 01-core
+    // (01-core → 00-overview → catalog). Both are the documented rule.
+    expect(j.refs.deepHops).toBe(2);
+    const chains = j.issues.filter((i: any) => i.rule === 'refs.deep_hop').map((i: any) => i.message);
+    expect(chains).toContain('DEEP HOP: 00-overview.md → plugins/index.md → plugins/pty.md');
+    expect(chains).toContain('DEEP HOP: 01-core.md → 00-overview.md → plugins/index.md');
     expect(j.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
   });
 });
