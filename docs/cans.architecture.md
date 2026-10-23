@@ -422,11 +422,13 @@ Four layers. All deterministic. No ML.
 
 **Layer 2 — Phrase overlap:** Pairwise compare all bullet texts. Normalized word set overlap ≥ 70% → flag.
 
-**Layer 3 — Fuzzy edit distance:** Levenshtein ≤ 2 for words > 4 chars not already synonym-matched → possible typo warning.
+**Layer 3 — Fuzzy edit distance:** Levenshtein ≤ `redundancy.fuzzy_max_distance` (default 2) for words ≥ `redundancy.fuzzy_min_word_length` chars (default 5) not already synonym-matched → possible typo warning. Both are §18 parameters (issue #47): at ~7,500-node scale the old hardcoded pair produced 650+ false positives per file (content↔concept, public↔publish) — tune the knobs instead of losing the layer via `fuzzy: false`.
 
 **Layer 4 — Cross-file canonicality:** Same concept at depth 0–1 in 2+ files without `see:` between them → flag.
 
-**Normalization:** lowercase → strip punctuation → synonym expansion (e.g., postgres/postgresql/pg → "postgres"). Stopwords filtered.
+**Ref targets are not content (issue #46):** layers 1–3 tokenize label words only — the whole `see:` span (keyword + file target + anchor) is stripped from node text before tokenization, using the same `REF_RE` + issue-#48 validation as the outline parser (`stripRefSyntax` in outline.ts). File-stem words therefore never dominate word frequency (`see: 10-sdk.md#primitives` contributes nothing) and thin pointers to the same target no longer phrase-overlap. Layer 4 deliberately compares the FULL node text, ref span included: it detects identical concepts verbatim, and stripping there would change duplicate-home semantics.
+
+**Normalization:** lowercase → strip punctuation → synonym expansion (e.g., postgres/postgresql/pg → "postgres"). Stopwords filtered. Stopword/synonym list entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one (issue #42).
 
 **Performance:** O(N) word freq, O(N²) phrase overlap (fine < 500 nodes), O(W²) edit distance (fine < 1000 words). Total < 50ms for 6-file project.
 
@@ -525,6 +527,9 @@ redundancy:
   word_frequency_threshold: 4
   phrase_overlap_threshold: 0.7
   cross_file_threshold: 2
+  fuzzy: true
+  fuzzy_max_distance: 2
+  fuzzy_min_word_length: 5
   stopwords: [the, a, an, of, to, in, for, and, or, with, must, shall, requires]
   synonyms:
     - [postgres, postgresql, pg]
@@ -541,6 +546,8 @@ overflow:
   max_node_chars: 200
   force_file_for: [code_block, table, diagram]
 ```
+
+`redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
 
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
 
