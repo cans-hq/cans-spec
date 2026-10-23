@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, RedundancyRules } from '../types.ts';
-import { flattenNodes, isSyntheticNode } from './outline.ts';
+import { flattenNodes, isSyntheticNode, stripRefSyntax } from './outline.ts';
 
 interface NodeRef {
   text: string;
@@ -10,7 +10,11 @@ interface NodeRef {
 const EDGE_PUNCT_RE = /^[.,;:!?"']+|[.,;:!?"']+$/g;
 
 /** §8/§13: ref syntax tokens (`see:`, `.md`) are structural pointers, not
- *  content words — excluded from every redundancy layer (QA-02 F3). */
+ *  content words — excluded from every redundancy layer (QA-02 F3). Issue
+ *  #46 extends the same principle to the ref TARGET: the whole `see:` span
+ *  (file + anchor) is stripped from node text before tokenization (see
+ *  checkRedundancy / fuzzyDistance); this set remains as defense in depth
+ *  for any text that still carries the bare syntax tokens. */
 const REF_SYNTAX_TOKENS = new Set(['see', 'md']);
 
 /** lowercase → strip edge punctuation → synonym group (any member → first member) → bare word. */
@@ -170,7 +174,7 @@ export function isInflectionOf(a: string, b: string): boolean {
   return sa === sb || sa === b || sb === a;
 }
 
-/** Layer 3 — near-miss word forms (Levenshtein <= 2, both words > 4 chars) → possible typo.
+/** Layer 3 — near-miss word forms → possible typo.
  *  §13: "NOT ALREADY SYNONYM-MATCHED" — words are normalized with the rules'
  *  synonym groups first, so members of the same group collapse to one word and
  *  never pair up as typos. Issue #3: the layer now applies the SAME collection
@@ -178,17 +182,34 @@ export function isInflectionOf(a: string, b: string): boolean {
  *  §8/§13 ref-syntax tokens (`see`, `md`) are never collected — and skips
  *  candidate pairs that are pure suffix inflections of each other
  *  (isInflectionOf) before the Levenshtein comparison, so English inflections
- *  (approved/approve, sessions/session) are no longer reported as typos. */
+ *  (approved/approve, sessions/session) are no longer reported as typos.
+ *  Issue #47: the two tuning knobs are §18-style parameters, NOT check
+ *  switches (the layer's switch remains `fuzzy`) — `fuzzy_max_distance`
+ *  (default 2, the previously hardcoded Levenshtein ≤ 2, also the
+ *  length-difference pre-filter bound) and `fuzzy_min_word_length` (default
+ *  5, the previously hardcoded "> 4 chars"). At ~7,500-node scale the
+ *  hardcoded pair produced 650+ false positives per file
+ *  (content↔concept, public↔publish); users can now tune the layer instead
+ *  of losing it entirely via `fuzzy: false`. */
 export function fuzzyDistance(
   nodes: NodeRef[],
   rules?: RedundancyRules,
 ): Issue[] {
   const synonyms = rules ? rules.synonyms : [];
   const stopwords = rules ? rules.stopwords : [];
+  // Issue #47: `??` (not just `rules ?`) — hand-built rules objects that
+  // predate the knobs (e.g. older test fixtures) fall back to the defaults,
+  // which exactly preserve the pre-#47 hardcoded behavior.
+  const maxDistance = rules?.fuzzy_max_distance ?? 2;
+  const minWordLength = rules?.fuzzy_min_word_length ?? 5;
   const words: NodeRef[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
-    for (const raw of tokenize(node.text)) {
+    // Issue #46: strip the see: ref span (file + anchor) before
+    // tokenizing — ref targets are structural, not content. No-op for
+    // NodeRefs already built from stripped text by checkRedundancy;
+    // direct callers passing raw node.text get the same treatment.
+    for (const raw of tokenize(stripRefSyntax(node.text))) {
       const w = normalizeWord(raw, synonyms);
       if (w.length === 0 || seen.has(w)) continue;
       if (REF_SYNTAX_TOKENS.has(w)) continue;
@@ -202,11 +223,13 @@ export function fuzzyDistance(
     for (let j = i + 1; j < words.length; j++) {
       const a = words[i];
       const b = words[j];
-      if (a.text.length <= 4 || b.text.length <= 4) continue;
-      if (Math.abs(a.text.length - b.text.length) > 2) continue;
+      if (a.text.length < minWordLength || b.text.length < minWordLength) continue;
+      // Optimization upper bound: d ≥ |lenA − lenB|, so a length difference
+      // beyond fuzzy_max_distance can never produce a flaggable pair.
+      if (Math.abs(a.text.length - b.text.length) > maxDistance) continue;
       if (isInflectionOf(a.text, b.text)) continue;
       const d = levenshtein(a.text, b.text);
-      if (d <= 2) {
+      if (d <= maxDistance) {
         issues.push({
           file: a.file, line: a.line, level: 'warning', category: 'redundancy',
           message: `possible typo: "${a.text}" (${a.file}:${a.line}) ↔ "${b.text}" (${b.file}:${b.line}) — Levenshtein ${d}`,
@@ -308,7 +331,15 @@ export function checkRedundancy(
       // any two table-opening files 100%-overlapping and inflated the
       // "table"/"code"/"fence" word-frequency counts).
       if (isSyntheticNode(node)) continue;
-      nodes.push({ text: node.text, file, line: node.line });
+      // Issue #46: strip the `see:` ref span (keyword + file target +
+      // anchor) from the text the three text-comparison layers tokenize —
+      // `see: 10-sdk.md#primitives` used to contribute 10/sdk/primitives
+      // to the node's word set, so file-stem words dominated word
+      // frequency and inflated phrase overlap between thin pointers to
+      // the same target. Label words are kept. Layer 4
+      // (crossFileCanonicality) deliberately does NOT strip: it compares
+      // full node text for identical concepts (duplicate-home semantics).
+      nodes.push({ text: stripRefSyntax(node.text), file, line: node.line });
     }
   }
   return [

@@ -30,6 +30,29 @@ function stripRefTrailingPunct(token: string): string {
   return token.replace(REF_TRAILING_PUNCT_RE, '');
 }
 
+/** Issue #46: remove every `see:`/`see` ref span — keyword + separator +
+ *  file target + anchor — from a node's text, leaving only label/content
+ *  words (`alpha: see 10-sdk.md#primitives` → `alpha: `). Derived from THE
+ *  SAME REF_RE + issue-#48 validation as parseOutline's ref extraction, so
+ *  exactly the spans the outline parser mints as refs are stripped: a match
+ *  whose FILE token is pure punctuation ("see .") is prose, not a ref, and
+ *  stays. The matched span is removed verbatim (glued trailing punctuation
+ *  like the `)` in `(see effect.md#Audit-spine)` goes with it — harmless
+ *  for tokenization). Consumer: the redundancy text-comparison layers —
+ *  §8/§13 make ref syntax structural, not content (QA-02 F3). */
+export function stripRefSyntax(text: string): string {
+  let out = '';
+  let last = 0;
+  let rm: RegExpExecArray | null;
+  REF_RE.lastIndex = 0;
+  while ((rm = REF_RE.exec(text)) !== null) {
+    if (stripRefTrailingPunct(rm[1]!) === '') continue; // not a ref (issue #48)
+    out += text.slice(last, rm.index);
+    last = rm.index + rm[0].length;
+  }
+  return out + text.slice(last);
+}
+
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
 const FENCE_RE = /^```/;
 

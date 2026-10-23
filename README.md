@@ -290,6 +290,13 @@ text length: when they are set to the SAME value, each over-limit node is
 reported once (`structure.node_length.max` is the authoritative budget); set
 them to different values when you genuinely want two budgets.
 
+Redundancy specifics: `see:` ref targets are structural, not content — the
+redundancy layers compare label words only, so a file stem like `10-sdk.md`
+never pollutes word frequency or overlap. The fuzzy-typo layer is tunable
+without turning it off: `redundancy.fuzzy_max_distance` (default 2) and
+`redundancy.fuzzy_min_word_length` (default 5); numeric stopwords
+(`- 10`) work unquoted.
+
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line

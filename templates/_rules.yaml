@@ -45,6 +45,18 @@ redundancy:
   phrase_overlap_threshold: 0.7
   cross_file_threshold: 2
   fuzzy: true
+  # Issue #47: layer 3 (fuzzy typos) tuning parameters. The check switch is
+  # `fuzzy` above; these tune it (omitted/deleted → the defaults shown here,
+  # §18 parameter semantics — they never turn the layer off).
+  #   fuzzy_max_distance: max Levenshtein distance for a typo pair. Default 2.
+  #     At very large scale (thousands of nodes) distance-2 pairs like
+  #     content↔concept / public↔publish dominate; lower to 1 to keep only
+  #     one-character typos (flavour↔flavor).
+  #   fuzzy_min_word_length: words shorter than this never pair as typos.
+  #     Default 5 (the historical "> 4 chars" floor). Raise to suppress
+  #     medium-length near misses.
+  fuzzy_max_distance: 2
+  fuzzy_min_word_length: 5
   stopwords: [the, a, an, of, to, in, for, and, or, with, must, shall, requires]
   synonyms:
     - [postgres, postgresql, pg]

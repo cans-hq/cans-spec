@@ -124,7 +124,10 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
     // …the aggregated form carries the count prefix instead.
     expect(defaultRun.out).toContain('20× <min children (2/3)');
     expect(defaultRun.out).toContain('83× missing file');
-    expect(defaultRun.out).toContain('12× keyword sprawl');
+    // Issue #46: the see: target span is stripped from redundancy text, so
+    // only the 8 planted minor keywords remain (was 12 — the ref lines'
+    // artifacts/yaml/governance/policy tokens used to ride the counts).
+    expect(defaultRun.out).toContain('8× keyword sprawl');
   });
 
   test('grouped by root cause — broken refs collapse to 4 missing targets', () => {
@@ -159,7 +162,12 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
     expect(parsed.summary.nodes).toBe(1391);
     expect(parsed.exitCode).toBe(2);
     expect(parsed.counts.errors).toBe(83);
-    expect(parsed.counts.warnings).toBe(58);
+    // Issue #46: 54 = 58 − 4 — the see: target span is stripped from
+    // redundancy text, so the four ref-target-token keyword warnings
+    // (artifacts/yaml/governance/policy riding the ref lines) are gone;
+    // the 8 planted minors + 15 overlaps + 20 siblings + 2 depth-min +
+    // 8 stale + 1 orphan remain.
+    expect(parsed.counts.warnings).toBe(54);
     for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow']) {
       expect(Array.isArray(parsed.sections[name])).toBe(true);
     }
@@ -182,13 +190,14 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
     const expanded = runCli(['check', '--show', 'redundancy'], WS_ISSUE);
     expect(expanded.out.length).toBeGreaterThan(defaultRun.out.length);
     // Default folds to the metric-ranked top 5 (node counts in the labels)…
-    expect(defaultRun.out).toContain('artifacts:83  yaml:83  governance:67');
+    // Issue #46: the top keywords are now the 8 planted minors only.
+    expect(defaultRun.out).toContain('bax:16  cex:16  diq:14');
     // …a minor keyword beyond the top 5 is folded out of the default view…
-    const minor = `${MINOR_KEYWORDS[2]}:14`; // 2 of its 16 leaves fell to depth-min caps
+    const minor = `${MINOR_KEYWORDS[4]}:13`; // kuq — 3 of the 8 minors fall past the top-5 cut
     expect(defaultRun.out).not.toContain(minor);
     expect(expanded.out).toContain(minor);
     // …and the fold hint counts the hidden occurrences.
-    expect(defaultRun.out).toContain('↳ 7 more → cans check --show redundancy');
+    expect(defaultRun.out).toContain('↳ 3 more → cans check --show redundancy');
   });
 
   test('exit codes: 0 clean · 1 warnings · 2 errors · 2 usage', () => {

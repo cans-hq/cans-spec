@@ -122,6 +122,15 @@ export interface RedundancyRules {
   cross_file_threshold: number | null;
   /** Layer 3 switch: deleted → false (§18 delete-key semantics). */
   fuzzy: boolean;
+  /** Issue #47: layer 3 PARAMETER (not a check switch) — max Levenshtein
+   *  distance for a typo pair; also the pair's length-difference pre-filter
+   *  bound (an optimization upper bound: d ≥ |lenA − lenB|). Keeps its
+   *  default (2) when deleted/omitted (§18). */
+  fuzzy_max_distance: number;
+  /** Issue #47: layer 3 PARAMETER (not a check switch) — words shorter than
+   *  this are never typo candidates. Keeps its default (5) when
+   *  deleted/omitted (§18). */
+  fuzzy_min_word_length: number;
   /** Parameters (not checks): keep their defaults when deleted (§18). */
   stopwords: string[];
   synonyms: string[][];

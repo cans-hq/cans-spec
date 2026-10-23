@@ -222,6 +222,10 @@ export function defaultRules(): Rules {
       phrase_overlap_threshold: 0.7,
       cross_file_threshold: 2,
       fuzzy: true,
+      // Issue #47: layer 3 tuning parameters (defaults = the previously
+      // hardcoded behavior). The check switch stays `fuzzy`.
+      fuzzy_max_distance: 2,
+      fuzzy_min_word_length: 5,
       stopwords: ['the', 'a', 'an', 'of', 'to', 'in', 'for', 'and', 'or', 'with', 'must', 'shall', 'requires'],
       synonyms: [
         ['postgres', 'postgresql', 'pg'],
@@ -320,13 +324,14 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
 
 /** §18 default keys per section — drives the delete/override reconciliation in
  *  loadRules. Parameters (references.mode, redundancy.stopwords/synonyms,
- *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed too:
- *  they count towards a section's coverage but are never flipped OFF — omitted
- *  parameters keep their documented defaults (§18 overrides only what the file
- *  lists for them). references.mode is additionally a VALIDATED reserved
- *  parameter: validateRulesShape rejects any value other than 'pointer' (or a
- *  deleted/empty null) with a line-numbered error, and style.prefer is
- *  validated the same way against 'sibling' | 'nested'. */
+ *  redundancy.fuzzy_max_distance/fuzzy_min_word_length (issue #47),
+ *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed
+ *  too: they count towards a section's coverage but are never flipped OFF —
+ *  omitted parameters keep their documented defaults (§18 overrides only
+ *  what the file lists for them). references.mode is additionally a VALIDATED
+ *  reserved parameter: validateRulesShape rejects any value other than
+ *  'pointer' (or a deleted/empty null) with a line-numbered error, and
+ *  style.prefer is validated the same way against 'sibling' | 'nested'. */
 const SECTION_KEYS: Record<string, string[]> = {
   structure: ['node_length', 'siblings', 'depth', 'single_child_collapse', 'empty_nodes'],
   style: ['prefer', 'force_nested_above', 'force_sibling_below', 'shared_prefix_detection'],
@@ -338,6 +343,8 @@ const SECTION_KEYS: Record<string, string[]> = {
     'phrase_overlap_threshold',
     'cross_file_threshold',
     'fuzzy',
+    'fuzzy_max_distance',
+    'fuzzy_min_word_length',
     'stopwords',
     'synonyms',
   ],
@@ -382,6 +389,23 @@ export function loadRules(root: string): Rules {
     ]);
   }
 
+  // Issue #42: the YAML subset parser types an unquoted `- 10` as the Number
+  // 10, but the redundancy layers tokenize node text into STRINGS ("10" out
+  // of `see: 10-sdk.md`) — `stopwords.includes("10")` could never match a
+  // Number entry, so numeric stopwords (and numeric members of a synonym
+  // group, the same token-type class of bug) were silently inert. Coerce
+  // well-formed array entries to strings at load time. Non-array shapes
+  // (empty `stopwords:` → null, scalar `stopwords: 10`) keep their current
+  // behavior: only arrays are coerced, per the issue #42 fix design.
+  if (Array.isArray(rules.redundancy.stopwords)) {
+    rules.redundancy.stopwords = rules.redundancy.stopwords.map(String);
+  }
+  if (Array.isArray(rules.redundancy.synonyms)) {
+    rules.redundancy.synonyms = rules.redundancy.synonyms.map(
+      group => (Array.isArray(group) ? group.map(String) : group),
+    );
+  }
+
   const offRange = (): { min: null; max: null } => ({ min: null, max: null });
   const has = (section: string, key: string): boolean => {
     const s = parsed[section];
@@ -416,7 +440,8 @@ export function loadRules(root: string): Rules {
   //                               cross_file_threshold, warn_threshold, max_node_chars,
   //                               force_file_for, prefer)
   //   parameters (NOT checks — keep defaults when omitted): mode, stopwords,
-  //   synonyms, estimate_chars_per_token, default_limit; token_budget.enabled
+  //   synonyms, fuzzy_max_distance, fuzzy_min_word_length (issue #47),
+  //   estimate_chars_per_token, default_limit; token_budget.enabled
   //   is a planning switch, not a check switch. A file mirroring the full
   //   default shape lists every key and is returned identical to the defaults.
 
@@ -523,7 +548,9 @@ export function loadRules(root: string): Rules {
   // inputs) — they keep their defaults when omitted so the remaining layers
   // still normalize text exactly as documented. `fuzzy` is layer 3's own check
   // switch (issue #3): deleted → the near-miss layer alone turns OFF while
-  // layers 1/2/4 keep running.
+  // layers 1/2/4 keep running. Issue #47 adds two more PARAMETERS —
+  // fuzzy_max_distance / fuzzy_min_word_length — which tune layer 3 but are
+  // never flipped OFF by the delete pass (omitted → defaults 2/5).
   if (!listed('redundancy')) {
     if (deleteMode) {
       rules.redundancy = {

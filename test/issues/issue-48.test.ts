@@ -110,8 +110,13 @@ const ISSUE_LINE = '  - Audit — _audit (see effect.md#Audit-spine)\n';
 // Workspace variant: same parenthesized shape, retargeted at the numbered
 // file — and worded to stay under the default redundancy keyword threshold
 // (4 nodes) so the ONLY finding the fix removes is the broken anchor.
+// Issue #46 note: the pointer label is "Audit trail", NOT "Audit spine" —
+// #46 strips the see: target span from redundancy text, and a label that
+// word-for-word duplicates the target node's own text ("Audit spine") would
+// now surface as a 100% word-set overlap warning, breaking the clean-run
+// contract below.
 const ISSUE_FILES = {
-  '01-audit.md': '- Audit\n  - Audit spine (see 02-effect.md#Audit-spine)\n  - Log retention\n',
+  '01-audit.md': '- Audit\n  - Audit trail (see 02-effect.md#Audit-spine)\n  - Log retention\n',
   '02-effect.md': '- Effects\n  - Audit spine\n  - Side effects\n',
 };
 
