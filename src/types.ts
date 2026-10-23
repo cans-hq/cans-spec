@@ -51,7 +51,12 @@ export interface BackPointer {
  *  in the codebase is an equality test (`=== 'error'` / `=== 'warning'`),
  *  so info is invisible to them by construction. */
 export type IssueLevel = 'error' | 'warning' | 'info';
-export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow';
+/** 'config' (issue #43) is the check-level configuration band: an invalid
+ *  _rules.yaml surfaces as rule 'config.invalid' on file '_rules.yaml' —
+ *  never as an engine finding. Emitted only by the invalid-rules catch in
+ *  checkWorkspace (configFail); all other checkFail paths (no workspace,
+ *  unknown flag, unmatched file filter) keep the legacy 'refs' shape. */
+export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow' | 'config';
 
 export interface Issue {
   file: string;

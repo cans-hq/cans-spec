@@ -231,9 +231,14 @@ export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set
 
 const DISPLAY_NAMES: Record<string, string> = {
   structure: 'STRUCTURE', style: 'STYLE', refs: 'REFS', redundancy: 'REDUNDANCY',
-  overflow: 'OVERFLOW', parse: 'PARSE', content: 'CONTENT', io: 'IO', other: 'OTHER',
+  overflow: 'OVERFLOW', config: 'CONFIG', parse: 'PARSE', content: 'CONTENT', io: 'IO', other: 'OTHER',
 };
-const SECTION_PRINT_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'parse', 'content', 'io', 'other'];
+// 'config' (issue #43) sits after the engines, mirroring report.ts's
+// SECTION_ORDER. It never renders in practice: a config failure carries the
+// §37 top-level `error` field, and printCheckHuman prints that standalone
+// and returns BEFORE any section — the invalid-rules diagnosis can never
+// leak into a bogus report body. Listed for coherence only.
+const SECTION_PRINT_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'parse', 'content', 'io', 'other'];
 const FOLD_TOP_GROUPS = 5;
 const FOLD_KEYWORD_ITEMS = 5;
 const FOLD_OVERLAP_ITEMS = 3;

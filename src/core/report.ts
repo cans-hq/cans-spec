@@ -22,9 +22,11 @@
  *    concept, prefix word, malformed dir) use a stable pattern plus a `key`
  *    carrying the root-cause identity.
  *  - Group ordering: section (structure → style → refs → redundancy →
- *    overflow → parse → content → io → other), then count desc, then first
- *    occurrence in the input. Nothing is dropped: every input issue raises
- *    its group's count exactly once.
+ *    overflow → config → parse → content → io → other), then count desc, then
+ *    first occurrence in the input. Nothing is dropped: every input issue
+ *    raises its group's count exactly once. ('config', issue #43, sits after
+ *    the engines: a config error preempts every check, and its group only
+ *    ever exists alone on the checkFail path.)
  *  - `category` on a group is the SECTION (rule prefix wins over the engine
  *    category — e.g. content.tbd.* lands under `content`, refs.chaining
  *    under `refs` even though the overflow engine emits it).
@@ -142,8 +144,14 @@ export interface CheckResultLike {
 
 // ── Section/rule vocabulary ──
 
-const SECTION_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'parse', 'content', 'io', 'other'];
-const KNOWN_RULE_PREFIXES = new Set(['structure', 'style', 'refs', 'redundancy', 'overflow', 'content', 'parse', 'io']);
+const SECTION_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'parse', 'content', 'io', 'other'];
+// issue #43: 'config' joins the rule prefixes and the section order (after
+// the engines, before the meta sections) so a config.invalid group lands in
+// its own section on both the rule path and the message-derived fallback
+// path. It is NOT an engine category: ENGINE_CATEGORIES stays untouched so
+// unknown rules never re-route, and checkReportJson buckets 'config'
+// explicitly (additively — see below).
+const KNOWN_RULE_PREFIXES = new Set(['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'content', 'parse', 'io']);
 const ENGINE_CATEGORIES = new Set(['structure', 'style', 'refs', 'redundancy', 'overflow']);
 
 function sectionFor(rule: string, category: string): string {
@@ -195,6 +203,9 @@ const RE_NODE_CHARS = /^node exceeds max chars \((\d+) > (\d+)\)$/;
 const RE_UNREADABLE = /^unreadable spec file: /;
 const RE_PARSE_ERROR = /^parse error: /;
 const RE_PARSE_INDENT = /^odd indentation \((\d+) spaces?\) —/;
+// issue #43: checkFail/configFail diagnosis for an unparsable _rules.yaml —
+// the message the invalid-rules catch wraps as `invalid _rules.yaml: <cause>`.
+const RE_INVALID_RULES = /^invalid _rules\.yaml: /;
 
 interface Normalized {
   rule: string;
@@ -408,6 +419,15 @@ function normalizeMessage(issue: IssueLike): Normalized {
     return { rule: 'parse.indent', pattern: `odd indentation (${n} ${n === 1 ? 'space' : 'spaces'})` };
   }
 
+  // ── config ──
+  // issue #43: an invalid _rules.yaml is a config error, never a refs
+  // finding. The engine (configFail in check.ts) always sets rule
+  // 'config.invalid' explicitly; this branch keeps the no-rule fallback
+  // path in agreement (report.ts discipline: both paths MUST agree).
+  if (RE_INVALID_RULES.test(m)) {
+    return { rule: 'config.invalid', pattern: 'invalid _rules.yaml', detail: m };
+  }
+
   // issue #41: fallback — unknown shapes must still group, never be dropped.
   return { rule: `${issue.category}.other`, pattern: genericPattern(m) };
 }
@@ -610,11 +630,22 @@ export function estimateTokens(text: string): number {
  *  finding — hint totals are countable from the sections). */
 export function checkReportJson(result: CheckResultLike): unknown {
   const sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>> = {};
-  for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow', 'other']) {
+  // issue #43: ADDITIVE `config` section. test/report.test.ts pins
+  // Object.keys(sections) to exactly these six keys for plain runs (and the
+  // §35 fixtures pin the wire shape byte-for-byte), so 'config' must NOT
+  // join the always-present list — it is added ONLY when a config-category
+  // issue exists (the invalid-_rules.yaml configFail). Position: after the
+  // engines, before the catch-all, mirroring SECTION_ORDER.
+  const sectionNames = ['structure', 'style', 'refs', 'redundancy', 'overflow'];
+  if (result.issues.some((issue) => issue.category === 'config')) sectionNames.push('config');
+  sectionNames.push('other');
+  for (const name of sectionNames) {
     sections[name] = [];
   }
   for (const issue of result.issues) {
-    const bucket = ENGINE_CATEGORIES.has(issue.category) ? issue.category : 'other';
+    const bucket = issue.category === 'config'
+      ? 'config' // issue #43: dedicated bucket — never an engine category, never 'other'
+      : ENGINE_CATEGORIES.has(issue.category) ? issue.category : 'other';
     sections[bucket]!.push({
       file: issue.file,
       line: issue.line,

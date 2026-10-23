@@ -474,6 +474,16 @@ Overflow target files must NOT contain their own `see:` refs (no chaining).
 
 Inline code spans (`POST /users`), short key-values, arrow syntax → fine. Not flagged.
 
+**Same-value dedup (issue #45):** `overflow.max_node_chars` and
+`structure.node_length.max` compare the SAME quantity (node text length), so
+when both are configured to the same value — the natural one-char-budget-
+everywhere setup — every over-limit node would be flagged twice (once per
+rule, double-counted in `errorCount`). The check engine therefore skips the
+`overflow.node_chars` check when the two budgets are equal:
+`structure.node_length.max` is the authoritative home for the same-value
+budget. DISTINCT values are genuinely different budgets and still both fire,
+each at its own threshold; deleting either key (§18) leaves the other intact.
+
 ---
 
 ## 17. Engine Execution Order
@@ -499,7 +509,7 @@ Each engine is pure. No side effects. Only `--fix` triggers writes (back-pointer
 
 Minimal YAML parser (~60 lines, no dependency). Supports nested objects, inline arrays `[a,b,c]`, inline objects `{min: 3, max: 120}`, arrays via `- item`.
 
-**Loading:** Missing file = all defaults. Partial file = only listed keys override. Delete a key = check turns off. Invalid YAML = print line number, exit 1.
+**Loading:** Missing file = all defaults. Partial file = only listed keys override. Delete a key = check turns off. Invalid YAML = line-numbered error, exit 2 (the check could not run — error class, issue #41), reported as a **config error** (issue #43): rule `config.invalid` on file `_rules.yaml`, never as an engine finding — `--json` buckets it under `sections.config` (an additive section; every normal run keeps the six fixed section keys), and the human output prints the standalone `✗ invalid _rules.yaml: …` diagnosis with no report body.
 
 **Default rules:**
 
@@ -706,7 +716,7 @@ non-matched referrer is neither proposed nor rewritten; a matched referrer's
 TARGET files keep their ref-by marks untouched that run. `cans done`'s fix
 pass never sets `--yes` — it keeps today's ref-by-only behavior.
 
-**Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary.
+**Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary. A check-level configuration failure (invalid `_rules.yaml`, issue #43) renders NONE of them: the human output is the standalone `✗` diagnosis alone (§37), and `--json` carries the single config entry under `sections.config` (rule `config.invalid`, file `_rules.yaml`) plus the top-level `error` field, with a zeroed summary.
 
 **JSON result:**
 ```ts
@@ -1393,6 +1403,14 @@ figures then describe WOULD-BE writes). Both fields are ADDITIVE and appear
 only in `--fix` modes — plain-check JSON (like the fixtures above) is
 byte-identical to the pre-#53 wire shape, so the pinned fixtures stand
 unchanged.
+
+Issue #43: the `--json` sections object gains a `config` bucket — but
+ADDITIVELY, exactly like the #53 fields above. The six fixed keys
+(`structure`, `style`, `refs`, `redundancy`, `overflow`, `other`) are pinned
+by `test/report.test.ts` and these fixtures, so `config` appears ONLY when a
+config-category issue exists (an invalid `_rules.yaml`: rule `config.invalid`,
+file `_rules.yaml`, line 0). Every run with a parseable rules file is
+byte-identical to the pre-#43 wire shape.
 
 ### `output/status.json`
 ```json

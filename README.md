@@ -285,6 +285,11 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No migration.
 
+`structure.node_length.max` and `overflow.max_node_chars` both measure node
+text length: when they are set to the SAME value, each over-limit node is
+reported once (`structure.node_length.max` is the authoritative budget); set
+them to different values when you genuinely want two budgets.
+
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line
@@ -302,6 +307,11 @@ of 61 identical lines, `91× missing file` with per-target counts instead of 91
 lines + 91 fix hints. Fix hints appear once per pattern; every `file:line`
 stays present in compact comma lists. Exit codes: `0` clean · `1` warnings ·
 `2` errors.
+
+An invalid `_rules.yaml` is a config error, not a finding: exit `2`, the
+diagnosis printed standalone (`✗ invalid _rules.yaml: line N: …`), and in
+`--json` a single `sections.config` entry (`rule: "config.invalid"`, `file:
+"_rules.yaml"`) plus the top-level `error` field — never filed under `refs`.
 
 Info notes (`ℹ`) are hints, not findings: a node whose title slugs
 non-obviously (`Layer 1 — C authorizer` → `#Layer-1-C-authorizer`) gets an
