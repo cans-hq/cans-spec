@@ -724,7 +724,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     checkable.map(k => [k, specFiles.get(k)!]),
   );
 
-  const deepHops = detectDeepHops(graph, rules.references.max_hops);
+  const deepHops = detectDeepHops(graph, rules.references.max_hops, root);
 
   if (!opts.refsOnly) {
     for (const key of checkable) {

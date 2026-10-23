@@ -279,7 +279,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 |---|---|
 | **Structure** | Node length, depth, sibling count, single-child collapse, empty nodes |
 | **Style** | Sibling vs nested grouping, shared prefix detection |
-| **References** | Broken `see:`, deep hops (A→B→C), self-refs, orphans, stale back-pointers |
+| **References** | Broken `see:`, deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are exempt — issue #44), self-refs, orphans, stale back-pointers |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
 | **Overflow** | Code fences, tables, oversized nodes that belong in separate files |
 

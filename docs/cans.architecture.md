@@ -381,6 +381,8 @@ authoritative.
 ### Deep-hop detection
 For every file that IS referenced (has incoming refs): if it ALSO has outgoing refs → deep hop error. Report the full chain and suggest the fix.
 
+**Non-spec targets are exempt (issue #44):** the hop classification only counts refs whose target is a loaded spec file. A ref whose target exists on disk inside the workspace but is not a spec file (`see: artifacts/final-chain.ts`, an example the hub points at) is never mesh-exiting — such a target cannot form an A→B→C spec chain by construction, and the ref is valid (it resolves, so it is not a broken ref either). Before #44 a hub that every file back-referenced could never pass `cans check` while holding its artifact pointers. A target that does NOT exist on disk still counts as mesh-exiting in deep-hop terms — it is a broken ref, reported (with its fix advice) by the broken-ref check; `../` and absolute targets never earn the exemption (resolution is containment-guarded, issue #10). The exemption is keyed to the workspace root the `check` command passes to the detector; library callers that omit the root keep the legacy classification.
+
 The suggested fix is two-part and never a duplicate (issue #22): adding the direct ref alone leaves the hop in place, so the advice also says to remove the intermediate hop via the flagged file — naming the EXACT edge to delete (the referrer's raw `see:` and its source line), so a multi-referrer workspace never leaves the user guessing which ref feeds the hop (round 6). And before recommending any `add`, the engine checks the deepest direct referrer's existing refs — if one already resolves to the same target KEY and the same anchor NODE under an equivalent spelling (`see auth#Sessions` vs `see: auth/index.md#Sessions`; anchors compare case-insensitively, both file-level counts as its own equivalence), the advice names that existing ref instead of appending a second `see:` to the same node. A same-file/different-node ref (`see auth#Passwords` beside a suggested `auth/index.md#Sessions`) or a file-level ref beside an anchored suggestion is NOT a duplicate — the advice stays the plain add+remove (round 6).
 
 **Example:**
@@ -398,6 +400,8 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remov
 | Same-file anchor `see: #Sessions` | No ref minted — the §11 regex's file part can never start with `#` (round 6 sync) |
 | Absolute or `../` target | Broken ref error — `file not found in workspace`; resolution and create advice never leave the workspace root (issue #10, round 6) |
 | Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
+| Ref to an on-disk non-spec file (`artifacts/final-chain.ts`, `.txt`, `.yaml`) | Valid file-level ref — and NOT a deep hop: it cannot form an A→B→C spec chain (issue #44) |
+| Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
