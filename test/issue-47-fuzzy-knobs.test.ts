@@ -29,12 +29,10 @@ import { makeTmpDir, cleanTmpDir } from './helpers.ts';
 
 const baseRedundancy = (): RedundancyRules => ({ ...defaultRules().redundancy });
 
-/** Knob view of the rules — the fields land with the fix (issue #47). */
-const knobs = (r: RedundancyRules): Record<string, unknown> => r as unknown as Record<string, unknown>;
-
 /** base rules + issue #47 knob overrides. */
-const withKnobs = (over: Record<string, unknown>): RedundancyRules =>
-  ({ ...baseRedundancy(), ...over }) as RedundancyRules;
+const withKnobs = (
+  over: Partial<Pick<RedundancyRules, 'fuzzy_max_distance' | 'fuzzy_min_word_length'>>,
+): RedundancyRules => ({ ...baseRedundancy(), ...over });
 
 /** The issue's false-positive pair: content ↔ concept (both 7 chars, Levenshtein 2). */
 const CONTENT_CONCEPT_NODES = [
@@ -71,8 +69,8 @@ describe('issue #47 — fuzzyDistance honors fuzzy_min_word_length', () => {
     // min 4 lets 4-letter words pair: "tabs" ↔ "tube" (d=2, no inflection
     // relation — lightStem folds "tabs"→"tab", "tube"→"tub", different).
     const nodes = [
-      { text: 'tabs here', file: 'demo.md', line: 1 },
-      { text: 'tube there', file: 'demo.md', line: 2 },
+      { text: 'tabs', file: 'demo.md', line: 1 },
+      { text: 'tube', file: 'demo.md', line: 2 },
     ];
     expect(fuzzyDistance(nodes, baseRedundancy())).toEqual([]); // default min 5 skips len-4 words
     const issues = fuzzyDistance(nodes, withKnobs({ fuzzy_min_word_length: 4 }));
@@ -156,14 +154,14 @@ describe('issue #47 — §18 parameter semantics via loadRules', () => {
 
   test('defaults are fuzzy_max_distance 2 and fuzzy_min_word_length 5', () => {
     const r = defaultRules().redundancy;
-    expect(knobs(r).fuzzy_max_distance).toBe(2);
-    expect(knobs(r).fuzzy_min_word_length).toBe(5);
+    expect(r.fuzzy_max_distance).toBe(2);
+    expect(r.fuzzy_min_word_length).toBe(5);
   });
 
   test('omitted keys keep their defaults (partial file, §18 parameters)', () => {
     const rules = load('redundancy:\n  word_frequency_threshold: 3\n');
-    expect(knobs(rules.redundancy).fuzzy_max_distance).toBe(2);
-    expect(knobs(rules.redundancy).fuzzy_min_word_length).toBe(5);
+    expect(rules.redundancy.fuzzy_max_distance).toBe(2);
+    expect(rules.redundancy.fuzzy_min_word_length).toBe(5);
   });
 
   test('template-shaped file omitting the knobs keeps them (never flipped OFF, §18)', () => {
@@ -186,16 +184,16 @@ describe('issue #47 — §18 parameter semantics via loadRules', () => {
       '  synonyms: [[zzz, qqq]]',
       '',
     ].join('\n'));
-    expect(knobs(rules.redundancy).fuzzy_max_distance).toBe(2);
-    expect(knobs(rules.redundancy).fuzzy_min_word_length).toBe(5);
+    expect(rules.redundancy.fuzzy_max_distance).toBe(2);
+    expect(rules.redundancy.fuzzy_min_word_length).toBe(5);
     // sanity: the file is template-shaped, so a deleted CHECK key would be off
     expect(rules.redundancy.fuzzy).toBe(true); // listed → stays on
   });
 
   test('explicit values override the defaults', () => {
     const rules = load('redundancy:\n  fuzzy_max_distance: 1\n  fuzzy_min_word_length: 8\n');
-    expect(knobs(rules.redundancy).fuzzy_max_distance).toBe(1);
-    expect(knobs(rules.redundancy).fuzzy_min_word_length).toBe(8);
+    expect(rules.redundancy.fuzzy_max_distance).toBe(1);
+    expect(rules.redundancy.fuzzy_min_word_length).toBe(8);
   });
 
   test('the knobs count towards SECTION_KEYS coverage (majority-rule denominator is now 9)', () => {
@@ -258,7 +256,8 @@ describe('issue #47 — CLI: fuzzy knobs are configurable via _rules.yaml', () =
     return parsed;
   }
 
-  /** Both pairs in one tree: content↔concept (d=2), flavour↔flavor (d=1). */
+  /** Both pairs in one tree: content↔concept (len-7 pair, d=2) and
+   *  bandwidth↔bandwith (len-9/8 pair, d=1 — the classic dropped-d typo). */
   function makeWs(name: string, rulesYaml: string | null): string {
     const root = join(SCRATCH, `${name}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
     mkdirSync(join(root, 'cans'), { recursive: true });
@@ -267,8 +266,8 @@ describe('issue #47 — CLI: fuzzy knobs are configurable via _rules.yaml', () =
       '- Words',
       '  - content strategy',
       '  - concept strategy',
-      '  - flavour profile',
-      '  - flavor profile',
+      '  - bandwidth profile',
+      '  - bandwith profile',
       '',
     ].join('\n'));
     if (rulesYaml !== null) writeFileSync(join(root, 'cans', '_rules.yaml'), rulesYaml);
@@ -277,22 +276,24 @@ describe('issue #47 — CLI: fuzzy knobs are configurable via _rules.yaml', () =
 
   const typoIssues = (j: any) =>
     j.issues.filter((i: any) => i.rule === 'redundancy.typo');
+  const hasPair = (typos: any[], a: string, b: string) =>
+    typos.some((i: any) => i.message.includes(`"${a}"`) && i.message.includes(`"${b}"`));
 
   test('control: default rules flag both pairs', () => {
     const j = parseJsonOut(runCli(['check', '--json'], makeWs('default', null)).out);
     const typos = typoIssues(j);
-    expect(typos.some((i: any) => /content.*concept|concept.*content/.test(i.message))).toBe(true);
-    expect(typos.some((i: any) => /flavour.*flavor|flavor.*flavour/.test(i.message))).toBe(true);
+    expect(hasPair(typos, 'content', 'concept')).toBe(true);
+    expect(hasPair(typos, 'bandwidth', 'bandwith')).toBe(true);
   });
 
-  test('fuzzy_min_word_length: 8 suppresses content↔concept, keeps flavour↔flavor', () => {
+  test('fuzzy_min_word_length: 8 suppresses content↔concept, keeps bandwidth↔bandwith', () => {
     const j = parseJsonOut(runCli(['check', '--json'], makeWs(
       'minlen-8',
       'redundancy:\n  fuzzy_min_word_length: 8\n',
     )).out);
     const typos = typoIssues(j);
-    expect(typos.some((i: any) => /content.*concept|concept.*content/.test(i.message))).toBe(false);
-    expect(typos.some((i: any) => /flavour.*flavor|flavor.*flavour/.test(i.message))).toBe(true);
+    expect(hasPair(typos, 'content', 'concept')).toBe(false); // both words len 7 < 8
+    expect(hasPair(typos, 'bandwidth', 'bandwith')).toBe(true); // len 9/8 ≥ 8, d=1
   });
 
   test('fuzzy_max_distance: 1 suppresses the distance-2 pair, keeps the distance-1 pair', () => {
@@ -301,7 +302,7 @@ describe('issue #47 — CLI: fuzzy knobs are configurable via _rules.yaml', () =
       'redundancy:\n  fuzzy_max_distance: 1\n',
     )).out);
     const typos = typoIssues(j);
-    expect(typos.some((i: any) => /content.*concept|concept.*content/.test(i.message))).toBe(false);
-    expect(typos.some((i: any) => /flavour.*flavor|flavor.*flavour/.test(i.message))).toBe(true);
+    expect(hasPair(typos, 'content', 'concept')).toBe(false); // d=2 > 1
+    expect(hasPair(typos, 'bandwidth', 'bandwith')).toBe(true); // d=1 ≤ 1
   });
 });

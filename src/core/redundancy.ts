@@ -174,7 +174,7 @@ export function isInflectionOf(a: string, b: string): boolean {
   return sa === sb || sa === b || sb === a;
 }
 
-/** Layer 3 — near-miss word forms (Levenshtein <= 2, both words > 4 chars) → possible typo.
+/** Layer 3 — near-miss word forms → possible typo.
  *  §13: "NOT ALREADY SYNONYM-MATCHED" — words are normalized with the rules'
  *  synonym groups first, so members of the same group collapse to one word and
  *  never pair up as typos. Issue #3: the layer now applies the SAME collection
@@ -182,13 +182,26 @@ export function isInflectionOf(a: string, b: string): boolean {
  *  §8/§13 ref-syntax tokens (`see`, `md`) are never collected — and skips
  *  candidate pairs that are pure suffix inflections of each other
  *  (isInflectionOf) before the Levenshtein comparison, so English inflections
- *  (approved/approve, sessions/session) are no longer reported as typos. */
+ *  (approved/approve, sessions/session) are no longer reported as typos.
+ *  Issue #47: the two tuning knobs are §18-style parameters, NOT check
+ *  switches (the layer's switch remains `fuzzy`) — `fuzzy_max_distance`
+ *  (default 2, the previously hardcoded Levenshtein ≤ 2, also the
+ *  length-difference pre-filter bound) and `fuzzy_min_word_length` (default
+ *  5, the previously hardcoded "> 4 chars"). At ~7,500-node scale the
+ *  hardcoded pair produced 650+ false positives per file
+ *  (content↔concept, public↔publish); users can now tune the layer instead
+ *  of losing it entirely via `fuzzy: false`. */
 export function fuzzyDistance(
   nodes: NodeRef[],
   rules?: RedundancyRules,
 ): Issue[] {
   const synonyms = rules ? rules.synonyms : [];
   const stopwords = rules ? rules.stopwords : [];
+  // Issue #47: `??` (not just `rules ?`) — hand-built rules objects that
+  // predate the knobs (e.g. older test fixtures) fall back to the defaults,
+  // which exactly preserve the pre-#47 hardcoded behavior.
+  const maxDistance = rules?.fuzzy_max_distance ?? 2;
+  const minWordLength = rules?.fuzzy_min_word_length ?? 5;
   const words: NodeRef[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
@@ -210,11 +223,13 @@ export function fuzzyDistance(
     for (let j = i + 1; j < words.length; j++) {
       const a = words[i];
       const b = words[j];
-      if (a.text.length <= 4 || b.text.length <= 4) continue;
-      if (Math.abs(a.text.length - b.text.length) > 2) continue;
+      if (a.text.length < minWordLength || b.text.length < minWordLength) continue;
+      // Optimization upper bound: d ≥ |lenA − lenB|, so a length difference
+      // beyond fuzzy_max_distance can never produce a flaggable pair.
+      if (Math.abs(a.text.length - b.text.length) > maxDistance) continue;
       if (isInflectionOf(a.text, b.text)) continue;
       const d = levenshtein(a.text, b.text);
-      if (d <= 2) {
+      if (d <= maxDistance) {
         issues.push({
           file: a.file, line: a.line, level: 'warning', category: 'redundancy',
           message: `possible typo: "${a.text}" (${a.file}:${a.line}) ↔ "${b.text}" (${b.file}:${b.line}) — Levenshtein ${d}`,
