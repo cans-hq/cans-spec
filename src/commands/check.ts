@@ -719,9 +719,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // until a full pass adds nothing. Termination is structural: the
   // promotion set is finite (bounded by the .md files under root), every
   // candidate is keyed through promotableSpecKey's containment/exclusion
-  // guards, and `attempted` never retries a key this run has already
-  // loaded or failed to load (a pathological ref cycle can only produce
-  // keys once each).
+  // guards, and `promotedAttempted` never retries a key this run has
+  // already loaded or failed to load (a pathological ref cycle can only
+  // produce keys once each).
   const promotedAttempted = new Set<string>(specRel);
   for (;;) {
     const targets = new Set<string>();
