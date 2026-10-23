@@ -14,13 +14,14 @@
  *                  is returned, ok:true, exit 0.
  *   R3-B2 ....... CONTROL (green at HEAD) + npm-only residual note — §16 "Overflow
  *                  target files must NOT contain their own see: refs (no chaining)"
- *                  and §12 deep-hop table: a referenced overflow target carrying
- *                  outgoing `see:` refs MUST be flagged. Verified green at source
- *                  main for the valid-chain, broken-ref AND colonless variants
- *                  (error, category overflow, "no chaining: overflow target ...").
- *                  QA-13 F3 (npm 0.1.0: nothing flagged, exit 0) therefore does NOT
- *                  reproduce at source main — kept as a regression guard pinning the
- *                  documented behavior so the npm/source divergence cannot regress it.
+ *                  and §12 deep-hop table: a subfolder .md carrying outgoing
+ *                  `see:` refs MUST be flagged. Issue #54 splits the shapes: a
+ *                  REFERENCED subfolder .md is promoted to a first-class spec
+ *                  file (its see: is the documented §5 deep hop), while an
+ *                  UNREFERENCED one stays an overflow target (§16 chaining
+ *                  error). Both pinned — the QA-13 F3 residual (npm 0.1.0:
+ *                  nothing flagged, exit 0) must never reproduce in either
+ *                  shape.
  *
  * Both workspaces use a FULL §18 rules file (defaults, orphan_check relaxed):
  * full-file overrides behave correctly at HEAD (QA-13), so a red here can only be
@@ -152,13 +153,16 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     expect(`${r.out}\n${r.err}`).toContain('nope');
   });
 
-  test('control (green at HEAD; QA-13 F3 npm-only residual): an overflow target carrying outgoing see: refs is flagged as a chaining error', () => {
-    // 04-api.md references the overflow target; the target itself references
-    // 03-data.md. §16 forbids outgoing refs from overflow targets (no chaining);
-    // §12's deep-hop table independently calls "see: inside see: target" an
-    // error. Verified green at HEAD (source main) for valid-chain, broken-ref
-    // and colonless variants — QA-13 F3 (npm 0.1.0: nothing flagged, exit 0)
-    // does not reproduce here; this test pins the contract regardless.
+  test('control (green at HEAD; QA-13 F3 npm-only residual): §16 chaining fires for UNREFERENCED overflow targets; a REFERENCED subfolder .md is promoted (issue #54) and its see: is the documented §5 deep hop', () => {
+    // 04-api.md references 04-api/request-schema.md, which references
+    // 03-data.md. Issue #54: pointerizing a subfolder .md promotes it to a
+    // first-class spec file — its outgoing `see:` is an ordinary graph edge,
+    // so under max_hops: 1 the shape is the documented §5 DEEP HOP
+    // (04-api.md → 04-api/request-schema.md → 03-data.md), never a §16
+    // chaining error. The §16 overflow-target class is now the UNREFERENCED
+    // subfolder .md files only — pinned here with a second, unreferenced
+    // target. (QA-13 F3, npm 0.1.0: nothing flagged, exit 0 — the
+    // regression guard stays: SOMETHING must always flag in both shapes.)
     const ws = makeWs('r3-b2-overflow-chain');
     writeFileSync(join(ws.cans, '_rules.yaml'), FULL_RULES);
     writeFileSync(join(ws.cans, '04-api.md'), [
@@ -183,10 +187,25 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
       '  - Nightly backups',
       '',
     ].join('\n'));
+
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    // Verified at HEAD: error, category overflow, "no chaining: overflow target ..."
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (chaining error present)
-    expect(parsed.issues.some((i: any) => /request-schema/.test(i.file) && i.category === 'overflow' && i.level === 'error')).toBe(true);
+    // Promoted shape: the referenced target's outgoing ref is a §5 deep hop
+    // (error class, exit 2) — issue #54's documented semantics.
+    expect(r.exit).toBe(2);
+    expect(parsed.issues.some((i: any) => i.rule === 'refs.deep_hop' && /request-schema/.test(i.file))).toBe(true);
+    expect(parsed.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
+
+    // §16 shape: an UNREFERENCED subfolder .md carrying an outgoing see: is
+    // still flagged as a chaining error (overflow target, leaf content).
+    writeFileSync(join(ws.cans, '04-api', 'legacy-notes.md'), [
+      '- Legacy notes',
+      '  - Old field rules: see 03-data.md',
+      '',
+    ].join('\n'));
+    const r2 = runCli(['check', '--json'], ws.root);
+    const parsed2 = parseJsonOut(r2.out);
+    expect(r2.exit).toBe(2);
+    expect(parsed2.issues.some((i: any) => i.rule === 'refs.chaining' && /legacy-notes/.test(i.file))).toBe(true);
   });
 });
