@@ -442,9 +442,27 @@ export function checkRefs(
  *    ref to b with its line — so a multi-referrer workspace never leaves the
  *    user guessing which `see:` to delete ("remove the intermediate hop via
  *    X" alone is ambiguous when several files ref X).
+ *  - Issue #44 exemption: a ref whose target EXISTS on disk inside the
+ *    workspace but is NOT a loaded spec file (resolveKey null, yet
+ *    resolveSpecFile(root, …) non-null — e.g. `see: artifacts/final-chain.ts`,
+ *    an example artifact the hub points at) is NOT mesh-exiting. Such a
+ *    target cannot form an A→B→C spec chain by construction — the chain
+ *    machinery above walks loaded spec files only, so the ref can never
+ *    extend one — and checkRefs does not report it as broken (it resolves
+ *    on disk), so before #44 a hub that every file back-references could
+ *    never pass `cans check` while holding its artifact pointers. A target
+ *    missing on disk KEEPS the mesh-exiting classification: it is a broken
+ *    ref checkRefs reports, and this check never downgrades that signal.
+ *    The exemption needs the workspace root to ask the filesystem; `root`
+ *    defaults to null, and a null root preserves the legacy (pre-#44)
+ *    classification for every existing two-argument caller.
  *  - §18 delete-key semantics: maxHops null (key deleted) → the check is OFF —
  *    skipped entirely. */
-export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Issue[] {
+export function detectDeepHops(
+  graph: RefGraph,
+  maxHops: number | null = 1,
+  root: string | null = null,
+): Issue[] {
   if (maxHops === null) return [];
   const issues: Issue[] = [];
   const keys = [...graph.forward.keys()];
@@ -523,6 +541,20 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
     return null;
   };
 
+  // Issue #44: does a NON-spec ref target exist as a file on disk inside the
+  // workspace? resolveSpecFile is containment-guarded (issue #10), so a `../`
+  // or absolute target can never earn the exemption; a missing target cannot
+  // either — only a real file inside the root does. Memoized per raw spelling:
+  // the outgoing filter below re-asks for every mesh-exiting candidate ref.
+  const onDiskCache = new Map<string, boolean>();
+  const nonSpecOnDisk = (name: string): boolean => {
+    const cached = onDiskCache.get(name);
+    if (cached !== undefined) return cached;
+    const hit = root !== null && resolveSpecFile(root, name) !== null;
+    onDiskCache.set(name, hit);
+    return hit;
+  };
+
   // depth(x) = longest chain of refs ending at x, over simple paths (no file
   // repeats), saturated at maxHops — the flag decision only ever needs to know
   // whether the chain reaches maxHops. Values are computed per query with a
@@ -558,6 +590,12 @@ export function detectDeepHops(graph: RefGraph, maxHops: number | null = 1): Iss
       if (r.file === b) return false; // self-reference, as before
       const t = resolveKey(r.file);
       if (t !== null && sccId.get(t) === bScc) return false; // back-ref into b's own mesh
+      // Issue #44: target not a loaded spec file, but a real file on disk
+      // inside the workspace → cannot form an A→B→C spec chain by
+      // construction; not mesh-exiting. (Missing-on-disk targets fall through
+      // and stay mesh-exiting — the broken-ref signal lives at checkRefs.)
+      // root null keeps the legacy classification for old callers.
+      if (t === null && root !== null && nonSpecOnDisk(r.file)) return false;
       return true;
     });
     if (outgoing.length === 0) continue;
