@@ -382,6 +382,23 @@ export function loadRules(root: string): Rules {
     ]);
   }
 
+  // Issue #42: the YAML subset parser types an unquoted `- 10` as the Number
+  // 10, but the redundancy layers tokenize node text into STRINGS ("10" out
+  // of `see: 10-sdk.md`) — `stopwords.includes("10")` could never match a
+  // Number entry, so numeric stopwords (and numeric members of a synonym
+  // group, the same token-type class of bug) were silently inert. Coerce
+  // well-formed array entries to strings at load time. Non-array shapes
+  // (empty `stopwords:` → null, scalar `stopwords: 10`) keep their current
+  // behavior: only arrays are coerced, per the issue #42 fix design.
+  if (Array.isArray(rules.redundancy.stopwords)) {
+    rules.redundancy.stopwords = rules.redundancy.stopwords.map(String);
+  }
+  if (Array.isArray(rules.redundancy.synonyms)) {
+    rules.redundancy.synonyms = rules.redundancy.synonyms.map(
+      group => (Array.isArray(group) ? group.map(String) : group),
+    );
+  }
+
   const offRange = (): { min: null; max: null } => ({ min: null, max: null });
   const has = (section: string, key: string): boolean => {
     const s = parsed[section];

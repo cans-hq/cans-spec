@@ -108,8 +108,11 @@ describe('issue #42 — loadRules coerces unquoted numeric stopwords/synonyms', 
     expect(load('redundancy:\n  stopwords:\n').redundancy.stopwords).toBeNull();
     // A scalar `stopwords: 10` is a type-inconsistent shape, not an array —
     // the coercion must not invent an array for it (issue #42 fixes the
-    // token type of well-formed array entries only).
-    expect(load('redundancy:\n  stopwords: 10\n').redundancy.stopwords).toBe(10);
+    // token type of well-formed array entries only). `unknown` on purpose:
+    // the declared type is string[] but the runtime value is the Number 10.
+    const scalar: unknown = load('redundancy:\n  stopwords: 10\n').redundancy.stopwords;
+    expect(Array.isArray(scalar)).toBe(false);
+    expect(scalar).toBe(10);
   });
 
   test('defaults are untouched: every default stopword/synonym member is a string', () => {
