@@ -267,6 +267,11 @@ describe('issue #52: REFS header broken count === --json refs.broken', () => {
     const refsWarnings = json.issues.filter((i: any) => i.category === 'refs' && i.level === 'warning').length;
     expect(headerCountsSum(refsHeader(text.out))).toBe(refsErrors + refsWarnings);
     expect(json.counts.errors).toBe(6); // all 6 errors are refs errors here
-    expect(json.counts.errors + json.counts.warnings).toBeGreaterThanOrEqual(12); // + structure/redundancy warnings
+    // Issue #46: see: target tokens no longer ride the redundancy layers —
+    // the target-driven "authentication" keyword warning and the 80% overlap
+    // between the two "Auth … anchor" pointers are gone (the label-driven
+    // "auth" × 4 keyword and the loopback↔loopback 100% overlap remain), so
+    // the full check carries 6 errors + 5 warnings = 11.
+    expect(json.counts.errors + json.counts.warnings).toBeGreaterThanOrEqual(11); // + structure/redundancy warnings
   });
 });

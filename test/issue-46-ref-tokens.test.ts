@@ -24,7 +24,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs';
 
 import { spawnCli, REPO } from './runtime.ts';
 import { checkRedundancy, fuzzyDistance } from '../src/core/redundancy.ts';
-import { parseOutline } from '../src/core/outline.ts';
+import { parseOutline, stripRefSyntax } from '../src/core/outline.ts';
 import { defaultRules } from '../src/core/rules.ts';
 import type { RedundancyRules } from '../src/types.ts';
 
@@ -35,6 +35,44 @@ const spec = (name: string, lines: string[]): Map<string, ReturnType<typeof pars
   files.set(name, parseOutline(lines.join('\n'), name));
   return files;
 };
+
+// ── stripRefSyntax: the shared helper derives from the parser's own RE ────
+
+describe('issue #46 — stripRefSyntax removes exactly the parser-minted ref spans', () => {
+  test('colon form: file + anchor span removed, label kept', () => {
+    expect(stripRefSyntax('alpha: see 10-sdk.md#primitives')).toBe('alpha: ');
+  });
+
+  test('no-colon form (`see TARGET`) removed too', () => {
+    expect(stripRefSyntax('pointers see 10-sdk.md here')).toBe('pointers  here');
+  });
+
+  test('multiple refs on one line all removed', () => {
+    expect(stripRefSyntax('a: see 01-x.md and see: 02-y.md#z b')).toBe('a:  and  b');
+  });
+
+  test('"seed" and other prose never match (whitespace-required no-colon form)', () => {
+    expect(stripRefSyntax('the seed grows')).toBe('the seed grows');
+  });
+
+  test('pure-punctuation prose ("see .") is NOT a ref — kept verbatim (issue #48 parity)', () => {
+    // Same validation as parseOutline: a match whose FILE token strips to
+    // empty is prose, not a ref. The bare `see` token stays excluded from
+    // the layers by REF_SYNTAX_TOKENS.
+    expect(stripRefSyntax('Nothing to see .')).toBe('Nothing to see .');
+  });
+
+  test('issue #48 shape: glued trailing `)` goes with the span (tokenization-safe)', () => {
+    const out = stripRefSyntax('(see effect.md#Audit-spine)');
+    expect(out).not.toContain('effect');
+    expect(out).not.toContain('Audit');
+  });
+
+  test('idempotent: stripping already-stripped text is a no-op', () => {
+    const once = stripRefSyntax('alpha: see 10-sdk.md#primitives');
+    expect(stripRefSyntax(once)).toBe(once);
+  });
+});
 
 // ── Layer 1: word frequency no longer counts ref-target tokens ───────────
 

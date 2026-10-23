@@ -8,9 +8,12 @@
  *    - 83 broken refs to 4 missing files (67/13/2/1) + 1 broken anchor
  *    - 1 orphan file                     (13-orphan.md)
  *    - 8 stale back-pointers             (ref-by comments in 04-budget.md)
- *    - 12 keyword-sprawl warnings        (8 planted minors at threshold 12,
- *                                         plus artifacts/yaml/governance/policy
- *                                         riding the ref lines)
+ *    - 8 keyword-sprawl warnings         (8 planted minors at threshold 12.
+ *                                         Issue #46 strips the `see:` target
+ *                                         span from redundancy text, so the ref
+ *                                         lines' artifacts/yaml/governance/
+ *                                         policy tokens no longer ride the
+ *                                         keyword counts)
  *    - 15 overlap warnings               (5 exact-duplicate pairs, 10 fuzzy pairs)
  *    - 0 typo warnings                   (all generated tokens ≤ 4 chars — the
  *                                         typo layer skips words ≤ 4 chars)
@@ -361,7 +364,7 @@ export function generateWorkspace(root: string, variant: 'issue' | 'warnings-onl
       brokenAnchor: variant === 'issue' ? 1 : 0,
       orphans: 1,
       staleBackPointers: 8,
-      keywordWarnings: 12,
+      keywordWarnings: 8,
       overlapExact: 5,
       overlapFuzzy: 10,
     },

@@ -1,5 +1,5 @@
 import type { OutlineNode, Issue, RedundancyRules } from '../types.ts';
-import { flattenNodes, isSyntheticNode } from './outline.ts';
+import { flattenNodes, isSyntheticNode, stripRefSyntax } from './outline.ts';
 
 interface NodeRef {
   text: string;
@@ -10,7 +10,11 @@ interface NodeRef {
 const EDGE_PUNCT_RE = /^[.,;:!?"']+|[.,;:!?"']+$/g;
 
 /** §8/§13: ref syntax tokens (`see:`, `.md`) are structural pointers, not
- *  content words — excluded from every redundancy layer (QA-02 F3). */
+ *  content words — excluded from every redundancy layer (QA-02 F3). Issue
+ *  #46 extends the same principle to the ref TARGET: the whole `see:` span
+ *  (file + anchor) is stripped from node text before tokenization (see
+ *  checkRedundancy / fuzzyDistance); this set remains as defense in depth
+ *  for any text that still carries the bare syntax tokens. */
 const REF_SYNTAX_TOKENS = new Set(['see', 'md']);
 
 /** lowercase → strip edge punctuation → synonym group (any member → first member) → bare word. */
@@ -188,7 +192,11 @@ export function fuzzyDistance(
   const words: NodeRef[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
-    for (const raw of tokenize(node.text)) {
+    // Issue #46: strip the see: ref span (file + anchor) before
+    // tokenizing — ref targets are structural, not content. No-op for
+    // NodeRefs already built from stripped text by checkRedundancy;
+    // direct callers passing raw node.text get the same treatment.
+    for (const raw of tokenize(stripRefSyntax(node.text))) {
       const w = normalizeWord(raw, synonyms);
       if (w.length === 0 || seen.has(w)) continue;
       if (REF_SYNTAX_TOKENS.has(w)) continue;
@@ -308,7 +316,15 @@ export function checkRedundancy(
       // any two table-opening files 100%-overlapping and inflated the
       // "table"/"code"/"fence" word-frequency counts).
       if (isSyntheticNode(node)) continue;
-      nodes.push({ text: node.text, file, line: node.line });
+      // Issue #46: strip the `see:` ref span (keyword + file target +
+      // anchor) from the text the three text-comparison layers tokenize —
+      // `see: 10-sdk.md#primitives` used to contribute 10/sdk/primitives
+      // to the node's word set, so file-stem words dominated word
+      // frequency and inflated phrase overlap between thin pointers to
+      // the same target. Label words are kept. Layer 4
+      // (crossFileCanonicality) deliberately does NOT strip: it compares
+      // full node text for identical concepts (duplicate-home semantics).
+      nodes.push({ text: stripRefSyntax(node.text), file, line: node.line });
     }
   }
   return [
