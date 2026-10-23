@@ -200,6 +200,27 @@ function checkFail(message: string): CheckResult & { error: string } {
   };
 }
 
+/** Issue #43: the invalid-_rules.yaml variant of checkFail. Same §37/§41
+ *  contract (exitCode 2, top-level `error` for the standalone human
+ *  diagnosis), but the synthetic issue is a CONFIG finding —
+ *  { rule: 'config.invalid', file: '_rules.yaml' } — so `--json` consumers
+ *  filtering by category never mis-handle a broken config as a refs finding
+ *  (the pre-#43 shape surfaced it as sections.refs[0] with rule refs.other
+ *  and file ""). Used ONLY by the loadRules catch below: the other
+ *  checkFail callers (no workspace, unknown flag, file filter) keep the
+ *  legacy shape — their diagnosis is not a config defect. */
+function configFail(message: string): CheckResult & { error: string } {
+  return {
+    ok: false,
+    command: 'check',
+    exitCode: 2, // issue #41: invalid rules = the check could not run = error class
+    ...zeroedCounts(),
+    issues: [{ file: '_rules.yaml', line: 0, level: 'error', category: 'config', message, rule: 'config.invalid' }],
+    errorCount: 1,
+    error: message,
+  };
+}
+
 /** Does raw ref target `name` point at workspace key `key`? (flat + folder layouts) */
 function refTargetKey(name: string, keys: Iterable<string>): string | null {
   for (const key of keys) {
@@ -621,7 +642,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   try {
     rules = loadRules(root);
   } catch (e) {
-    return checkFail(`invalid _rules.yaml: ${e instanceof Error ? e.message : String(e)}`);
+    // issue #43: an invalid _rules.yaml is a CONFIG defect — configFail
+    // (not checkFail) so --json buckets it under sections.config with rule
+    // config.invalid and file _rules.yaml, never under refs.
+    return configFail(`invalid _rules.yaml: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   const issues: Issue[] = [];
