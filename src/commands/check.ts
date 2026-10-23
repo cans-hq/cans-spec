@@ -962,8 +962,24 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     if (!opts.noRedundancy && rules.redundancy.enabled) {
       issues.push(...checkRedundancy(checkableMap, rules.redundancy, rules.references.duplicate_home_check));
     }
+    // Issue #45: same-value dedup. structure.node_length.max and
+    // overflow.max_node_chars compare the SAME quantity (node.text.length),
+    // so when both budgets are set to the SAME value every over-limit node
+    // is guaranteed to be flagged twice — once per rule — doubling
+    // errorCount and the report. When they are equal, structure.node_length.max
+    // is the authoritative home for that budget: the overflow.node_chars
+    // check is skipped (max_node_chars nulled for this run only). DISTINCT
+    // values are genuinely different budgets and still both fire, each at
+    // its own threshold. Either budget null (deleted/off, §18) → no dedup,
+    // the surviving check runs unchanged.
+    const overflowRules =
+      rules.overflow.max_node_chars !== null &&
+      rules.structure.node_length.max !== null &&
+      rules.overflow.max_node_chars === rules.structure.node_length.max
+        ? { ...rules.overflow, max_node_chars: null } // issue #45: structure owns the same-value budget
+        : rules.overflow;
     for (const key of checkable) {
-      issues.push(...checkOverflow(specFiles.get(key)!, key, rules.overflow));
+      issues.push(...checkOverflow(specFiles.get(key)!, key, overflowRules));
     }
 
     // §16 no-chaining: overflow target files (spec subfolder content) must not
