@@ -297,6 +297,10 @@ without turning it off: `redundancy.fuzzy_max_distance` (default 2) and
 `redundancy.fuzzy_min_word_length` (default 5); numeric stopwords
 (`- 10`) work unquoted.
 
+Subfolder `.md` files join the same engines: a file a spec points at
+(`see: plugins/pty.md`) is promoted to a first-class spec file for the whole
+run; unreferenced ones stay §16 leaf content (no `see:` inside).
+
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line
@@ -348,6 +352,21 @@ cans/
 │   └── add-dark-mode.md
 └── _collab/                 # handoffs, conflicts, decision index
 ```
+
+**Folder mode** works at any depth: `02-authentication/index.md` instead of
+`02-authentication.md`, and `plugins/topic/index.md` is discovered like any
+root file. Flat wins over folder; when both exist, `cans check` flags a
+duplicate home.
+
+**Subfolder content files** — any other `.md` inside a folder, like
+`cans/plugins/pty.md` — are §16 leaf content by default: they must not
+contain their own `see:` refs. The moment a spec file points at one
+(`see: plugins/pty.md`), `cans check` promotes it transitively to a
+first-class spec file: counted in the summary, subject to every engine, and
+free to reference back (the mutual back-reference mesh — the sanctioned
+pattern under `max_hops: 1`). Unreferenced subfolder files stay leaf
+content; `cans status` and `cans export` list discovered files (root `.md`
+plus any-depth `index.md`) without promotion.
 
 ---
 

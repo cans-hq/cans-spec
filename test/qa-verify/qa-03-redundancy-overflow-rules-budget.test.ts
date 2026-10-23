@@ -21,7 +21,7 @@
  */
 import { describe, test, expect, afterEach, afterAll } from '../testing.ts';
 import { join } from 'path';
-import { mkdirSync, rmSync, writeFileSync, readFileSync, cpSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync, cpSync } from 'fs';
 
 import { spawnCli, REPO } from '../runtime.ts';
 
@@ -378,21 +378,26 @@ describe('QA-03 F8 — §13 L3 fuzzy layer must skip synonym-matched pairs', () 
 });
 
 describe('QA-03 F10 — §16 no-chaining rule for overflow targets', () => {
-  test('F10: see: line inside overflow target 04-api/request-schema.md must be flagged', () => {
+  test('F10: see: line inside overflow target 04-api/legacy-errors.md must be flagged', () => {
     const ws = freshWs('f10-target-chaining');
     copyFixture(ws, 'overflow-project');
-    // Append a see: ref INSIDE an extracted overflow target. §16: "Overflow
-    // target files must NOT contain their own see: refs (no chaining)."
-    const target = join(ws, 'cans', '04-api', 'request-schema.md');
-    const src = readFileSync(target, 'utf-8');
-    writeFileSync(target, src + '- Schema source: see 04-api.md\n');
+    // §16: "Overflow target files must NOT contain their own see: refs (no
+    // chaining)." Issue #54 narrowed the overflow-target class to
+    // UNREFERENCED subfolder .md files: the fixture's 04-api.md references
+    // 04-api/request-schema.md, so that file is now a PROMOTED first-class
+    // spec file (its see: refs are ordinary graph edges — pinned in
+    // test/issue-54-subfolder-first-class.test.ts). The §16 contract is
+    // therefore pinned here on an unreferenced overflow target.
+    writeFileSync(
+      join(ws, 'cans', '04-api', 'legacy-errors.md'),
+      '- Legacy error codes\n  - Old rules: see 04-api.md\n',
+    );
 
     const r = runCli(['check', '--json'], ws);
     const data = parseJson(r.out);
-    // §16: the target containing a see: ref must be flagged. (Currently nothing
-    // is flagged and the ref is not even counted in refs.total.)
+    // §16: the unreferenced target containing a see: ref must be flagged.
     const chainingIssues = data.issues.filter(
-      (i: any) => /request-schema/.test(i.message) && /see|chain/i.test(i.message),
+      (i: any) => /legacy-errors/.test(i.message) && /see|chain/i.test(i.message),
     );
     expect(chainingIssues.length).toBeGreaterThan(0);
   });

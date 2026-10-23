@@ -4,7 +4,7 @@ import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
-  resolveSpecFile,
+  resolveSpecFile, promotableSpecKey,
 } from '../core/fs.ts';
 import {
   parseOutline, extractBackPointers, realNodes, flattenNodes, maxDepth as outlineMaxDepth,
@@ -675,7 +675,14 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   const specRel = discoverSpecFiles(root);
   const specFiles = new Map<string, OutlineNode[]>();
   const specSources = new Map<string, string>();
-  for (const rel of specRel) {
+  // Issue #54: one loader for every file that joins the spec set — the
+  // initial discovery pass AND the promotion loop below parse identically
+  // (readText → specSources entry so --fix can rewrite it → parseOutline
+  // with surfaced warnings), so a promoted subfolder file is
+  // indistinguishable from a discovered one from here on. Returns true when
+  // the file actually joined specFiles (read/parse failures push their
+  // issue and leave it out).
+  const loadSpecFile = async (rel: string): Promise<boolean> => {
     let text = '';
     try {
       text = await readText(join(root, rel));
@@ -685,7 +692,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         message: `unreadable spec file: ${e instanceof Error ? e.message : String(e)}`,
         rule: 'io.unreadable', // issue #41
       });
-      continue;
+      return false;
     }
     specSources.set(rel, text);
     const fileWarnings: ParseWarning[] = [];
@@ -697,6 +704,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         message: `parse error: ${e instanceof Error ? e.message : String(e)}`,
         rule: 'parse.error', // issue #41
       });
+      return false;
     }
     // Odd (non-2-multiple) indentation silently re-parents nodes — surface it.
     for (const pw of fileWarnings) {
@@ -706,6 +714,57 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         rule: 'parse.indent', // issue #41
       });
     }
+    return true;
+  };
+  for (const rel of specRel) {
+    await loadSpecFile(rel);
+  }
+
+  // Issue #54: transitive promotion of referenced subfolder .md files to
+  // first-class spec files. Discovery loads root *.md plus any-depth
+  // <dir>/index.md; every OTHER subfolder .md is §16 overflow-target
+  // material (leaf content) UNLESS a loaded SPEC file points at it —
+  // pointerizing it promotes it: it joins specFiles/specSources above and
+  // is thereafter indistinguishable from a discovered file (counted in
+  // files/nodes, subject to structure/style/content/overflow/redundancy
+  // checks, a ref-graph node for deep-hop/orphan/back-pointer purposes,
+  // --file-filterable, --fix-rewritable). Unreferenced subfolder .md files
+  // stay §16 overflow targets.
+  //
+  // Ref sources are SPEC FILES ONLY, by design: refs held by _tasks/ and
+  // _adr/ files (auxFiles below — transient and decisional pointers) do NOT
+  // promote their targets, and neither does the `done` extraReferrer (the
+  // archived task's refs earn ref-by marks but never change spec
+  // membership). Promotion is also independent of the --file filter and
+  // --refs-only: it is discovery, and refs stay global by design.
+  //
+  // Fixpoint, not a single pass: a promoted file may itself point at
+  // further subfolder .md files (spec → a.md → b.md), so iteration repeats
+  // until a full pass adds nothing. Termination is structural: the
+  // promotion set is finite (bounded by the .md files under root), every
+  // candidate is keyed through promotableSpecKey's containment/exclusion
+  // guards, and `promotedAttempted` never retries a key this run has
+  // already loaded or failed to load (a pathological ref cycle can only
+  // produce keys once each).
+  const promotedAttempted = new Set<string>(specRel);
+  for (;;) {
+    const targets = new Set<string>();
+    for (const nodes of specFiles.values()) {
+      for (const node of flattenNodes(nodes)) {
+        for (const ref of node.refs) targets.add(ref.file);
+      }
+    }
+    let added = false;
+    for (const target of [...targets].sort()) {
+      const rel = promotableSpecKey(root, target);
+      if (rel === null || promotedAttempted.has(rel)) continue;
+      // Already loaded under this key — or an equivalent spelling of one
+      // that is (folder/flat/case variants resolve through targetMatchesKey).
+      if (specSources.has(rel) || refTargetKey(rel, specFiles.keys()) !== null) continue;
+      promotedAttempted.add(rel);
+      if (await loadSpecFile(rel)) added = true;
+    }
+    if (!added) break;
   }
 
   // Task + ADR sources: parsed for ref extraction only (no structure/style/etc checks).
@@ -983,9 +1042,20 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
 
     // §16 no-chaining: overflow target files (spec subfolder content) must not
-    // contain their own see: refs.
+    // contain their own see: refs. Issue #54: a subfolder .md that promotion
+    // loaded as a first-class spec file is NOT an overflow target anymore —
+    // its see: refs are ordinary graph edges (mesh back-pointers). Only the
+    // UNREFERENCED subfolder .md files remain §16 leaf content here. Both
+    // sides use the '/'-joined relative-key convention
+    // (discoverOverflowTargets / discoverSpecFiles / toRelative), compared
+    // case-insensitively so spelling variants of one file cannot dodge the
+    // exclusion (and backslashes from any foreign key form are normalized).
+    const specKeys = new Set(
+      [...specFiles.keys()].map(k => k.split('\\').join('/').toLowerCase()),
+    );
     const targetFiles = new Map<string, OutlineNode[]>();
     for (const rel of discoverOverflowTargets(root)) {
+      if (specKeys.has(rel.toLowerCase())) continue; // promoted (issue #54)
       try {
         targetFiles.set(rel, parseOutline(await readText(join(root, rel)), rel));
       } catch {
