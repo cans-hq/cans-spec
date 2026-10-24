@@ -11,13 +11,17 @@ import {
   type ParseWarning,
 } from '../core/outline.ts';
 import { loadRules } from '../core/rules.ts';
+import {
+  aliasDefinitionIssues, defaultAliasing, extractAliases, finishAliasChecks,
+  resolveFileAliases, type AliasTable,
+} from '../core/alias.ts';
 import { checkStructure, checkTbdPolicy } from '../core/structure.ts';
 import { checkStyle } from '../core/style.ts';
 import { checkRedundancy } from '../core/redundancy.ts';
 import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey, anchorMatches, extractYamlKeys,
-  type RefByGroup, type RefGraph,
+  type RefByGroup, type RefGraph, type ExternalRefsConfig,
 } from '../core/refs.ts';
 import {
   anchorSlug, charLabel, slugConfusables,
@@ -49,8 +53,11 @@ export interface CheckArgs {
   dryRun?: boolean;
   /** §24 (done): the archiving task's parsed nodes, injected under their
    *  former `_tasks/<name>.md` identity so refs held by the archived task
-   *  still count for the back-pointer rebuild. Never set by `check` itself. */
-  extraReferrer?: { key: string; nodes: OutlineNode[] } | null;
+   *  still count for the back-pointer rebuild. Never set by `check` itself.
+   *  Issue #57: `source` (the task file's bytes, read before archiving)
+   *  lets checkWorkspace resolve the task's own alias uses — the file is
+   *  already renamed into _archive/, so the aux-file pass cannot see it. */
+  extraReferrer?: { key: string; nodes: OutlineNode[]; source?: string } | null;
 }
 
 const CHECK_FLAGS: FlagSpec[] = [
@@ -649,6 +656,20 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   const issues: Issue[] = [];
 
+  // Issue #57: the aliasing config (references.aliasing) + the external-root
+  // config (§18/issue #55), hoisted once — both the alias passes and
+  // checkRefs consume the SAME bundle so an alias use and its full-pointer
+  // twin can never verify differently.
+  const aliasCfg = rules.references.aliasing ?? defaultAliasing();
+  const externalCfg: ExternalRefsConfig = {
+    externalRoots: rules.references.external_roots ?? {},
+    orphanCheck: rules.references.orphan_check,
+    duplicateHomeCheck: rules.references.duplicate_home_check,
+  };
+  /** Issue #57: per-file alias tables (spec + aux + the done extraReferrer)
+   *  — the finish pass reads them after the graph exists. */
+  const aliasTables = new Map<string, AliasTable>();
+
   // §37: malformed workspace entries (directories named like spec files) are
   // reported, never silently skipped.
   for (const name of detectMalformedSpecDirs(root)) {
@@ -713,6 +734,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         rule: 'parse.indent', // issue #41
       });
     }
+    // Issue #57: extract the file's alias table and resolve its uses BEFORE
+    // any consumer — the promotion loop, the ref graph, structure/style/
+    // content/redundancy — sees the nodes. Resolution replaces each use's
+    // RefTarget (and node text span) with the full pointer's spelling, which
+    // is what makes an aliased file graph-identical to its expanded form.
+    const table = extractAliases(text);
+    aliasTables.set(rel, table);
+    issues.push(...aliasDefinitionIssues(table, rel, aliasCfg));
+    issues.push(...resolveFileAliases(specFiles.get(rel)!, table, rel, aliasCfg));
     return true;
   };
   for (const rel of specRel) {
@@ -772,7 +802,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   for (const rel of [...safeActiveTasks(root), ...safeAdrs(root)]) {
     try {
       const text = await readText(join(root, rel));
-      auxFiles.set(rel, parseOutline(text, rel));
+      // Issue #57: aux files alias-resolve exactly like spec files — their
+      // refs count for ref-by marks, so a bracketed use must resolve against
+      // the AUX file's own definitions (scope: file), never leak.
+      const table = extractAliases(text);
+      aliasTables.set(rel, table);
+      issues.push(...aliasDefinitionIssues(table, rel, aliasCfg));
+      const nodes = parseOutline(text, rel);
+      issues.push(...resolveFileAliases(nodes, table, rel, aliasCfg));
+      auxFiles.set(rel, nodes);
     } catch {
       // unreadable/unparseable aux file: its refs are simply not counted
     }
@@ -788,9 +826,27 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // its parsed nodes join the graph here under their former _tasks/ identity —
   // its see: refs still earn their targets' ref-by marks.
   if (opts.extraReferrer !== undefined && opts.extraReferrer !== null) {
-    allFiles.set(opts.extraReferrer.key, opts.extraReferrer.nodes);
+    const { key, nodes, source } = opts.extraReferrer;
+    // Issue #57: the task's own alias uses resolve here (the file is gone
+    // from _tasks/, so the aux pass above could not see it) — its source
+    // rides along from `done` precisely for this.
+    if (source !== undefined) {
+      const table = extractAliases(source);
+      aliasTables.set(key, table);
+      issues.push(...aliasDefinitionIssues(table, key, aliasCfg));
+      issues.push(...resolveFileAliases(nodes, table, key, aliasCfg));
+    }
+    allFiles.set(key, nodes);
   }
   let graph = buildRefGraph(allFiles, root);
+
+  // Issue #57 finish pass (needs the whole loaded set + the loaded files for
+  // anchor resolution): unused-alias warnings, min_uses errors, and
+  // verification of zero-use definitions — a broken alias definition fails
+  // the run, not just the uses. Never counted in refs.total (definitions are
+  // the spelling, uses are the refs — graph-identity between the two forms
+  // of a file).
+  issues.push(...finishAliasChecks(allFiles, aliasTables, root, externalCfg, aliasCfg));
 
   // File filter: restrict structure/style/redundancy to one file (refs stay global).
   const checkable = opts.file !== null
@@ -828,16 +884,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
-  issues.push(...checkRefs(allFiles, graph, root, {
-    // Issue #55: inter-repo pointers — the §18 references.external_roots map
-    // (empty when undeclared: every name:// target is then an undeclared-root
-    // broken ref), plus the two switches that gate the external verifications
-    // (orphan_check: missing file under a present root; duplicate_home_check:
-    // the same sub-path existing in another root).
-    externalRoots: rules.references.external_roots ?? {},
-    orphanCheck: rules.references.orphan_check,
-    duplicateHomeCheck: rules.references.duplicate_home_check,
-  }));
+  issues.push(...checkRefs(allFiles, graph, root, externalCfg));
   issues.push(...deepHops);
   if (rules.references.orphan_check) {
     issues.push(...detectOrphans(specFiles, graph));
@@ -879,7 +926,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // Capture the failing (referrer, line, anchor) tuples from the issues
     // list — the same list the report prints — so a repair can never target a
     // ref this run did not flag as refs.broken.anchor.
-    const proposed: Array<{ file: string; line: number; from: string; to: string; raw: string }> = [];
+    // Issue #57: a broken anchor behind an ALIAS use lives on the definition
+    // line — the use site has no anchor segment to rewrite — so an alias
+    // proposal carries the DEFINITION line (raw omitted → repairAnchors'
+    // fragment scan finds the `#from` there) plus the use-site issue lines it
+    // resolves (one rewrite fixes every use of the alias).
+    const proposed: Array<{
+      file: string; line: number; from: string; to: string;
+      raw?: string; issueLines: Set<number>;
+    }> = [];
     for (const issue of issues) {
       if (issue.rule !== 'refs.broken.anchor') continue;
       const m = issue.message.match(RE_BROKEN_ANCHOR_MSG);
@@ -921,22 +976,36 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       if (to === '' || to === ref.anchor) continue; // degenerate — already canonical
       if (/[\s#]/.test(to)) continue; // could never re-parse as one §11 anchor token
       if (!anchorMatches(ranked[0]!.text, to)) continue; // defense: the rewrite must resolve
-      proposed.push({ file: issue.file, line: ref.line, from: ref.anchor, to, raw: ref.raw });
+      if (ref.alias !== undefined) {
+        // Issue #57: repair the DEFINITION line — one rewrite fixes every
+        // use of the alias (and every use-site issue it resolves).
+        proposed.push({
+          file: issue.file, line: ref.alias.defLine, from: ref.anchor, to,
+          issueLines: new Set([ref.line]),
+        });
+      } else {
+        proposed.push({ file: issue.file, line: ref.line, from: ref.anchor, to, raw: ref.raw, issueLines: new Set() });
+      }
     }
     // Deterministic report order (referrer file, then source line) and one
     // entry per distinct rewrite — duplicate see: tokens on one line mint one
-    // ref each, but they spell the same fix.
+    // ref each, but they spell the same fix; two uses of one alias merge
+    // their issue lines into the single definition-site rewrite.
     proposed.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
-    const seen = new Set<string>();
+    const seen = new Map<string, (typeof proposed)[number]>();
     const unique = proposed.filter(p => {
       const k = `${p.file}\0${p.line}\0${p.from}\0${p.to}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
+      const first = seen.get(k);
+      if (first !== undefined) {
+        for (const il of p.issueLines) first.issueLines.add(il);
+        return false;
+      }
+      seen.set(k, p);
       return true;
     });
     const appliedKeys = new Set<string>();
     if (applyAnchors && unique.length > 0) {
-      const byFile = new Map<string, Array<{ line: number; from: string; to: string; raw: string }>>();
+      const byFile = new Map<string, Array<(typeof unique)[number]>>();
       for (const p of unique) {
         const list = byFile.get(p.file) ?? [];
         list.push(p);
@@ -950,15 +1019,34 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         await writeText(join(root, rel), rewritten);
         specSources.set(rel, rewritten);
         // Post-repair parse for the graph rebuild below. The rewrite only
-        // substitutes an anchor spelling inside an existing see: token (the
-        // replacement never contains whitespace — guarded above), so the
-        // parse cannot newly fail.
-        specFiles.set(rel, parseOutline(rewritten, rel));
+        // substitutes an anchor spelling inside an existing see: token or
+        // alias definition (the replacement never contains whitespace —
+        // guarded above), so the parse cannot newly fail. Issue #57: the
+        // alias table + use resolution are refreshed too (a repaired
+        // DEFINITION changes the target its uses resolve to); issues are not
+        // re-collected — the load-time pass already reported this file's
+        // alias state, and an anchor spelling cannot change it.
+        const repairedTable = extractAliases(rewritten);
+        aliasTables.set(rel, repairedTable);
+        const reparsed = parseOutline(rewritten, rel);
+        resolveFileAliases(reparsed, repairedTable, rel, aliasCfg);
+        specFiles.set(rel, reparsed);
         // Per-fix verification: the ref's raw token with its anchor segment
         // swapped must now sit on the target line — a fix the rewriter
         // skipped (fence guard) is reported as a proposal, never as applied.
+        // Issue #57: an alias fix (no raw) verifies by the canonical anchor
+        // now sitting on the DEFINITION line, and resolves every recorded
+        // use-site issue line with it.
         const outLines = splitSourceLines(rewritten);
         for (const f of fileFixes) {
+          if (f.raw === undefined) {
+            const line = outLines[f.line - 1]?.text ?? '';
+            if (line.includes(`#${f.to}`)) {
+              appliedKeys.add(`${rel}\0${f.line}\0${f.from}`);
+              for (const il of f.issueLines) appliedKeys.add(`${rel}\0${il}\0${f.from}`);
+            }
+            continue;
+          }
           const h = f.raw.indexOf('#');
           if (h < 0) continue;
           const expected = f.raw.slice(0, h + 1) + f.to + f.raw.slice(h + 1 + f.from.length);

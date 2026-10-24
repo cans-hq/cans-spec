@@ -5,6 +5,15 @@ export interface RefTarget {
   file: string;
   anchor: string | null;
   line: number;
+  /** Issue #57: set when this ref was WRITTEN as an alias use (`see: [1]`).
+   *  After resolution (core/alias.ts) `file`/`anchor`/`raw` hold the FULL
+   *  pointer's spelling — exactly what parseOutline would have minted had
+   *  the full target been written — so every downstream consumer (graph
+   *  counting, deep hops, orphans, back-pointers, checker output) is
+   *  identical between the aliased and expanded forms of a file. These
+   *  fields record the alias spelling for precise diagnostics: the `--fix`
+   *  anchor repair targets the DEFINITION line, not the use line. */
+  alias?: { name: string; defLine: number };
 }
 
 export interface OutlineNode {
@@ -126,6 +135,34 @@ export interface ReferenceRules {
    *  (malformed entries are line-numbered config errors, like every §18 key).
    *  `http://` and `https://` targets are URLs, never root pointers. */
   external_roots?: Record<string, string>;
+  /** Issue #57: per-file pointer aliasing (footnote-style short `see:`
+   *  targets). A PARAMETER block, not a check switch: absent/empty = the
+   *  documented defaults (disabled), and it never participates in the §18
+   *  delete/override reconciliation. See AliasingRules. */
+  aliasing: AliasingRules;
+}
+
+/** Issue #57: the `references.aliasing` block. One verified definition per
+ *  file (`- [1]: full/target.md#Anchor`, footnote-style at the end), short
+ *  fully-counted uses (`see: [1]`). Resolution is EXACTLY the full pointer's
+ *  (file existence, anchors, external roots, containment, duplicate-home,
+ *  orphan_check); every use counts as a ref for graph/hop/SCC purposes. */
+export interface AliasingRules {
+  /** Opt-in master switch, default false: aliasing disabled plus any alias
+   *  use or definition present is an ERROR, never a silent pass (the fix is
+   *  `cans alias expand`, not acceptance). */
+  enabled: boolean;
+  /** v1 scope: the defining FILE only — no cross-file leakage, no global
+   *  alias tables. The only legal value in v1; anything else is a
+   *  line-numbered config error. */
+  scope: 'file';
+  /** Which alias spellings are legal: `[1]`-style numbers, `[name]`-style
+   *  lowercase words, or both. A use of the other style is an error. */
+  style: 'numeric' | 'named' | 'both';
+  /** Only targets used at least this many times (uses + full spellings, per
+   *  file) are alias-eligible: a hand-written alias below the threshold is an
+   *  error — indirection with no saving. Integer >= 1, default 2. */
+  min_uses: number;
 }
 
 export interface RedundancyRules {
@@ -352,6 +389,48 @@ export interface SlugResult extends CommandResult {
 export interface VersionResult extends CommandResult {
   command: 'version';
   version: string;
+}
+
+/** Issue #57: `cans alias expand|collapse` — the programmatic switch between
+ *  full-pointer form and aliased form. Both directions are lossless for
+ *  non-pointer text, idempotent, and graph-identical (checker output on the
+ *  two forms of one file matches: same refs, hops, SCC, errors, warnings). */
+export interface AliasFileOutcome {
+  /** Spec-relative file path. */
+  file: string;
+  /** False when the transform was a no-op (already in the target form) or the
+   *  file was REFUSED — see `problems`. */
+  changed: boolean;
+  /** expand: alias uses rewritten to full targets; collapse: full targets
+   *  rewritten to alias uses. */
+  usesRewritten: number;
+  /** expand: definitions removed. */
+  definitionsRemoved: number;
+  /** collapse: NEW definitions appended (existing ones are kept in place and
+   *  counted in definitionsKept). */
+  definitionsAdded: number;
+  /** collapse: existing definitions reused, unchanged. */
+  definitionsKept: number;
+  /** Source bytes before − after; positive = saved (collapse's whole point). */
+  charsSaved: number;
+  /** §37 refusals: the file was left byte-identical and each problem names
+   *  what happened and what to do (undefined aliases, style/min_uses
+   *  conflicts, anchored alias uses, unterminated fences). */
+  problems: string[];
+}
+
+export interface AliasResult extends CommandResult {
+  command: 'alias';
+  direction: 'expand' | 'collapse';
+  /** Per-file outcomes, spec-relative, sorted. */
+  results: AliasFileOutcome[];
+  /** True when --dry-run previewed: no byte changed on disk and the counts
+   *  describe would-be writes. */
+  dryRun?: boolean;
+  /** §37: usage / no-workspace / invalid-rules / disabled-config diagnosis
+   *  (ok:false, exitCode 2). Per-file refusals ride in results[].problems
+   *  instead (ok:false, exitCode 1 — user-correctable file content). */
+  error?: string;
 }
 
 // ── Converters ──

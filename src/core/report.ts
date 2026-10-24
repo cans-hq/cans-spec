@@ -186,6 +186,18 @@ const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
 const RE_DEEP_HOP = /^DEEP HOP: (.+)$/;
 const RE_PROSE = /^see-like prose: "see (\S+)" did not resolve to a spec file/;
+// Issue #57: the alias-layer message families — grouped per alias name (or
+// the quoted spelling) so a definitions block with N problems reads as N
+// items under one line, like every other refs family.
+const RE_ALIAS_DISABLED = /^aliasing is disabled: "(.*)" — references\.aliasing\.enabled is false$/;
+const RE_ALIAS_UNDEFINED = /^undefined alias: see \[(\S+)\] — not defined in this file$/;
+const RE_ALIAS_STYLE = /^alias style violation: "\[(\S+)\]" is (?:named|numeric), but references\.aliasing\.style is "(?:numeric|named)"$/;
+const RE_ALIAS_BAD_USE = /^alias use carries an anchor: "(.*)" — /;
+const RE_ALIAS_UNUSED = /^unused alias: \[(\S+)\] \(line \d+\) is never used$/;
+const RE_ALIAS_MIN_USES = /^alias below min_uses: \[(\S+)\] → (\S+) used \d+ times?, but references\.aliasing\.min_uses is \d+ — /;
+const RE_ALIAS_DUP = /^duplicate alias definition: \[(\S+)\] — already defined at line \d+$/;
+const RE_ALIAS_BAD_TARGET = /^alias definition targets an alias: "(.*)" — definitions must hold the full pointer$/;
+const RE_ALIAS_BAD_NAME = /^invalid alias name: "(.*)" — alias names are /;
 const RE_KEYWORD = /^"([^"]+)" × (\d+) nodes \(threshold: (\d+)\)$/;
 const RE_OVERLAP = /^(\d+)% overlap: (\S+) ↔ (\S+)$/;
 const RE_TYPO = /^possible typo: "([^"]+)" \(([^)]*)\) ↔ "([^"]+)" \(([^)]*)\) — Levenshtein (\d+)$/;
@@ -328,6 +340,35 @@ function normalizeMessage(issue: IssueLike): Normalized {
   if ((mt = m.match(RE_PROSE)) !== null) {
     // Main's see-like-prose finding (advisory rephrase hint) — per-target group.
     return { rule: 'refs.prose', pattern: 'see-like prose', key: mt[1]!, detail: m };
+  }
+
+  // ── refs: the issue #57 alias families ──
+  if ((mt = m.match(RE_ALIAS_DISABLED)) !== null) {
+    return { rule: 'refs.alias.disabled', pattern: 'aliasing disabled', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_UNDEFINED)) !== null) {
+    return { rule: 'refs.alias.undefined', pattern: 'undefined alias', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_STYLE)) !== null) {
+    return { rule: 'refs.alias.style', pattern: 'alias style violation', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_BAD_USE)) !== null) {
+    return { rule: 'refs.alias.bad-use', pattern: 'alias use with anchor', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_UNUSED)) !== null) {
+    return { rule: 'refs.alias.unused', pattern: 'unused alias', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_MIN_USES)) !== null) {
+    return { rule: 'refs.alias.min_uses', pattern: 'alias below min_uses', key: mt[1]!, detail: m };
+  }
+  if ((mt = m.match(RE_ALIAS_DUP)) !== null) {
+    return { rule: 'refs.alias.duplicate', pattern: 'duplicate alias definition', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_BAD_TARGET)) !== null) {
+    return { rule: 'refs.alias.bad-target', pattern: 'alias targeting an alias', key: mt[1]! };
+  }
+  if ((mt = m.match(RE_ALIAS_BAD_NAME)) !== null) {
+    return { rule: 'refs.alias.bad-name', pattern: 'invalid alias name', key: mt[1]! };
   }
 
   // ── redundancy ──

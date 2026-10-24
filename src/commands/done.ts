@@ -105,8 +105,10 @@ export async function run(args: string[]): Promise<DoneResult> {
 
   let taskNodes: OutlineNode[] = [];
   let flat: OutlineNode[] = [];
+  let taskSource = '';
   try {
-    taskNodes = parseOutline(await readText(taskFile), `_tasks/${name}.md`);
+    taskSource = await readText(taskFile);
+    taskNodes = parseOutline(taskSource, `_tasks/${name}.md`);
     flat = flattenNodes(taskNodes);
   } catch {
     return failResult(name, `cannot parse _tasks/${name}.md — check for tab indentation or malformed content`);
@@ -156,13 +158,16 @@ export async function run(args: string[]): Promise<DoneResult> {
   // (strictly ref-by comment rewrites in spec files) and report the count.
   // The task has just been renamed into _archive/, so its parsed nodes are
   // injected under their former _tasks/<name>.md identity — refs held by the
-  // archived task still earn their targets' ref-by marks (QA-04 #10). The pass
-  // is gated on §18 references.back_pointers inside checkWorkspace (off →
-  // zero writes, backPointersUpdated 0).
+  // archived task still earn their targets' ref-by marks (QA-04 #10). The
+  // task's SOURCE rides along (issue #57) so alias uses in the task file
+  // resolve against its own definitions before the graph is built — without
+  // it, a bracketed `see: [1]` would flow into the graph as a broken token.
+  // The pass is gated on §18 references.back_pointers inside checkWorkspace
+  // (off → zero writes, backPointersUpdated 0).
   const fixRun = await checkWorkspace(workspace, {
     ...ZERO_CHECK_ARGS,
     fix: true,
-    extraReferrer: { key: `_tasks/${name}.md`, nodes: taskNodes },
+    extraReferrer: { key: `_tasks/${name}.md`, nodes: taskNodes, source: taskSource },
   });
 
   return {

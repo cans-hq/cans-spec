@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Rules } from '../types.ts';
+import { defaultAliasing } from './alias.ts';
 
 interface YLine {
   lineNo: number;
@@ -261,6 +262,11 @@ export function defaultRules(): Rules {
       max_hops: 1,
       orphan_check: true,
       duplicate_home_check: true,
+      // Issue #57: per-file pointer aliasing — opt-in, defaults shown. A
+      // parameter block (like external_roots): absent/empty keeps these
+      // values, and listing it never changes the delete/override
+      // reconciliation for configs that predate it.
+      aliasing: defaultAliasing(),
     },
     redundancy: {
       enabled: true,
@@ -338,7 +344,8 @@ interface KeySpec {
     | 'wordList'
     | 'synonymGroups'
     | 'docString'
-    | 'rootMap';
+    | 'rootMap'
+    | 'aliasBlock';
   /** integer/number: inclusive lower bound. range: bound for BOTH members. */
   min?: number;
   /** number: inclusive upper bound. */
@@ -388,6 +395,14 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
     // means for the delete/override reconciliation (pre-#55 configs behave
     // identically); entry validation keeps the issue-#55 message shapes.
     external_roots: { kind: 'rootMap', nullOk: true, reconcile: false },
+    // Issue #57: the per-file pointer-aliasing block — enabled/scope/style/
+    // min_uses. A PARAMETER, not a check switch: null (an explicit empty
+    // `aliasing:`) keeps the documented defaults (disabled/file/both/2), the
+    // same convention as references.mode; reconcile: false keeps it out of
+    // SECTION_KEYS so listing it never changes what a "complete references
+    // section" means for the delete/override reconciliation. Sub-key
+    // validation keeps the issue-#56 line-numbered message shapes.
+    aliasing: { kind: 'aliasBlock', nullOk: true, reconcile: false },
   },
   redundancy: {
     enabled: { kind: 'boolean' },
@@ -506,6 +521,7 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   if (spec.kind === 'wordList') return 'a list of words';
   if (spec.kind === 'synonymGroups') return SYNONYM_GROUPS_EXPECTATION;
   if (spec.kind === 'rootMap') return 'a mapping of root names to paths';
+  if (spec.kind === 'aliasBlock') return 'a mapping like { enabled: true, scope: file, style: both, min_uses: 2 }';
   return 'a string';
 }
 
@@ -650,6 +666,37 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
           const got = value === null ? 'empty value (nothing under the key)' : typeof value;
           throw new Error(
             `line ${lineOf(keyLines, at)} — external root "${name}" must be a non-empty path string, got ${got}`,
+          );
+        }
+      }
+      return;
+    }
+    case 'aliasBlock': {
+      // Issue #57: references.aliasing — enabled (boolean), scope ("file",
+      // the only legal v1 value), style (numeric|named|both), min_uses
+      // (integer >= 1). Unknown sub-keys reject under the same strict §18
+      // discipline as unknown top-level keys: a typo'd `enabledd` must never
+      // silently mean "no such knob" while the author believes aliasing is
+      // on. Block-form members carry their own tracked line; inline-object
+      // members share the key's line (parseYamlTracked).
+      if (!isPlainObject(v)) fail('a mapping like { enabled: true, scope: file, style: both, min_uses: 2 }');
+      for (const [key, mv] of Object.entries(v)) {
+        const at = `${path}.${key}`;
+        if (key === 'enabled') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (key === 'scope') {
+          if (mv !== 'file') fail('"file" (the only legal aliasing scope in v1 — issue #57)', at, mv);
+        } else if (key === 'style') {
+          if (mv !== 'numeric' && mv !== 'named' && mv !== 'both') {
+            fail('"numeric" or "named" or "both"', at, mv);
+          }
+        } else if (key === 'min_uses') {
+          if (typeof mv !== 'number' || !Number.isInteger(mv) || mv < 1) {
+            fail('an integer >= 1', at, mv);
+          }
+        } else {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,
           );
         }
       }
@@ -900,6 +947,10 @@ export function loadRules(root: string): Rules {
         max_hops: null,
         orphan_check: false,
         duplicate_home_check: false,
+        // Issue #57: aliasing is a PARAMETER (like mode) — a deleted
+        // references section keeps its documented default (disabled), never
+        // silently flips semantics for files that predate the key.
+        aliasing: defaultAliasing(),
       };
     }
   } else {
