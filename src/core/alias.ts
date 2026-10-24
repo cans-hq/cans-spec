@@ -12,10 +12,21 @@
  *  - Every alias use counts as a ref for graph, hop, SCC and orphan purposes,
  *    exactly as if the full target were written. Resolution happens at load
  *    time (BEFORE the ref graph is built): the use's RefTarget is replaced by
- *    the full pointer's RefTarget — same file, anchor and raw spelling the
- *    parser would have minted for the expanded form — so aliasing cannot hide
- *    graph edges or dodge deep-hop checks, and checker output is IDENTICAL
+ *    the full pointer's target — same file and anchor the parser would have
+ *    minted for the expanded form — so aliasing cannot hide graph edges or
+ *    dodge deep-hop checks, and the REF layer of the checker output (refs
+ *    counted, hops, SCC, broken/orphan/duplicate-home verdicts) is identical
  *    between the aliased and expanded forms of a file (graph-identity).
+ *  - The node's TEXT keeps the WRITTEN spelling (`label: see: [1]`): the
+ *    structure/style/content/redundancy engines measure what the author
+ *    wrote, so a short alias use does not trip node_length on a target whose
+ *    full spelling would (the issue's motivating case — a long target plus a
+ *    label exceeding the 90-char limit — is solved, not relocated). The one
+ *    exception is `cans export`, which renders refs OUT of node text for
+ *    consumers outside the workspace: it resolves with rewriteText to show
+ *    the full pointer. `raw` keeps the written spelling too, so every
+ *    diagnostic that quotes a ref (deep-hop advice) names what is on the
+ *    line.
  *  - Undefined alias = broken-ref error. Unused alias = warning (dead weight,
  *    not a broken graph — but its TARGET is still verified: a broken
  *    definition fails the run even with zero uses).
@@ -269,26 +280,18 @@ function scanRefSpans(text: string): RefSpan[] {
   return out;
 }
 
-/** The full-pointer spelling an alias use expands to (issue #57
- *  graph-identity): `see: [1]` + def → the raw parseOutline would have minted
- *  for `see: <target>[#anchor]` — same see-form (`see:` vs `see `), same
- *  glued trailing punctuation, only the token swapped. */
-function expandedRaw(raw: string, def: AliasDef): string {
-  REF_RE.lastIndex = 0;
-  const m = REF_RE.exec(raw);
-  if (m === null) return raw; // unreachable: raw IS a see: match
-  const prefix = m[0].match(/^see(?::\s*|\s+)/)![0].length;
-  const full = `${def.target}${def.anchor !== null ? `#${def.anchor}` : ''}`;
-  return raw.slice(0, prefix) + full + raw.slice(prefix + m[1]!.length);
-}
-
 /** Resolve a file's alias USES in place: every grammar-legal bracketed see:
- *  token resolves to its definition's full pointer. The RefTarget is replaced
- *  wholesale (file/anchor/raw = the expanded spelling, plus the `alias`
- *  marker for diagnostics) and the node's TEXT has the alias token swapped
- *  for the full target — so structure/style/content/redundancy/slug-hint
- *  engines all see the as-if-expanded outline and their findings (including
- *  quoted node text) are identical between the two forms.
+ *  token resolves to its definition's full pointer. The RefTarget's
+ *  `file`/`anchor` are replaced with the definition's target (plus the
+ *  `alias` marker for diagnostics) so the ref graph, back-pointers, deep
+ *  hops, orphans and every refs.broken verdict are exactly the expanded
+ *  form's. The node's TEXT and the ref's `raw` keep the WRITTEN spelling
+ *  (`label: see: [1]`) by default: structure/style/content/redundancy
+ *  measure what the author wrote (a short use must not trip node_length on a
+ *  long target — the issue's motivating case), and diagnostics quote what is
+ *  on the line. `rewriteText` (export) additionally swaps each use token in
+ *  the node text for its full pointer — for consumers that render refs out
+ *  of the text and cannot see the workspace's definitions.
  *
  *  Unresolvable uses (aliasing disabled, undefined name, anchored use) are
  *  DROPPED from the ref graph and reported here — the alias layer owns
@@ -301,7 +304,9 @@ export function resolveFileAliases(
   table: AliasTable,
   file: string,
   cfg: AliasingRules,
+  opts?: { rewriteText?: boolean },
 ): Issue[] {
+  const rewriteText = opts?.rewriteText === true;
   const issues: Issue[] = [];
   for (const node of flattenNodes(nodes)) {
     const spans = scanRefSpans(node.text);
@@ -309,7 +314,6 @@ export function resolveFileAliases(
     // text with the same regex and the same skip rule, in match order.
     const newRefs: RefTarget[] = [];
     const textEdits: Array<{ start: number; end: number; full: string }> = [];
-    let touched = false;
     for (let i = 0; i < node.refs.length; i++) {
       const ref = node.refs[i]!;
       const span = spans[i];
@@ -319,14 +323,12 @@ export function resolveFileAliases(
         newRefs.push(ref); // ordinary (full-pointer or prose) ref — untouched
         continue;
       }
-      const useSpelling = node.text.slice(span.tokenStart, span.pointerEnd);
-      touched = true;
       if (!cfg.enabled) {
         issues.push({
           file, line: ref.line, level: 'error', category: 'refs',
           message: `aliasing is disabled: "see: [${name}]" — references.aliasing.enabled is false`,
           rule: 'refs.alias.disabled',
-          suggestion: 'enable aliasing under references.aliasing in _rules.yaml, or run `cans alias expand` to restore full targets',
+          suggestion: 'enable aliasing under references.aliasing in _rules.yaml, run `cans alias expand` to restore full targets, or (for plain prose) drop the brackets: "see the appendix"',
         });
         continue; // dropped: the alias layer owns bracketed tokens
       }
@@ -338,8 +340,8 @@ export function resolveFileAliases(
         issues.push({
           file, line: ref.line, level: 'error', category: 'refs',
           message: anchored !== undefined
-            ? `alias use carries an anchor: "${useSpelling}" — anchors live on the definition (line ${anchored.line})`
-            : `alias use carries an anchor: "${useSpelling}" — [${name}] is not defined in this file`,
+            ? `alias use carries an anchor: "see ${span.fileTok}#${span.anchorTok}" — anchors live on the definition (line ${anchored.line})`
+            : `alias use carries an anchor: "see ${span.fileTok}#${span.anchorTok}" — [${name}] is not defined in this file`,
           rule: 'refs.alias.bad-use',
           suggestion: 'drop the anchor from the use and put it on the definition, or write the full see: target',
         });
@@ -366,16 +368,16 @@ export function resolveFileAliases(
       }
       const full = `${def.target}${def.anchor !== null ? `#${def.anchor}` : ''}`;
       newRefs.push({
-        raw: expandedRaw(ref.raw, def),
+        raw: ref.raw, // the written spelling — diagnostics quote what is on the line
         file: def.target,
         anchor: def.anchor,
         line: ref.line,
         alias: { name: def.name, defLine: def.line },
       });
-      textEdits.push({ start: span.tokenStart, end: span.pointerEnd, full });
+      if (rewriteText) textEdits.push({ start: span.tokenStart, end: span.pointerEnd, full });
     }
-    if (!touched) continue;
     node.refs = newRefs;
+    if (!rewriteText || textEdits.length === 0) continue;
     // Apply the text edits right-to-left so earlier spans stay valid.
     for (let k = textEdits.length - 1; k >= 0; k--) {
       const e = textEdits[k]!;
@@ -848,9 +850,10 @@ export function collapseAliases(source: string, file: string, cfg: AliasingRules
 
   // Append the NEW definitions at EOF: continuing the definitions block when
   // the file already ends with one, else after exactly one blank separator
-  // line. Inserted lines mint the file's dominant EOL (issue #21 discipline);
-  // the final definition becomes the file's unterminated tail, byte-identical
-  // to what a plain join produces.
+  // line. Inserted lines mint the file's dominant EOL (issue #21 discipline)
+  // and the final definition keeps its terminator — the canonical POSIX
+  // shape expand's normalizeEof also lands on, so both directions of the
+  // round trip end with a terminated last line.
   if (newDefs.length > 0) {
     normalizeEof(lines);
     let lastContent = -1;
@@ -862,22 +865,22 @@ export function collapseAliases(source: string, file: string, cfg: AliasingRules
     }
     const continuesBlock =
       lastContent >= 0 && !inFence[lastContent] && matchAliasDefinition(lines[lastContent]!.text) !== null;
+    let crlf = 0;
+    let lf = 0;
+    for (const l of lines) {
+      if (l.eol === '\r\n') crlf++;
+      else if (l.eol === '\n') lf++;
+    }
+    const eol = crlf > lf ? '\r\n' : '\n';
     if (lines.length > 0 && !continuesBlock) {
-      let crlf = 0;
-      let lf = 0;
-      for (const l of lines) {
-        if (l.eol === '\r\n') crlf++;
-        else if (l.eol === '\n') lf++;
-      }
-      lines.push({ text: '', eol: crlf > lf ? '\r\n' : '\n' });
+      lines.push({ text: '', eol });
     }
     for (const d of newDefs) {
       lines.push({
         text: `- [${d.name}]: ${d.target}${d.anchor !== null ? `#${d.anchor}` : ''}`,
-        eol: lines.length > 0 ? (lines[lines.length - 1]!.eol ?? '\n') : '\n',
+        eol,
       });
     }
-    if (lines.length > 0) lines[lines.length - 1]!.eol = null;
   }
 
   return {

@@ -737,8 +737,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // Issue #57: extract the file's alias table and resolve its uses BEFORE
     // any consumer — the promotion loop, the ref graph, structure/style/
     // content/redundancy — sees the nodes. Resolution replaces each use's
-    // RefTarget (and node text span) with the full pointer's spelling, which
-    // is what makes an aliased file graph-identical to its expanded form.
+    // RefTarget with the full pointer's target (file/anchor), which is what
+    // makes an aliased file's REF layer identical to its expanded form
+    // (graph-identity); the node text keeps the written spelling, so a short
+    // alias use never trips node_length where the full target would.
     const table = extractAliases(text);
     aliasTables.set(rel, table);
     issues.push(...aliasDefinitionIssues(table, rel, aliasCfg));

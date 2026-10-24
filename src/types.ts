@@ -6,13 +6,14 @@ export interface RefTarget {
   anchor: string | null;
   line: number;
   /** Issue #57: set when this ref was WRITTEN as an alias use (`see: [1]`).
-   *  After resolution (core/alias.ts) `file`/`anchor`/`raw` hold the FULL
-   *  pointer's spelling — exactly what parseOutline would have minted had
-   *  the full target been written — so every downstream consumer (graph
-   *  counting, deep hops, orphans, back-pointers, checker output) is
-   *  identical between the aliased and expanded forms of a file. These
-   *  fields record the alias spelling for precise diagnostics: the `--fix`
-   *  anchor repair targets the DEFINITION line, not the use line. */
+   *  After resolution (core/alias.ts) `file`/`anchor` hold the full pointer's
+   *  target — exactly what parseOutline would have minted had the full
+   *  target been written — so every ref-layer consumer (graph counting, deep
+   *  hops, orphans, back-pointers, checker verdicts) is identical between
+   *  the aliased and expanded forms of a file. `raw` keeps the WRITTEN
+   *  spelling (diagnostics quote what is on the line), and these fields
+   *  record the alias spelling for precise diagnostics: the `--fix` anchor
+   *  repair targets the DEFINITION line, not the use line. */
   alias?: { name: string; defLine: number };
 }
 
@@ -139,7 +140,7 @@ export interface ReferenceRules {
    *  targets). A PARAMETER block, not a check switch: absent/empty = the
    *  documented defaults (disabled), and it never participates in the §18
    *  delete/override reconciliation. See AliasingRules. */
-  aliasing: AliasingRules;
+  aliasing?: AliasingRules | null;
 }
 
 /** Issue #57: the `references.aliasing` block. One verified definition per
