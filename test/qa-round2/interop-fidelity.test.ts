@@ -54,7 +54,7 @@ function putFile(ws: string, rel: string, content: string): void {
   writeFileSync(p, content);
 }
 
-/** Concatenation of every file under root (recursive) — overflow files included. */
+/** Concatenation of every file under root (recursive) — extracted files included. */
 function readAllUnder(root: string): string {
   const out: string[] = [];
   const walk = (d: string): void => {
@@ -115,9 +115,9 @@ describe('QA round-2 interop fidelity (QA-05 F4/F5/F9/F15/F16/F18, QA-08 E7/E9/E
     const r = runCli(['import', 'obsidian', 'fix/e9-obsidian.md', '--json'], ws);
     expect(r.exit).toBe(0); // §27: import proceeds; "Let cans check report issues after"
 
-    // §27 import rules: "Preserve hierarchy", "Extract code blocks → overflow files" — nothing
+    // §27 import rules: "Preserve hierarchy", "Extract code blocks → separate files" — nothing
     // may vanish silently. Mechanism-agnostic survival check: every non-empty input line's
-    // content must exist somewhere under cans/ (imported spec file OR overflow file).
+    // content must exist somewhere under cans/ (imported spec file OR extracted file).
     // Only the two fence-marker lines (```python / ```) are exempt: extraction legitimately
     // replaces the fence SYNTAX itself; their content is the two ZQCODE lines below.
     const all = readAllUnder(join(ws, 'cans'));

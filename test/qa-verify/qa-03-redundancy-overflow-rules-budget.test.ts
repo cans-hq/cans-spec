@@ -1,5 +1,5 @@
 /**
- * QA-03 red-test verification — Redundancy / Overflow / Rules / Token Budget.
+ * QA-03 red-test verification — Redundancy / Rules / Token Budget.
  *
  * Each test encodes the DOCUMENTED contract (docs/cans.architecture.md § + QA-03
  * finding ID) via blackbox CLI spawn. Because the implementation currently
@@ -12,12 +12,14 @@
  *   F3  (MAJOR) §26 step 3 active-task tier missing from `budget read`
  *   F4  (MAJOR) §19 `budget write <unknown>` exits 0 instead of 1
  *   F5  (MAJOR) §37 unknown `budget` subcommand silently runs as `read`
- *   F6  (MINOR) §16/§18 overflow.force_file_for is inert
  *   F7  (MINOR) §13 phrase overlap: ≥ 70% boundary + stopword normalization
  *   F8  (MINOR) §13 L3 fuzzy fires on synonym-matched pairs
  *   F9  (MINOR) §37 budget outside a workspace gives no explanation
- *   F10 (MINOR) §16 no-chaining rule (see: inside overflow target) not enforced
  *   F11 (MINOR) §18 token_budget.warn_threshold is inert
+ *
+ * Issue #56 removals: F6 (overflow.force_file_for) and F10 (§16 no-chaining)
+ * tested the overflow engine, which is REMOVED — those suites are deleted
+ * with the engine (`overflow.*` rules keys now reject as unrecognized, §18).
  */
 import { describe, test, expect, afterEach, afterAll } from '../testing.ts';
 import { join } from 'path';
@@ -113,10 +115,6 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
-
-overflow:
-  max_node_chars: 200
-  force_file_for: [code_block, table, diagram]
 `;
 
 // Documented redundancy defaults (§18) with the `enabled` key deleted — F1(b).
@@ -277,29 +275,6 @@ describe('QA-03 F4/F5 — budget exit-code & subcommand discipline (§19, §37)'
   });
 });
 
-describe('QA-03 F6 — §16/§18 overflow.force_file_for drives detection', () => {
-  test('F6: force_file_for: [] → fenced code block is NOT overflow-flagged', () => {
-    const ws = freshWs('f6-force-file-for-empty');
-    writeSpec(
-      ws,
-      '01-api.md',
-      `- API
-  - Config sample
-  \`\`\`json
-  {"k": 1}
-  \`\`\`
-`,
-    );
-    writeRules(ws, 'overflow:\n  force_file_for: []\n');
-
-    const r = runCli(['check', '--json'], ws);
-    const data = parseJson(r.out);
-    // §18 semantics: force_file_for lists which content categories are forced
-    // into files; an empty list means nothing is forced → no overflow flags.
-    const overflowIssues = data.issues.filter((i: any) => i.category === 'overflow');
-    expect(overflowIssues).toEqual([]);
-  });
-});
 
 describe('QA-03 F7 — §13 phrase-overlap metric (boundary + stopword normalization)', () => {
   test('F7a: pair sharing exactly 7/10 tokens (70% ≥ 70%) must be flagged', () => {
@@ -377,31 +352,6 @@ describe('QA-03 F8 — §13 L3 fuzzy layer must skip synonym-matched pairs', () 
   });
 });
 
-describe('QA-03 F10 — §16 no-chaining rule for overflow targets', () => {
-  test('F10: see: line inside overflow target 04-api/legacy-errors.md must be flagged', () => {
-    const ws = freshWs('f10-target-chaining');
-    copyFixture(ws, 'overflow-project');
-    // §16: "Overflow target files must NOT contain their own see: refs (no
-    // chaining)." Issue #54 narrowed the overflow-target class to
-    // UNREFERENCED subfolder .md files: the fixture's 04-api.md references
-    // 04-api/request-schema.md, so that file is now a PROMOTED first-class
-    // spec file (its see: refs are ordinary graph edges — pinned in
-    // test/issue-54-subfolder-first-class.test.ts). The §16 contract is
-    // therefore pinned here on an unreferenced overflow target.
-    writeFileSync(
-      join(ws, 'cans', '04-api', 'legacy-errors.md'),
-      '- Legacy error codes\n  - Old rules: see 04-api.md\n',
-    );
-
-    const r = runCli(['check', '--json'], ws);
-    const data = parseJson(r.out);
-    // §16: the unreferenced target containing a see: ref must be flagged.
-    const chainingIssues = data.issues.filter(
-      (i: any) => /legacy-errors/.test(i.message) && /see|chain/i.test(i.message),
-    );
-    expect(chainingIssues.length).toBeGreaterThan(0);
-  });
-});
 
 describe('QA-03 F11 — §18 token_budget.warn_threshold', () => {
   test('F11: warn_threshold 0.5 emits a warning at 92% plan usage', () => {

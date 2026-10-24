@@ -169,7 +169,7 @@ cans/
 
 Folder mode alternative: `02-authentication/index.md` instead of `02-authentication.md` — at ANY depth (issue #54: `plugins/topic/index.md` is a first-class spec file, discovered like a root file; 0.6.0 only looked one level deep). Flat wins over folder. If both exist, `cans check` flags error — for any slug, numbered or plain (round 6). The duplicate-home error class is root-level by design; a deeper flat/folder collision simply loads both, flat winning ref resolution.
 
-Subfolder content files (issue #54): any OTHER `.md` inside a subfolder (`plugins/pty.md`, `04-api/request-schema.md`) is §16 overflow-target leaf content by default. When a loaded SPEC file references one (`see: plugins/pty.md`), the check engine PROMOTES it transitively to a first-class spec file (counted in files/nodes, subject to every engine, a ref-graph node, `--file`-filterable, `--fix`-rewritable); unreferenced subfolder `.md` files stay leaf content. Refs from `_tasks/`/`_adr/` files never promote — aux pointers are transient/decisional.
+Subfolder content files (issue #54): any OTHER `.md` inside a subfolder (`plugins/pty.md`, `04-api/request-schema.md`) is plain non-spec content by default (issue #56 removed the §16 overflow-target class with the overflow engine). When a loaded SPEC file references one (`see: plugins/pty.md`), the check engine PROMOTES it transitively to a first-class spec file (counted in files/nodes, subject to every engine, a ref-graph node, `--file`-filterable, `--fix`-rewritable); unreferenced subfolder `.md` files stay leaf content. Refs from `_tasks/`/`_adr/` files never promote — aux pointers are transient/decisional.
 
 ---
 
@@ -197,8 +197,7 @@ cans-cli/
 │   │   ├── structure.ts       # node length, siblings, depth
 │   │   ├── style.ts           # sibling vs nested enforcement
 │   │   ├── redundancy.ts      # word freq, overlap, synonyms, fuzzy
-│   │   ├── overflow.ts        # code fence / table / length detection
-│   │   ├── rules.ts           # load + validate _rules.yaml
+│   │   ├── rules.ts           # load + strictly validate _rules.yaml
 │   │   ├── token-budget.ts    # estimate tokens, build reading plan
 │   │   └── fs.ts              # exists, mkdirp, glob, read/write
 │   └── converters/
@@ -218,7 +217,6 @@ cans-cli/
 │   ├── structure.test.ts
 │   ├── style.test.ts
 │   ├── redundancy.test.ts
-│   ├── overflow.test.ts
 │   ├── budget.test.ts
 │   ├── converters.test.ts
 │   ├── rules.test.ts
@@ -226,7 +224,6 @@ cans-cli/
 │   └── fixtures/
 │       ├── flat-project/
 │       ├── folder-project/
-│       ├── overflow-project/
 │       ├── broken-refs-project/
 │       ├── deep-hop-project/
 │       ├── redundancy-project/
@@ -269,7 +266,7 @@ interface BackPointer { fromFile: string; fromLine: number; toFile: string; toAn
 interface Issue {
   file: string; line: number;
   level: 'error' | 'warning';
-  category: 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow';
+  category: 'structure' | 'style' | 'refs' | 'redundancy' | 'config';
   message: string; suggestion?: string;
 }
 
@@ -409,7 +406,7 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remov
 | Ref to an on-disk non-spec file (`artifacts/final-chain.ts`, `.txt`, `.yaml`) | Valid file-level ref — and NOT a deep hop: it cannot form an A→B→C spec chain (issue #44) |
 | Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
-| Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §16 chaining no longer applies, §5 deep-hop rules do |
+| Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §5 deep-hop rules apply |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
@@ -473,25 +470,37 @@ Checks: node length (min/max chars), sibling count per parent, depth (min/max), 
 
 ---
 
-## 16. Overflow Engine
+## 16. Overflow Engine (REMOVED — issue #56)
 
-Detects content that doesn't belong in a bullet: code fences (``` blocks), tables (| ... |), nodes exceeding `max_node_chars`.
+The overflow engine is GONE (issue #56). It used to flag code fences, tables
+and over-long nodes (`overflow.max_node_chars`, `overflow.force_file_for`)
+and push their content into referenced files — but those referenced files
+were not spec nodes, so nothing capped their size: a limit that could be
+routed around with one short `see:` pointer was not a limit. An agent that
+wanted to write unbounded spec prose only had to move it one `see:` away.
 
-Overflow content should be extracted to a separate file and referenced via `see:`.
+The post-#56 model:
 
-Overflow target files must NOT contain their own `see:` refs (no chaining). Issue #54: the overflow-target class is the UNREFERENCED subfolder `.md` files — a subfolder `.md` that a spec file references is promoted to a first-class spec file instead, so the overflow engines (including this no-chaining rule) apply to it exactly as to a root file: its `see:` refs are ordinary graph edges, and fences/tables/long nodes inside it flag like any spec file's.
-
-Inline code spans (`POST /users`), short key-values, arrow syntax → fine. Not flagged.
-
-**Same-value dedup (issue #45):** `overflow.max_node_chars` and
-`structure.node_length.max` compare the SAME quantity (node text length), so
-when both are configured to the same value — the natural one-char-budget-
-everywhere setup — every over-limit node would be flagged twice (once per
-rule, double-counted in `errorCount`). The check engine therefore skips the
-`overflow.node_chars` check when the two budgets are equal:
-`structure.node_length.max` is the authoritative home for the same-value
-budget. DISTINCT values are genuinely different budgets and still both fire,
-each at its own threshold; deleting either key (§18) leaves the other intact.
+- Spec content lives in spec nodes, subject to the limits the author actually
+  configured. `structure.node_length` (§15) is the single node-text-length
+  limit — there is no second char budget, so the issue #45 same-value
+  double-report (and its dedup) is structurally impossible.
+- `overflow.*` keys in `_rules.yaml` reject as unrecognized under the strict
+  §18 validation (issue #56) — a line-numbered config error, the check
+  does not run.
+- Subfolder `.md` files keep their issue #54 semantics unchanged: one a spec
+  file references is PROMOTED to a first-class spec file (counted, fully
+  checked, its `see:` refs ordinary graph edges); an UNREFERENCED one is
+  plain non-spec content — invisible to every engine, like any non-spec
+  repo file. The old §16 no-chaining rule was retired with the engine: a
+  dead `see:` inside an unreferenced file is inert, and the fix for a file
+  you want checked is to reference it from a spec file (promotion), not to
+  extract content out of the outline.
+- The `see:` refs system itself is untouched (§4/§12): referencing an
+  artifact file (e.g. `see: artifacts/b.txt`) stays legal — it is an
+  ordinary repo file reference, exactly like referencing any other
+  non-spec material, and the refs engine only checks that the target
+  exists.
 
 ---
 
@@ -506,10 +515,9 @@ each at its own threshold; deleting either key (§18) leaves the other intact.
 4. checkStyle()
 5. checkRefs()
 6. checkRedundancy() (all 4 layers)
-7. checkOverflow()
-8. Collect all Issue[]
-9. Format output (JSON or text)
-10. Exit code
+7. Collect all Issue[]
+8. Format output (JSON or text)
+9. Exit code
 ```
 
 Each engine is pure. No side effects. Only `--fix` triggers writes (back-pointers only).
@@ -565,9 +573,6 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
-overflow:
-  max_node_chars: 200
-  force_file_for: [code_block, table, diagram]
 ```
 
 `redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
@@ -732,7 +737,7 @@ non-matched referrer is neither proposed nor rewritten; a matched referrer's
 TARGET files keep their ref-by marks untouched that run. `cans done`'s fix
 pass never sets `--yes` — it keeps today's ref-by-only behavior.
 
-**Report sections (fixed order):** Structure → Style → References → Redundancy → Overflow → Rules → Summary. A check-level configuration failure (invalid `_rules.yaml`, issue #43) renders NONE of them: the human output is the standalone `✗` diagnosis alone (§37), and `--json` carries the single config entry under `sections.config` (rule `config.invalid`, file `_rules.yaml`) plus the top-level `error` field, with a zeroed summary.
+**Report sections (fixed order):** Structure → Style → References → Redundancy → Rules → Summary (the Overflow section was removed with its engine, issue #56). A check-level configuration failure (invalid `_rules.yaml`, issue #43) renders NONE of them: the human output is the standalone `✗` diagnosis alone (§37), and `--json` carries the single config entry under `sections.config` (rule `config.invalid`, file `_rules.yaml`) plus the top-level `error` field, with a zeroed summary.
 
 **JSON result:**
 ```ts
@@ -923,7 +928,7 @@ Centered on a task file. Add its refs (1 hop). Reject deep-hop expansion. Apply 
 
 **Merge strategies:** `cans-wins` (default, only adds new nodes), `import-wins` (overwrites on conflict), `ask` (report conflicts, don't merge).
 
-**Import rules:** Preserve hierarchy. Convert bullets to `- `. Convert tasks. Strip app metadata. Preserve real identifiers. Convert `[[wiki-links]]` → `see:`. Strip YAML frontmatter. Extract code blocks → overflow files. Do NOT invent refs. Do NOT deduplicate. Let `cans check` report issues after.
+**Import rules:** Preserve hierarchy. Convert bullets to `- `. Convert tasks. Strip app metadata. Preserve real identifiers. Convert `[[wiki-links]]` → `see:`. Strip YAML frontmatter. Extract code blocks → separate extracted files (referenced via `see:`). Do NOT invent refs. Do NOT deduplicate. Let `cans check` report issues after.
 
 **Merge matching (conflict semantics):** when a target spec already exists, each imported node is matched in order: (1) exact normalized text; (2) near-match — word overlap ≥ 0.75 against any sibling under the same parent; (3) positional counterpart — overlap ≥ 0.5 on the same sibling slot; (4) diverged-sibling guard — the same concept reworded, by either signal: (a) *TBD-fill*: the existing node is unfinished (its trailing significant token is the `TBD` placeholder) and the incoming node repeats the existing node's concept head — the existing text minus the trailing TBD — verbatim as its leading words ("Sessions: TBD" → "Sessions: extended - changed externally"); or (b) *leading stem + overlap*: the first two significant words are identical ("sign up" == "sign up") — or the first word matches by prefix, one word being a ≥ 4-character prefix of the other's first word ("auth" ≈ "authentication") — AND corroboration: token-Jaccard ≥ 0.3, or at least half of the EXISTING sibling's distinct significant tokens survive in the import (shared ÷ |existing tokens| ≥ 0.5; a first-word prefix match is its own corroboration). The stem — not an overlap floor — is the discriminator: "Sign up: TBD" vs "Sign in: TBD" has Jaccard 0.50 yet is a genuinely distinct sibling (the concept heads differ), while "Sign up: DONE - changed externally" (Jaccard 0.33) and "Storage: TBD" → "Storage: postgres with PITR" (TBD fill) are the same concepts reworded. Root children are siblings too: the guard applies identically at the top level, and the merge target for a whole file falls back to the spec file whose ROOT guard-matches the imported root — so a diverged parent ("Authentication" reworded to "Auth and identity", on either side) records a conflict and its subtree merges under the matched parent, never a silently duplicated second root or forked duplicate file. A layer-2/3/4 hit with differing text is a conflict recorded in `conflicts[]` and resolved by the merge strategy — never a silent duplicate sibling appended. Logseq/Obsidian sources are normalized from their flat indent-annotated parse into a tree before the merge walk, so the sibling layers match against the real parent's children.
 
@@ -1266,30 +1271,6 @@ With `force_sibling_below: 3` → "Collapse to sibling style."
 
 With `force_nested_above: 6` → "Group under nested style."
 
-### `overflow-project/04-api.md`
-```markdown
-- API
-  - POST /users
-    - Returns 201 on success
-    - Request schema: see 04-api/request-schema.md
-    - Error handling: see 04-api/error-handling.md
-```
-
-### `overflow-project/04-api/request-schema.md`
-```markdown
-```json
-{
-  "type": "object",
-  "properties": {
-    "email": { "type": "string", "format": "email" },
-    "password": { "type": "string", "minLength": 8 },
-    "name": { "type": "string" }
-  },
-  "required": ["email", "password"]
-}
-```
-```
-
 ### `import-fixtures/dynalist-export.opml`
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1422,12 +1403,12 @@ byte-identical to the pre-#53 wire shape, so the pinned fixtures stand
 unchanged.
 
 Issue #43: the `--json` sections object gains a `config` bucket — but
-ADDITIVELY, exactly like the #53 fields above. The six fixed keys
-(`structure`, `style`, `refs`, `redundancy`, `overflow`, `other`) are pinned
-by `test/report.test.ts` and these fixtures, so `config` appears ONLY when a
-config-category issue exists (an invalid `_rules.yaml`: rule `config.invalid`,
-file `_rules.yaml`, line 0). Every run with a parseable rules file is
-byte-identical to the pre-#43 wire shape.
+ADDITIVELY, exactly like the #53 fields above. The five fixed keys
+(`structure`, `style`, `refs`, `redundancy`, `other`; `overflow` left the
+set with its engine, issue #56) are pinned by `test/report.test.ts` and
+these fixtures, so `config` appears ONLY when a config-category issue exists
+(an invalid `_rules.yaml`: rule `config.invalid`, file `_rules.yaml`, line
+0). Every run with a parseable rules file keeps the same wire shape.
 
 ### `output/status.json`
 ```json
@@ -1565,8 +1546,6 @@ References
 Redundancy
   ⚠ "authentication" × 7 nodes (threshold: 4)
   ⚠ 85% overlap: 02-auth.md:4 ↔ 04-api.md:12
-Overflow
-  ✓ no code blocks, tables, or oversized nodes
 Rules (_rules.yaml)
   ✓ node_length: 3–120 | siblings: 1–12 | depth: 1–5
 
@@ -1581,8 +1560,6 @@ REFS  ✓ 1 refs · ℹ 1 note
   ℹ 1× non-obvious slug
       02-authentication.md:3 — "Layer 1 — C authorizer" → #Layer-1-C-authorizer
       ↳ the anchor above is the exact form see: refs must use — cans slug prints it for any text
-
-OVERFLOW  ✓
 
 RULES  ✓ len 3–120 · sib 1–12 · depth 1–5
 ```
@@ -1690,7 +1667,6 @@ Never: stack traces for expected errors, "An unexpected error occurred", error c
 | structure.test.ts | ~8 | Length, depth, siblings, collapse |
 | style.test.ts | ~8 | Sibling/nested enforcement |
 | redundancy.test.ts | ~10 | All 4 layers |
-| overflow.test.ts | ~6 | Fences, tables, length |
 | budget.test.ts | ~8 | Read plan, write scope, scoring |
 | converters.test.ts | ~12 | OPML, Logseq, Obsidian roundtrip |
 | rules.test.ts | ~6 | YAML parse, defaults, merge |
@@ -1809,7 +1785,6 @@ None ship until someone asks AND justifies.
 - [ ] Back-pointers auto-update with `--fix`
 - [ ] Style enforcement works
 - [ ] Redundancy (4 layers) works
-- [ ] Overflow detection works
 - [ ] OPML/Logseq/Obsidian roundtrips pass
 - [ ] Token budget produces correct plans
 - [ ] `cans done` blocks on human gates

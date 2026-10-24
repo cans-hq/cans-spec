@@ -168,7 +168,7 @@ t('QA-12 target contract (issue #41 acceptance)', () => {
     // the 8 planted minors + 15 overlaps + 20 siblings + 2 depth-min +
     // 8 stale + 1 orphan remain.
     expect(parsed.counts.warnings).toBe(54);
-    for (const name of ['structure', 'style', 'refs', 'redundancy', 'overflow']) {
+    for (const name of ['structure', 'style', 'refs', 'redundancy']) {
       expect(Array.isArray(parsed.sections[name])).toBe(true);
     }
     for (const arr of Object.values(parsed.sections)) {

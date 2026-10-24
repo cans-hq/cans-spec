@@ -14,7 +14,6 @@ describe('defaultRules', () => {
     expect(r.style.force_nested_above).toBe(6);
     expect(r.redundancy.word_frequency_threshold).toBe(4);
     expect(r.token_budget.default_limit).toBe(4096);
-    expect(r.overflow.max_node_chars).toBe(200);
   });
 });
 
@@ -78,7 +77,6 @@ describe('loadRules', () => {
       expect(rules.references.orphan_check).toBe(false);
       expect(rules.references.back_pointers).toBe(false);
       expect(rules.redundancy.enabled).toBe(false);
-      expect(rules.overflow.max_node_chars).toBeNull();
       // parameters keep documented defaults when their section is absent
       expect(rules.token_budget.default_limit).toBe(4096);
       expect(rules.redundancy.stopwords).toEqual(defaultRules().redundancy.stopwords);
@@ -126,9 +124,6 @@ describe('loadRules', () => {
         '  default_limit: 4096',
         '  estimate_chars_per_token: 3.5',
         '  warn_threshold: 0.8',
-        'overflow:',
-        '  max_node_chars: 200',
-        '  force_file_for: [code_block, table, diagram]',
         '',
       ].join('\n');
       writeTextSync(join(tmp, '_rules.yaml'), yaml);

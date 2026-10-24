@@ -38,7 +38,6 @@ describe('issue #41 — every engine issue carries a machine-readable rule key',
   const FIXTURES = [
     'broken-refs-project',
     'redundancy-project',
-    'overflow-project',
     'flat-project',
   ];
 

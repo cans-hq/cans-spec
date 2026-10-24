@@ -187,29 +187,29 @@ describe('QA-05 interop import/export (agents/qa/QA-05-interop-import-export.md)
     expect(readAllFiles(join(ws, 'cans'))).toMatch(/token bucket/i);
   });
 
-  // ── F5 (MAJOR, §27): fenced code blocks must be EXTRACTED (overflow), never silently deleted ──
-  test('F5 (§27, §16): fenced json/yaml code blocks under bullets must be extracted to overflow files — their content must survive import', () => {
+  // ── F5 (MAJOR, §27): fenced code blocks must be EXTRACTED, never silently deleted ──
+  test('F5 (§27): fenced json/yaml code blocks under bullets must be extracted to separate files — their content must survive import', () => {
     const ws = makeWorkspace('f5-codeblock');
     const cb = [
       '- API',
       '  - Request schema',
       '    ```json',
-      '    {"rate": 100, "overflow-json-token-9f3a": true}',
+      '    {"rate": 100, "extract-json-token-9f3a": true}',
       '    ```',
       '  - Response schema',
       '    ```yaml',
-      '    overflow-yaml-token-7c1d: token-bucket',
+      '    extract-yaml-token-7c1d: token-bucket',
       '    ```',
       '',
     ].join('\n');
     putFile(ws, 'cb-obsidian.md', cb);
     const r = runCli(['import', 'obsidian', 'cb-obsidian.md'], ws);
     expect(r.exit).toBe(0);
-    // §27 import rules: "Extract code blocks → overflow files." Either way, the fenced content
-    // must exist in the workspace (overflow file, or carried by a see: ref target that exists).
+    // §27 import rules: "Extract code blocks → separate files." Either way, the fenced
+    // content must exist in the workspace (extracted file, or a see: ref target that exists).
     const all = readAllFiles(join(ws, 'cans'));
-    expect(all).toContain('overflow-json-token-9f3a');
-    expect(all).toContain('overflow-yaml-token-7c1d');
+    expect(all).toContain('extract-json-token-9f3a');
+    expect(all).toContain('extract-yaml-token-7c1d');
   });
 
   // ── F8 (BLOCKER, §27/§35): default cans-wins merge must only add NEW nodes — no corruption ──

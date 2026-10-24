@@ -40,7 +40,7 @@ bun test test/qa-verify/qa-05-interop.test.ts   # one report's suite
 |---|---|---|---|
 | `qa-01-init-lifecycle.test.ts` | QA-01 init / workspace lifecycle | 7 | 2 |
 | `qa-02-refs-structure-style.test.ts` | QA-02 refs, structure, style engines | 10 | 1 |
-| `qa-03-redundancy-overflow-rules-budget.test.ts` | QA-03 redundancy, overflow, rules, token budget | 15 | 1 |
+| `qa-03-redundancy-overflow-rules-budget.test.ts` | QA-03 redundancy, rules, token budget (F6/F10 removed with the overflow engine, issue #56) | 13 | 1 |
 | `qa-04-workflow.test.ts` | QA-04 new / done / status | 11 | 1 |
 | `qa-05-interop.test.ts` | QA-05 import / export | 13 | 1 |
 | `qa-06-cli-surface.test.ts` | QA-06 CLI surface contracts | 15 | 1 |
@@ -69,11 +69,11 @@ QA-03's metric tests), F11/F12/F13/F14/F17 (undocumented surfaces / doc bugs).
 deleted, `orphan_check` deleted, §18), F2 ×2 (malformed `_rules.yaml` →
 line-numbered error exit 1, not internal error exit 2, §18/§37), F3 (active
 task in `budget read` plan, §26), F4 (`budget write` unknown concept exit 1,
-§19), F5 (unknown subcommand errors, §37), F6 (`force_file_for` drives
-detection, §18), F7 ×2 (≥ 70% boundary + stopword-filtered overlap metric,
+§19), F5 (unknown subcommand errors, §37), F7 ×2 (≥ 70% boundary + stopword-filtered overlap metric,
 §13), F8 (fuzzy skips synonym-matched pairs, §13), F9 (budget outside
-workspace says why, §37), F10 (no-chaining: `see:` in overflow target flagged,
-§16), F11 (`token_budget.warn_threshold` emits a warning, §18).
+workspace says why, §37), F11 (`token_budget.warn_threshold` emits a warning, §18).
+*Removed by issue #56:* F6 (`force_file_for`) and F10 (§16 no-chaining)
+tested the overflow engine, which no longer exists.
 
 **QA-04** — finding 1 ×3 (flags never swallowed into `new` names/titles, §20 +
 `new task --json` no-name must error), 2 (no silent task-file overwrite, §21/§37),
@@ -85,7 +85,7 @@ error, §37), 10 (`done` updates back-pointers, §24).
 **QA-05** — F1 ×2 (failures say why + JSON error signal; no false-success
 lines, §37), F2 (imported refs carry `.md` and resolve, §3/§4), F3 (logseq
 trailing prose stays out of the ref target), F4 (obsidian callouts preserved,
-§31), F5 (code fences extracted to overflow files, §27), F8 (cans-wins never
+§31), F5 (code fences extracted to separate files, §27), F8 (cans-wins never
 appends the conflicting node — no structural corruption — and populates
 `conflicts[]`, §27/§35), F9 (`ask` reports conflicts), F10 (`--merge-strategy`
 enum validated, §37), F11 (`import --out` honored, §20), F12 (garbage OPML

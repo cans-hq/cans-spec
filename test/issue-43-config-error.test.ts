@@ -18,9 +18,9 @@
  *   - JSON wire: sections.config carries the entry, sections.refs stays
  *     empty for the config error;
  *   - ADDITIVE wire discipline (§35): a run with NO config error keeps the
- *     exact six pinned section keys (test/report.test.ts pins
+ *     exact five pinned section keys (test/report.test.ts pins
  *     Object.keys(sections) === ['structure','style','refs','redundancy',
- *     'overflow','other']) — 'config' appears ONLY when a config error
+ *     'other']) — 'config' appears ONLY when a config error
  *     exists, so every untouched run stays byte-identical;
  *   - other checkFail paths (unknown flag, no workspace, unmatched file
  *     filter) keep the current shape (category 'refs', derived
@@ -166,7 +166,7 @@ describe('issue #43 — invalid _rules.yaml is a config error, not a refs findin
     // diagnosis as a refs finding with file "" — a bogus refs section).
     expect(r.out).not.toContain('files ·');
     expect(r.out).not.toContain('REFS');
-    expect(r.out).not.toContain('OVERFLOW');
+    expect(r.out).not.toContain('REDUNDANCY');
   });
 
   test('engine unit: checkWorkspace returns the config-category issue (rule, file, exitCode 2, error field)', async () => {
@@ -196,9 +196,9 @@ describe('issue #43 — invalid _rules.yaml is a config error, not a refs findin
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
 
-    // §35 discipline: the six pinned section keys, in order, no 'config'.
+    // §35 discipline: the five pinned section keys, in order, no 'config'.
     expect(Object.keys(j.sections)).toEqual([
-      'structure', 'style', 'refs', 'redundancy', 'overflow', 'other',
+      'structure', 'style', 'refs', 'redundancy', 'other',
     ]);
     expect('config' in j.sections).toBe(false);
 
@@ -224,7 +224,6 @@ describe('issue #43 — invalid _rules.yaml is a config error, not a refs findin
           { file: '02-beta.md', line: 0, level: 'warning', rule: 'refs.orphan', detail: 'orphan: 02-beta.md has no incoming or outgoing refs', suggestion: 'link it from a related spec file, or fold it into one' },
         ],
         redundancy: [],
-        overflow: [],
         other: [],
       },
       backPointersUpdated: 0,
@@ -282,7 +281,7 @@ describe('issue #43 — report core: config section is additive, rule path and f
       sections: Record<string, Array<{ file: string; rule: string; detail: string }>>;
     };
     expect(Object.keys(withRule.sections)).toEqual([
-      'structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'other',
+      'structure', 'style', 'refs', 'redundancy', 'config', 'other',
     ]);
     expect(withRule.sections.config).toHaveLength(1);
     expect(withRule.sections.config[0]!.file).toBe('_rules.yaml');
@@ -297,10 +296,10 @@ describe('issue #43 — report core: config section is additive, rule path and f
     expect(withoutRule.sections.config![0]!.rule).toBe('config.invalid');
   });
 
-  test('checkReportJson: no config issues → the six pinned keys only (byte-stable wire)', () => {
+  test('checkReportJson: no config issues → the five pinned keys only (byte-stable wire)', () => {
     const j = checkReportJson(resultWith([])) as { sections: Record<string, unknown[]> };
     expect(Object.keys(j.sections)).toEqual([
-      'structure', 'style', 'refs', 'redundancy', 'overflow', 'other',
+      'structure', 'style', 'refs', 'redundancy', 'other',
     ]);
     expect('config' in j.sections).toBe(false);
   });

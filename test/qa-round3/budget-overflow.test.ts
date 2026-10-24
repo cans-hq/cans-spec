@@ -1,5 +1,6 @@
 /**
- * QA round-3 red tests — §26 budget + §16 overflow (findings from QA-14/QA-13, npm cans-spec@0.1.0).
+ * QA round-3 red tests — §26 budget + subfolder leaf content (findings from
+ * QA-14/QA-13, npm cans-spec@0.1.0; §16 overflow references updated by issue #56).
  *
  * Each test asserts the DOCUMENTED contract (docs/cans.architecture.md, § citations
  * inline) that the implementation currently violates, and therefore FAILS (red) as
@@ -12,16 +13,15 @@
  *                  user-correctable failure (§19 exit 1) and must be named (§37).
  *                  Actual: the unknown --change is silently ignored and a plain plan
  *                  is returned, ok:true, exit 0.
- *   R3-B2 ....... CONTROL (green at HEAD) + npm-only residual note — §16 "Overflow
- *                  target files must NOT contain their own see: refs (no chaining)"
- *                  and §12 deep-hop table: a subfolder .md carrying outgoing
- *                  `see:` refs MUST be flagged. Issue #54 splits the shapes: a
- *                  REFERENCED subfolder .md is promoted to a first-class spec
- *                  file (its see: is the documented §5 deep hop), while an
- *                  UNREFERENCED one stays an overflow target (§16 chaining
- *                  error). Both pinned — the QA-13 F3 residual (npm 0.1.0:
- *                  nothing flagged, exit 0) must never reproduce in either
- *                  shape.
+ *   R3-B2 ....... CONTROL (green at HEAD) + npm-only residual note — the
+ *                  §12 deep-hop table: a REFERENCED subfolder .md is promoted
+ *                  to a first-class spec file (issue #54) and its see: is the
+ *                  documented §5 deep hop — pinned here. The QA-13 F3 residual
+ *                  (npm 0.1.0: nothing flagged, exit 0) must never reproduce
+ *                  in that shape. Issue #56 removed the §16 overflow engine
+ *                  AND its no-chaining rule: an UNREFERENCED subfolder .md is
+ *                  now plain non-spec content (invisible to every engine),
+ *                  pinned here as well.
  *
  * Both workspaces use a FULL §18 rules file (defaults, orphan_check relaxed):
  * full-file overrides behave correctly at HEAD (QA-13), so a red here can only be
@@ -33,7 +33,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs';
 
 import { spawnCli, REPO } from '../runtime.ts';
 
-const SCRATCH = join(REPO, '.tmp', 'qa-round3', 'budget-overflow');
+const SCRATCH = join(REPO, '.tmp', 'qa-round3', 'budget-subfolder');
 
 interface Ws { root: string; cans: string }
 
@@ -110,9 +110,6 @@ const FULL_RULES = [
   '  default_limit: 4096',
   '  estimate_chars_per_token: 3.5',
   '  warn_threshold: 0.8',
-  'overflow:',
-  '  max_node_chars: 200',
-  '  force_file_for: [code_block, table, diagram]',
   '',
 ].join('\n');
 
@@ -123,7 +120,7 @@ afterEach(() => {
   }
 });
 
-describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA-13 F3)', () => {
+describe('QA round-3 red verification: §26 budget + subfolder leaf content (QA-14 F6, QA-13 F3)', () => {
   test('R3-B1 (§26/§19/§37 / QA-14 F6): budget read --change <unknown> names the missing task file and exits 1', () => {
     const ws = makeWs('r3-b1-change-unknown');
     writeFileSync(join(ws.cans, '_rules.yaml'), FULL_RULES);
@@ -153,16 +150,14 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     expect(`${r.out}\n${r.err}`).toContain('nope');
   });
 
-  test('control (green at HEAD; QA-13 F3 npm-only residual): §16 chaining fires for UNREFERENCED overflow targets; a REFERENCED subfolder .md is promoted (issue #54) and its see: is the documented §5 deep hop', () => {
+  test('control (green at HEAD; QA-13 F3 npm-only residual): a REFERENCED subfolder .md is promoted (issue #54) and its see: is the documented §5 deep hop; an UNREFERENCED one is invisible non-spec content (issue #56)', () => {
     // 04-api.md references 04-api/request-schema.md, which references
     // 03-data.md. Issue #54: pointerizing a subfolder .md promotes it to a
     // first-class spec file — its outgoing `see:` is an ordinary graph edge,
     // so under max_hops: 1 the shape is the documented §5 DEEP HOP
-    // (04-api.md → 04-api/request-schema.md → 03-data.md), never a §16
-    // chaining error. The §16 overflow-target class is now the UNREFERENCED
-    // subfolder .md files only — pinned here with a second, unreferenced
-    // target. (QA-13 F3, npm 0.1.0: nothing flagged, exit 0 — the
-    // regression guard stays: SOMETHING must always flag in both shapes.)
+    // (04-api.md → 04-api/request-schema.md → 03-data.md). (QA-13 F3,
+    // npm 0.1.0: nothing flagged, exit 0 — the regression guard stays:
+    // the promoted shape must always flag.)
     const ws = makeWs('r3-b2-overflow-chain');
     writeFileSync(join(ws.cans, '_rules.yaml'), FULL_RULES);
     writeFileSync(join(ws.cans, '04-api.md'), [
@@ -196,8 +191,10 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     expect(parsed.issues.some((i: any) => i.rule === 'refs.deep_hop' && /request-schema/.test(i.file))).toBe(true);
     expect(parsed.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
 
-    // §16 shape: an UNREFERENCED subfolder .md carrying an outgoing see: is
-    // still flagged as a chaining error (overflow target, leaf content).
+    // Issue #56 shape: an UNREFERENCED subfolder .md carrying an outgoing
+    // see: is plain non-spec content — invisible to every engine (the §16
+    // no-chaining rule was retired with the overflow engine). Adding it
+    // changes nothing about the report.
     writeFileSync(join(ws.cans, '04-api', 'legacy-notes.md'), [
       '- Legacy notes',
       '  - Old field rules: see 03-data.md',
@@ -206,6 +203,10 @@ describe('QA round-3 red verification: §26 budget + §16 overflow (QA-14 F6, QA
     const r2 = runCli(['check', '--json'], ws.root);
     const parsed2 = parseJsonOut(r2.out);
     expect(r2.exit).toBe(2);
-    expect(parsed2.issues.some((i: any) => i.rule === 'refs.chaining' && /legacy-notes/.test(i.file))).toBe(true);
+    expect(parsed2.summary.files).toBe(parsed.summary.files); // unchanged
+    expect(parsed2.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
+    expect(parsed2.issues.some((i: any) => /legacy-notes/.test(i.file))).toBe(false);
+    // the promoted shape's finding is untouched by the dead leaf
+    expect(parsed2.issues.some((i: any) => i.rule === 'refs.deep_hop' && /request-schema/.test(i.file))).toBe(true);
   });
 });

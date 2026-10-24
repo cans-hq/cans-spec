@@ -174,10 +174,6 @@ function miscScenario(): Scenario {
     [issue({ file: 'b.md', line: 4, level: 'error', category: 'refs', message: 'self-reference: b.md → b.md', suggestion: 'remove the self-reference; point at the canonical file instead' }), 'refs.self'],
     [issue({ file: 'c.md', line: 0, category: 'refs', message: 'orphan: c.md has no incoming or outgoing refs', suggestion: 'link it from a related spec file, or fold it into one' }), 'refs.orphan'],
     [issue({ file: 'd.md', line: 7, level: 'error', category: 'refs', message: 'DEEP HOP: a.md → b.md → c.md', suggestion: 'add "see: c.md" directly to a.md' }), 'refs.deep_hop'],
-    [issue({ file: 'e.md', line: 2, level: 'error', category: 'overflow', message: 'no chaining: overflow target e.md must not contain its own see: refs (found see b.md)', suggestion: 'remove the see: ref inside e.md — overflow targets are leaf content, reference them from a spec file instead' }), 'refs.chaining'],
-    [issue({ file: 'f.md', line: 1, level: 'error', category: 'overflow', message: 'code fence detected — extract to file and reference via see:' }), 'overflow.code_fence'],
-    [issue({ file: 'f.md', line: 2, level: 'error', category: 'overflow', message: 'table detected — extract to file and reference via see:' }), 'overflow.table'],
-    [issue({ file: 'f.md', line: 3, level: 'error', category: 'overflow', message: 'node exceeds max chars (150 > 120)' }), 'overflow.node_chars'],
     [issue({ file: 'g.md', line: 0, level: 'error', category: 'structure', message: 'parse error: g.md: tab indentation rejected (use 2 spaces)' }), 'parse.error'],
     [issue({ file: 'g.md', line: 5, category: 'structure', message: 'odd indentation (3 spaces) — nodes may be re-parented unexpectedly; use 2-space multiples' }), 'parse.indent'],
     [issue({ file: 'h.md', line: 0, level: 'error', category: 'structure', message: 'unreadable spec file: EACCES: permission denied, open h.md' }), 'io.unreadable'],
@@ -335,9 +331,6 @@ describe('report core (issue #41)', () => {
     expect(byRule.get('refs.anchor.no-target')!.level).toBe('warning');
     expect(byRule.get('refs.orphan')!.locations).toEqual(['c.md']);
     expect(byRule.get('refs.deep_hop')!.detail).toBe('a.md → b.md → c.md');
-    expect(byRule.get('refs.chaining')!.category).toBe('refs'); // rule prefix wins over engine category
-    expect(byRule.get('overflow.code_fence')!.category).toBe('overflow');
-    expect(byRule.get('overflow.node_chars')!.pattern).toBe('node chars >max (150/120)');
     expect(byRule.get('parse.error')!.category).toBe('parse');
     expect(byRule.get('parse.indent')!.pattern).toBe('odd indentation (3 spaces)');
     expect(byRule.get('io.unreadable')!.category).toBe('io');
@@ -420,7 +413,7 @@ describe('report core (issue #41)', () => {
     // issue #41 integration: entries are a superset of the acceptance shape
     // (level always present; suggestion only when the issue carries one).
     const sections = json['sections'] as Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>>;
-    expect(Object.keys(sections)).toEqual(['structure', 'style', 'refs', 'redundancy', 'overflow', 'other']);
+    expect(Object.keys(sections)).toEqual(['structure', 'style', 'refs', 'redundancy', 'other']);
     // one entry per raw issue, source order preserved, detail lossless
     expect(sections['refs']!.length).toBe(1);
     // issue #41 integration: entries are a strict superset of the acceptance
@@ -528,12 +521,12 @@ describe('report core (issue #41)', () => {
   test('generic fallback pattern: quoted strings + digits stripped, capped at 40', () => {
     const report = buildReport([
       issue({ file: 'a.md', line: 1, category: 'style', message: 'weird style thing happened 42 times "quoted"' }),
-      issue({ file: 'b.md', line: 2, category: 'overflow', message: `mystery ${'word '.repeat(20)}123` }),
+      issue({ file: 'b.md', line: 2, category: 'content', message: `mystery ${'word '.repeat(20)}123` }),
     ]);
-    const [styleOther, overflowOther] = report.groups;
+    const [styleOther, contentOther] = report.groups;
     expect(styleOther!.rule).toBe('style.other');
     expect(styleOther!.pattern).toBe('weird style thing happened # times');
-    expect(overflowOther!.rule).toBe('overflow.other');
-    expect(overflowOther!.pattern.length).toBe(40);
+    expect(contentOther!.rule).toBe('content.other');
+    expect(contentOther!.pattern.length).toBe(40);
   });
 });

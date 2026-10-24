@@ -148,9 +148,6 @@ const DEFAULT_RULES = [
   '  default_limit: 4096',
   '  estimate_chars_per_token: 3.5',
   '  warn_threshold: 0.8',
-  'overflow:',
-  '  max_node_chars: 200',
-  '  force_file_for: [code_block, table, diagram]',
   '',
 ].join('\n');
 
@@ -177,7 +174,7 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
   test('R3-R1a (§18 / QA-13 F1 MAJOR): partial _rules.yaml — unlisted checks stay ON and the listed override applies', () => {
     // §18: "Partial file = only listed keys override." The file lists ONLY
     // redundancy.word_frequency_threshold + references.orphan_check; structure,
-    // style, overflow must remain at defaults, and "cache" ×3 must now flag at
+    // style, must remain at defaults, and "cache" ×3 must now flag at
     // threshold 2. Actual (QA-13 F1): the partial file turns EVERY check off —
     // green report, exit 0.
     const ws = mixedWs('r3-r1a-partial', [
