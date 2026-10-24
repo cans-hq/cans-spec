@@ -25,9 +25,27 @@ const REF_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
 /** Issue #48: strip trailing prose punctuation from a captured see: token.
  *  The match itself stays verbatim in `raw` (deep-hop advice quotes the
  *  user's actual spelling, refs.ts detectDeepHops) — only the resolved
- *  file/anchor tokens are cleaned. */
+ *  file/anchor tokens are cleaned.
+ *
+ *  Issue #58 repair: the strip set includes `]`, but a trailing `]` can also
+ *  CLOSE an index bracket of a schematic anchor (`#items[0]`, `#matrix[0][1]`)
+ *  — anchor syntax, not glued prose. After the plain strip, eaten closers
+ *  are restored while the token ends with an UNTERMINATED bracket run: a
+ *  bare `#items[0]` and a parenthesized `(see x.yaml#items[0])` both mint
+ *  `items[0]`, while prose closers (`#Audit-spine)`) keep the #48 behavior
+ *  (no bracket, nothing to repair). */
 function stripRefTrailingPunct(token: string): string {
-  return token.replace(REF_TRAILING_PUNCT_RE, '');
+  const stripped = token.replace(REF_TRAILING_PUNCT_RE, '');
+  let eaten = (token.match(/\]/g) ?? []).length - (stripped.match(/\]/g) ?? []).length;
+  let out = stripped;
+  while (eaten > 0) {
+    const open = out.lastIndexOf('[');
+    if (open === -1) break; // no bracket left to repair
+    if (out.slice(open).includes(']')) break; // that bracket already closes
+    out += ']';
+    eaten--;
+  }
+  return out;
 }
 
 /** Issue #46: remove every `see:`/`see` ref span — keyword + separator +
