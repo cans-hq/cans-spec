@@ -15,9 +15,18 @@
  * summary line. Info never touches ok, exit codes, --strict or the
  * error/warning counts.
  *
+ * Issue #59 (this suite's current contract): the band is OPT-IN. Every test
+ * below pins the EMISSION semantics with hints enabled — `hints: true` in
+ * CheckArgs / `--hints` on the CLI — because that is the only mode where
+ * hint items exist at all. The default-off surface (plain check quiet,
+ * --json excludes info items, hintCount discoverability, --show refs
+ * independence, config gating) is pinned by test/issues/issue-59-hints-off
+ * .test.ts. Test b (ASCII → silence) covers the only hint behavior that is
+ * mode-independent: zero confusables → zero hints, on or off.
+ *
  * Test map:
- *   a ..... unit (checkWorkspace): em-dash node → exactly one info issue
- *          with the exact message (anchor #Layer-1-C-authorizer, label
+ *   a ..... unit (checkWorkspace, hints on): em-dash node → exactly one info
+ *          issue with the exact message (anchor #Layer-1-C-authorizer, label
  *          —(U+2014)) and the fix hint; infoCount 1; ok true; exitCode 0
  *   b ..... unit: ASCII-only workspace → zero info issues (silence)
  *   c ..... unit: warningCount is UNCHANGED by info notes (paired
@@ -29,13 +38,13 @@
  *          (issue #11 discipline)
  *   g ..... unit: invisible characters label by NAME (NBSP(U+00A0),
  *          ZWJ(U+200D)) and the anchor preserves zero-widths verbatim
- *   h ..... CLI --json: sections.refs carries level 'info' +
+ *   h ..... CLI --hints --json: sections.refs carries level 'info' +
  *          rule refs.slug.hint with the exact anchor and char label; exit 0;
  *          counts stay {errors, warnings} — no info key
- *   i ..... CLI human: ✓ summary mark UNCHANGED; REFS header gains
+ *   i ..... CLI --hints human: ✓ summary mark UNCHANGED; REFS header gains
  *          `· ℹ 1 note`; the ℹ group line + item name the anchor
- *   j ..... CLI human: the cap renders as `ℹ 6× non-obvious slug` with the
- *          `+N more (M total)` summary item
+ *   j ..... CLI --hints human: the cap renders as `ℹ 6× non-obvious slug`
+ *          with the `+N more (M total)` summary item
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
@@ -89,6 +98,9 @@ const FILTER_FILES = {
 
 // ── Unit scaffolding (checkWorkspace direct, mirrors issue41-engine.test.ts) ──
 
+// issue #59: hints are opt-in — every hint-emission assertion in this suite
+// runs with the band enabled (the flag path; config-key enablement and the
+// default-off surface live in issue-59-hints-off.test.ts).
 const BASE_OPTS: CheckArgs = {
   fix: false,
   strict: false,
@@ -96,6 +108,7 @@ const BASE_OPTS: CheckArgs = {
   noRedundancy: false,
   file: null,
   json: false,
+  hints: true,
 };
 
 // ── CLI scaffolding (mirrors test/issues/issue-53-slug-core.test.ts) ──
@@ -140,7 +153,7 @@ afterEach(() => {
 
 // ── Unit: the hint emission ──
 
-describe('issue #53 1.5: slug-safety notes (checkWorkspace unit)', () => {
+describe('issue #53 1.5: slug-safety notes (checkWorkspace unit, hints on)', () => {
   test('a: em-dash node → one info note naming the exact anchor; ok/exit untouched', async () => {
     const ws = makeWs('unit-em-dash', EM_DASH_FILES);
     const r: CheckResult = await checkWorkspace(ws.root, BASE_OPTS);
@@ -167,7 +180,7 @@ describe('issue #53 1.5: slug-safety notes (checkWorkspace unit)', () => {
     );
   });
 
-  test('b: ASCII-only workspace → zero info issues (silence)', async () => {
+  test('b: ASCII-only workspace → zero info issues (silence, on or off)', async () => {
     const ws = makeWs('unit-ascii', ASCII_FILES);
     const r = await checkWorkspace(ws.root, BASE_OPTS);
     expect(r.issues).toHaveLength(0);
@@ -260,12 +273,13 @@ describe('issue #53 1.5: slug-safety notes (checkWorkspace unit)', () => {
   });
 });
 
-// ── CLI end-to-end ──
+// ── CLI end-to-end (issue #59: --hints opts in — the band never prints by
+// default; these pin the OPT-IN surface) ──
 
-describe('issue #53 1.5: slug-safety notes (CLI blackbox)', () => {
-  test('h: check --json carries level info + refs.slug.hint; counts stay {errors, warnings}', () => {
+describe('issue #53 1.5: slug-safety notes (CLI blackbox, --hints)', () => {
+  test('h: check --hints --json carries level info + refs.slug.hint; counts stay {errors, warnings}', () => {
     const ws = makeWs('e2e-json', EM_DASH_FILES);
-    const r = runCli(['check', '--json'], ws.tmp);
+    const r = runCli(['check', '--hints', '--json'], ws.tmp);
     expect(r.exit).toBe(0); // info NEVER escalates the exit code
 
     const j = parseJsonOut(r.out);
@@ -289,9 +303,9 @@ describe('issue #53 1.5: slug-safety notes (CLI blackbox)', () => {
     expect(hints[0].suggestion).toContain('cans slug');
   });
 
-  test('i: human output shows the note without changing the ✓ summary mark', () => {
+  test('i: human output (--hints) shows the note without changing the ✓ summary mark', () => {
     const ws = makeWs('e2e-text', EM_DASH_FILES);
-    const r = runCli(['check'], ws.tmp);
+    const r = runCli(['check', '--hints'], ws.tmp);
     expect(r.exit).toBe(0);
 
     const lines = r.out.split('\n');
@@ -310,7 +324,7 @@ describe('issue #53 1.5: slug-safety notes (CLI blackbox)', () => {
 
   test('j: the cap renders as ℹ 6× non-obvious slug with the +N more summary item', () => {
     const ws = makeWs('e2e-cap', CAP_FILES);
-    const r = runCli(['check'], ws.tmp);
+    const r = runCli(['check', '--hints'], ws.tmp);
     expect(r.exit).toBe(0);
 
     expect(r.out.split('\n')[0]!.startsWith('✓ ')).toBe(true);

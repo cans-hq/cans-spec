@@ -158,6 +158,18 @@ export interface TokenBudgetRules {
   warn_threshold: number | null;
 }
 
+export interface OutputRules {
+  /** Issue #59: the slug-hint info band (refs.slug.hint — issue #53 Part
+   *  1.5) is OPT-IN. Default false: a plain `cans check` prints no hint
+   *  items, no hint group, no "ℹ N notes" count, and `--json` carries no
+   *  info items — only the refs.hintCount discoverability integer. The
+   *  `--hints` CLI flag enables the band for one run (either path enables;
+   *  there is deliberately no --no-hints because off is the default).
+   *  A DISPLAY preference, not a check: never part of the §18 delete/override
+   *  reconciliation, never affects ok/exit codes/--strict or any count. */
+  slug_hints: boolean;
+}
+
 export interface Rules {
   structure: StructureRules;
   style: StyleRules;
@@ -165,6 +177,8 @@ export interface Rules {
   references: ReferenceRules;
   redundancy: RedundancyRules;
   token_budget: TokenBudgetRules;
+  /** Issue #59: output-surface preferences (display switches, not checks). */
+  output: OutputRules;
 }
 
 // ── Command Results ──
@@ -189,7 +203,19 @@ export interface CheckResult extends CommandResult {
   files: number;
   nodes: number;
   maxDepth: number;
-  refs: { total: number; broken: number; deepHops: number };
+  refs: {
+    total: number;
+    broken: number;
+    deepHops: number;
+    /** Issue #59: the number of refs.slug.hint items the workspace holds —
+     *  the --json discoverability signal while the hint band is opt-in.
+     *  Present only when > 0 (additive wire: a hint-free corpus is
+     *  byte-identical to the pre-#59 shape). With `--hints` the value equals
+     *  the info items carried in sections; without it the items are omitted
+     *  and this integer is all that remains. Never a finding: does not
+     *  affect ok, exitCode, counts or the human output. */
+    hintCount?: number;
+  };
   backPointers: { total: number; current: number; stale: number };
   issues: Issue[];
   errorCount: number;

@@ -78,3 +78,16 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
+
+# Issue #59 — output preferences. Display switches, not checks: this section
+# never joins the delete/override reconciliation (listing it alone cannot
+# turn an engine off), and an omitted key keeps its documented default.
+output:
+  # slug_hints: the author-time slug-safety notes (refs.slug.hint, issue #53)
+  # are OPT-IN. false (the default): `cans check` prints no hint items and
+  # --json carries no info items — only the refs.hintCount integer. true: the
+  # band prints folded (fully with --show refs) and rides --json. The
+  # one-run override is `cans check --hints` (flag or config — either
+  # enables). For a single anchor, `cans slug "<node text>"` is the precise
+  # tool and needs no flag.
+  slug_hints: false

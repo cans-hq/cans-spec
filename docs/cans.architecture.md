@@ -333,8 +333,8 @@ fix (report.ts `GroupItem.suggestion`); the folded view shows the group hint
 (first member's fix), `--show refs` appends each member's did-you-mean to
 its line.
 
-### Slug-safety notes (issue #53, Part 1.5)
-`cans check` additionally emits an INFO-level note (`refs.slug.hint`) on
+### Slug-safety notes (issue #53, Part 1.5; opt-in since issue #59)
+`cans check` can additionally emit an INFO-level note (`refs.slug.hint`) on
 every real node whose text contains characters outside the slug-safe set —
 typographic dashes, NBSP, zero-width/format characters, curly quotes, any
 non-ASCII letter — because all of them produce anchors a human cannot
@@ -350,6 +350,18 @@ issue #41 compact-output budget). Info is a hint band, NOT a finding: it
 never affects `ok`, exit codes, `--strict` or the error/warning counts —
 JSON entries carry `level: "info"` while `counts` stays `{errors,
 warnings}`; human output marks them `ℹ` without changing any ✓/⚠/✗ mark.
+
+**Opt-in (issue #59):** the band is OFF by default — the notes are computed
+but emitted only when the run asks for them via the `--hints` flag or the
+`_rules.yaml` key `output.slug_hints: true` (§18; flag or config — either
+enables, and there is no `--no-hints` because off is the default). Hint
+count scales with confusable NODES, not with problems found, so a default-on
+cheatsheet taxed the cleanest corpora hardest (59.9% of a green run's
+`--json`). Default surface: no hint items, no `ℹ N notes` count, no `more →
+--show refs` pointer in text; no info items in `--json` — only the
+`refs.hintCount` integer (present when non-zero) says the hints exist.
+`--show refs` expands FINDINGS only and never implies hints. The on-demand
+path for a single anchor is `cans slug "<node text>"` — no flag needed.
 
 ### Back-pointers
 HTML comments in target file: `<!-- ref-by: 04-api.md, 05-frontend.md -->`
@@ -683,6 +695,11 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
+# issue #59 — output preferences (display switches, not checks):
+# omitted keys keep these defaults; the section never joins the
+# delete/override reconciliation.
+output:
+  slug_hints: false
 ```
 
 `redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
@@ -695,6 +712,18 @@ token_budget:
 - Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
 
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
+
+`output` (issue #59) is the output-preference section — display switches,
+not checks. Its one key today: `slug_hints` (boolean, default **false**),
+the per-workspace opt-in for the slug-hint info band (§12; the one-run
+override is `cans check --hints`, and flag or config — either enables).
+Strictly validated like every §18 key (a typo like `slug_hint`, a
+non-boolean value, or an explicit empty value is the line-numbered config
+error), but the section deliberately never participates in the
+delete/override reconciliation: it is not a check surface, so listing
+`output:` alone must never read as a curated config (which would flip every
+unlisted engine off), and an omitted key simply keeps its documented
+default — off.
 
 ---
 
@@ -717,7 +746,7 @@ Every command builds a typed `CommandResult` subtype. `emit()` in `cli.ts` handl
 
 ```
 cans init [--flat|--folders] [--bare] [--force] [--tool <name>]
-cans check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
+cans check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [--hints] [file] [--json]
 cans new adr <title>
 cans new task <name>
 cans done <name> [--allow-incomplete] [--skip-check] [--json]
@@ -735,6 +764,13 @@ anchor-repair transaction: `--yes` applies the proposed repairs, `--dry-run`
 previews every `--fix` change without writing. Both are usage errors without
 `--fix` (and mutually exclusive with each other) — a flag that silently does
 nothing is a typo hiding in plain sight.
+
+`check --hints` (issue #59) opts the run into the slug-hint info band
+(§12/§22). It is opt-in only — there is no `--no-hints` because off is the
+default; the per-workspace spelling is `output.slug_hints: true` in
+`_rules.yaml` (§18), and either path enables. `--hints` never changes a
+verdict: ok, exit codes, `--strict` and the error/warning counts are
+identical with the band on or off.
 
 ### Command contract
 - Each command is a single exported async function returning a `CommandResult` subtype.
@@ -873,7 +909,10 @@ pass never sets `--yes` — it keeps today's ref-by-only behavior.
 **JSON result:**
 ```ts
 { ok, command: 'check', exitCode, files, nodes, maxDepth,
-  refs: { total, broken, deepHops },   // broken = broken ref targets + broken anchors (round 6)
+  refs: { total, broken, deepHops, hintCount? },   // broken = broken ref targets + broken anchors (round 6);
+                                                   // hintCount (issue #59) = refs.slug.hint items the workspace
+                                                   // holds — present only when > 0, the opt-in discoverability
+                                                   // signal while the info band is off by default
   backPointers: { total, current, stale },
   issues: Issue[], errorCount, warningCount, infoCount?, backPointersUpdated,
   backPointersUpdatedFiles,
@@ -887,11 +926,17 @@ a write; with a `[file]` filter only matching files can ever appear there.
 Under `--dry-run` the same fields describe the WOULD-BE writes (`dryRun: true`
 marks the distinction; no byte changes on disk).
 
-**Info notes (issue #53 Part 1.5):** `infoCount` (optional, additive) counts
-level:'info' hints — `refs.slug.hint` slug-safety notes naming a node's exact
-canonical anchor when its text contains slug-confusable characters. In
-`--json` each hint entry carries `level: "info"` while `counts` stays
-`{errors, warnings}`; info never affects `ok`, exit codes or `--strict`.
+**Info notes (issue #53 Part 1.5; opt-in since issue #59):** `infoCount`
+(optional, additive) counts level:'info' hints present in the result —
+`refs.slug.hint` slug-safety notes naming a node's exact canonical anchor
+when its text contains slug-confusable characters. The band is OPT-IN:
+without `--hints` (or `output.slug_hints: true`, §18) the result carries NO
+info items at all — human output prints no hint group, no `ℹ N notes`
+count and no `more → --show refs` pointer, and `--json` sections carry no
+info entries; only `refs.hintCount` (above) records that the hints exist.
+With the band on, each `--json` hint entry carries `level: "info"` while
+`counts` stays `{errors, warnings}`; info never affects `ok`, exit codes or
+`--strict`. `--show refs` expands findings only — it never implies hints.
 
 ---
 
