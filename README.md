@@ -349,6 +349,7 @@ cans check                  # human-readable: one line per pattern, count prefix
 cans check --json           # machine-readable: sections → {file, line, rule, detail}
 cans check --show redundancy  # expand a folded section (structure|style|refs|
                             #   redundancy|all — comma-separated list works)
+cans check --hints          # opt in to the slug-hint info notes (off by default)
 cans check --fix            # rebuild back-pointer comments; propose anchor repairs
                             #   (--yes applies them, --dry-run previews all changes)
 cans check --strict         # warnings flip `ok` to false
@@ -366,11 +367,21 @@ diagnosis printed standalone (`✗ invalid _rules.yaml: line N: …`), and in
 `--json` a single `sections.config` entry (`rule: "config.invalid"`, `file:
 "_rules.yaml"`) plus the top-level `error` field — never filed under `refs`.
 
-Info notes (`ℹ`) are hints, not findings: a node whose title slugs
-non-obviously (`Layer 1 — C authorizer` → `#Layer-1-C-authorizer`) gets an
-info-level note naming the exact anchor (and a broken-anchor error suggests
-the corrected ref — `did you mean <file>#<slug>?`). Info never changes the
-exit code, `ok`, or the error/warning counts.
+Info notes (`ℹ`) are hints, not findings — and since issue #59 they are
+OPT-IN. A node whose title slugs non-obviously (`Layer 1 — C authorizer` →
+`#Layer-1-C-authorizer`) gets an info-level note naming the exact anchor
+only when you ask for the band: `cans check --hints` (folded, fully with
+`--show refs`, included in `--json`), or `output.slug_hints: true` in
+`cans/_rules.yaml` (flag or config — either enables; default off in both).
+Info never changes the exit code, `ok`, or the error/warning counts. A
+plain check is quiet, and a plain `--json` excludes info items entirely —
+the `refs` section carries a single `hintCount` integer (present only when
+non-zero) so agents can see how many hints exist before paying for them.
+**Breaking (0.9.0):** scripts parsing `--json` for info items now need
+`--hints`. A broken-anchor error still suggests the corrected ref —
+`did you mean <file>#<slug>?` — because that advice rides on a real
+finding. For one anchor on demand, `cans slug "<node text>"` needs no
+flag at all.
 
 ---
 

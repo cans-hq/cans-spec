@@ -519,7 +519,11 @@ const SLUG_HINT_CAP = 5;
  *  hint"): never an error or warning, so it cannot touch `ok`, exit codes,
  *  `--strict` or the error/warning counts. Real nodes only — synthetic
  *  placeholders (issue #8) carry fixed ASCII parser text, not author
- *  content, and a hint on them would be noise. */
+ *  content, and a hint on them would be noise.
+ *  Issue #59: the notes are OPT-IN — checkWorkspace emits them only under
+ *  `--hints` / output.slug_hints and otherwise keeps just their count (the
+ *  refs.hintCount discoverability signal); the items this returns are the
+ *  same either way. */
 function slugSafetyHints(nodes: OutlineNode[], file: string): Issue[] {
   const flagged: Array<{ text: string; line: number; labels: string }> = [];
   for (const n of realNodes(nodes)) {

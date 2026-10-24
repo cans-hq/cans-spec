@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "command": "check",
+  "exitCode": 0,
+  "summary": {
+    "files": 2,
+    "nodes": 8,
+    "maxDepth": 2,
+    "elapsedMs": 7
+  },
+  "refs": {
+    "total": 2,
+    "broken": 0,
+    "deepHops": 0,
+    "hintCount": 2
+  },
+  "backPointers": {
+    "total": 0,
+    "current": 0,
+    "stale": 0
+  },
+  "counts": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "sections": {
+    "structure": [],
+    "style": [],
+    "refs": [
+      {
+        "file": "00-overview.md",
+        "line": 2,
+        "level": "info",
+        "rule": "refs.slug.hint",
+        "detail": "non-obvious slug: \"Layer 1 — C authorizer\" → #Layer-1-C-authorizer (contains —(U+2014))",
+        "suggestion": "the anchor above is the exact form see: refs must use — cans slug prints it for any text"
+      },
+      {
+        "file": "02-authentication.md",
+        "line": 3,
+        "level": "info",
+        "rule": "refs.slug.hint",
+        "detail": "non-obvious slug: \"Token — hygiene\" → #Token-hygiene (contains —(U+2014))",
+        "suggestion": "the anchor above is the exact form see: refs must use — cans slug prints it for any text"
+      }
+    ],
+    "redundancy": [],
+    "other": []
+  },
+  "backPointersUpdated": 0,
+  "backPointersUpdatedFiles": [],
+  "rulesSummary": "node_length: 3–120 | siblings: 1–12 | depth: 1–5"
+}

@@ -640,7 +640,9 @@ export function estimateTokens(text: string): number {
  *  is a strict superset of the acceptance shape. Unknown engine categories
  *  land in `other`; no folding. Issue #53 Part 1.5: info-level hints carry
  *  `level: 'info'` here; `counts` stays `{errors, warnings}` (info is NOT a
- *  finding — hint totals are countable from the sections). */
+ *  finding — hint totals are countable from the sections). Issue #59: the
+ *  hints are OPT-IN, so a default check's raw issues hold none — sections
+ *  carry no info entries and `refs.hintCount` is the discoverability signal. */
 export function checkReportJson(result: CheckResultLike): unknown {
   const sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>> = {};
   // issue #43: ADDITIVE `config` section. test/report.test.ts pins
