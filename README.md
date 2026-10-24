@@ -241,6 +241,7 @@ cans budget write  what you can / can't edit for a concept
 cans import        bring in OPML / Logseq / Obsidian
 cans export        push out to OPML / Logseq / Obsidian
 cans slug          the canonical #anchor fragment for a node text or file:line
+cans alias         expand|collapse pointer aliases (see references.aliasing)
 ```
 
 Every command supports `--json` for agent consumption.
@@ -342,6 +343,61 @@ never pointers. A missing file under a present root is a broken ref
 `duplicate_home_check`, and a declared root that is not checked out is a
 warning — pointers into it are simply unverified, so CI that only clones the
 spec repo stays green.
+
+### Pointer aliasing (`references.aliasing`)
+
+When the same target is pointed at repeatedly inside one file, spell it once
+and use short footnote-style aliases. Opt-in, per file (issue #57):
+
+```yaml
+references:
+  aliasing:
+    enabled: true        # opt-in; default false
+    scope: file          # the only legal scope in v1
+    style: both          # numeric | named | both (which spellings are legal)
+    min_uses: 2          # only targets used >= N times in the file are alias-eligible
+```
+
+```text
+# cans/07-lifecycle.md — six short uses instead of six full targets
+- map_shared_region: see: [1]
+- register_veto: see: [2]
+- export_snapshot, import_snapshot: see: [3]
+- adjust_balloon: see: [4]
+- set_balloon_target: see: [4]
+- teardown_balloon: see: [4]
+
+- [1]: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+- [2]: 02-plugin-model.md#Core-context-keys
+- [3]: 01-architecture.md#VirtIO-Device-Complex
+- [4]: artifacts/code/plugin-trait.rs
+```
+
+Semantics: an alias resolves EXACTLY like the full pointer it stands for —
+file existence, anchor match, external roots, containment, duplicate-home
+and `orphan_check` all apply, and every use counts as a ref for graph, hop,
+SCC and orphan purposes (aliasing cannot hide graph edges or dodge deep-hop
+checks; `cans check` output on the aliased and expanded forms of a file is
+identical in the refs layer). A broken definition fails the run even with
+zero uses; an undefined use is a broken-ref error; an unused definition is a
+warning. Scope is the defining file only — no cross-file leakage. Definition
+lines are file metadata, never outline nodes: they never count against
+`node_length` or sibling caps, and a use site measures its WRITTEN spelling
+(`label: see: [1]`), so a long target plus a label no longer forces the
+pointer onto a bare child node. Aliasing disabled plus any alias use or
+definition present is an ERROR, never a silent pass — the fix is
+`cans alias expand`.
+
+`cans alias collapse` migrates a full-pointer corpus (repeated targets →
+definitions + short uses, deterministic first-use numbering, per the
+`_rules.yaml` config) and `cans alias expand` migrates it back. Both are
+lossless for non-pointer text, idempotent, and REFUSE — leaving files
+byte-identical, problems named — on undefined or anchored alias uses,
+duplicate/illegal definitions, style or `min_uses` conflicts, and prose
+that merely looks like an alias (bracketed text that is not alias-shaped
+keeps its see-like-prose warning). `--dry-run` previews. `cans export`
+renders alias uses as their full targets — consumers outside the workspace
+cannot see its definitions.
 
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,

@@ -46,6 +46,30 @@ references:
   #   → see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
   # Default: none (every name:// target is an undeclared-root broken ref).
   # external_roots: {}
+  # Issue #57 — per-file pointer aliasing: footnote-style short `see:` uses
+  # for repeated targets. One definition per file, at the end:
+  #   - map_shared_region: see: [1]
+  #   - register_veto: see: [1]
+  #   ...
+  #   - [1]: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+  # An alias resolves exactly like the full pointer (existence, anchors,
+  # external roots, containment, orphan_check) and every use counts as a ref.
+  # Definition lines are file metadata — never nodes, never node_length.
+  # Defaults when the block is absent/empty: disabled / file / both / 2.
+  #   enabled:  opt-in master switch — disabled + any alias use or definition
+  #             present is an ERROR (the fix is `cans alias expand`)
+  #   scope:    "file" is the only legal value in v1
+  #   style:    numeric | named | both — which alias spellings are legal
+  #   min_uses: only targets used >= N times per file (uses + full
+  #             spellings) are alias-eligible; below-threshold aliases error
+  # `cans alias collapse` migrates a full-pointer corpus to aliases;
+  # `cans alias expand` migrates it back (both idempotent, --dry-run to
+  # preview).
+  # aliasing:
+  #   enabled: false
+  #   scope: file
+  #   style: both
+  #   min_uses: 2
 
 redundancy:
   enabled: true

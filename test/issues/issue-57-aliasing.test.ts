@@ -704,6 +704,25 @@ describe('issue #57 x14 — back-pointers: an alias use earns its target\'s mark
     // and the run reports the marks it wrote
     expect(r.out).toContain('ref-by');
   });
+
+  test('`cans done` resolves the archived task\'s aliases (the extraReferrer source)', () => {
+    const ws = makeWs('x14-done');
+    write(ws, '_rules.yaml', 'references:\n  back_pointers: true\n  aliasing:\n    enabled: true\n');
+    write(ws, '02-target.md', '- Sessions\n');
+    write(ws, '00-overview.md', '- Overview: see: 02-target.md\n- Second: see: 02-target.md\n');
+    write(ws, '_tasks/fix-thing.md', [
+      '- [x] Do the thing',
+      '- Ref: see: [1]',
+      '- Ref2: see: [1]',
+      '',
+      '- [1]: 02-target.md#Sessions',
+    ].join('\n') + '\n');
+    const r = runCli(['done', 'fix-thing'], ws.root);
+    expect(r.exit).toBe(0);
+    // the task file is archived; its alias uses still earned the target's
+    // ref-by mark (the pre-archive source rides along for resolution)
+    expect(read(ws, '02-target.md')).toContain('ref-by: _tasks/fix-thing.md');
+  });
 });
 
 // ── c1–c9: strict config validation ─────────────────────────────────────────
