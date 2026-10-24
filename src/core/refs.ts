@@ -4,6 +4,10 @@ import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
 import { anchorSlug, nearSlugMatches, normalizeForAnchor } from './slug.ts';
+import {
+  parseSchematic, schematicFormatFor, resolveSchematicAnchor, schematicAddresses,
+} from './schematic.ts';
+import type { SchematicParse, SchematicFormat, SchematicValue } from './schematic.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -334,34 +338,17 @@ function checkExternalRef(
     }
   }
 
-  // Anchor resolution mirrors the on-disk artifact path (issue #49): bullet
-  // nodes + YAML mapping keys of the EXTERNAL file are the addressable
-  // vocabulary. The external repo's own see: graph is never entered — only
-  // this one file is read, and it is never loaded into the spec set.
+  // Anchor resolution mirrors the on-disk artifact path (issue #49) and —
+  // since #58 — runs the SAME schematic anchor vocabulary (JSON/YAML/TOML
+  // dot paths, items.0/items[0], escaped keys) through the same code path:
+  // checkArtifactAnchor is the one shared verdict function for both. The
+  // external repo's own see: graph is never entered — only this one file is
+  // read, and it is never loaded into the spec set.
   if (ref.anchor !== null) {
     try {
       const source = readFileSync(resolved.path, 'utf-8');
-      const yamlKeys = /\.(yaml|yml)$/i.test(resolved.path) ? extractYamlKeys(source) : [];
       const nodes = flattenNodes(parseOutline(source, ref.file));
-      const hit = nodes.some(n => anchorMatches(n.text, ref.anchor!))
-        || yamlKeys.some(k => anchorMatches(k, ref.anchor!));
-      if (!hit) {
-        if (nodes.length === 0 && yamlKeys.length === 0) {
-          issues.push({
-            file: fromFile, line: ref.line, level: 'warning', category: 'refs',
-            message: `anchor on non-outline target: ${ref.file}#${ref.anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
-            rule: 'refs.anchor.no-target', // issue #49
-            suggestion: `drop the #${ref.anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${ref.file}`,
-          });
-        } else {
-          issues.push({
-            file: fromFile, line: ref.line, level: 'error', category: 'refs',
-            message: `broken anchor: ${ref.file}#${ref.anchor} — no node matches`,
-            rule: 'refs.broken.anchor', // issue #41
-            suggestion: brokenAnchorSuggestion(ref.file, ref.anchor, nodes, yamlKeys),
-          });
-        }
-      }
+      issues.push(...checkArtifactAnchor(fromFile, ref.line, ref.file, ref.anchor!, resolved.path, source, nodes));
     } catch {
       // unreadable target: anchor verification is skipped, not fabricated
     }
@@ -442,7 +429,17 @@ function brokenRefSuggestion(root: string, target: string): string {
  *  Not a YAML parser: flow scalars and multiline block values are not deeply
  *  handled — keys only ADD addressable targets on top of parseOutline's
  *  bullet nodes, and any over-extraction can only turn a would-be error into
- *  a hit (fail-safe direction). */
+ *  a hit (fail-safe direction).
+ *
+ *  Since issue #58 the VERIFICATION path no longer uses this regex —
+ *  checkArtifactAnchor parses the file (src/core/schematic.ts) and resolves
+ *  dot paths down to leaves. extractYamlKeys remains the vocabulary of the
+ *  `--fix` anchor-repair candidate layer (src/commands/check.ts), which
+ *  proposes only FLAT names: a repair never needs the path form, because an
+ *  ambiguous flat anchor is not a repairable match there (the ranked
+ *  candidate set collapses to one text, but the rewritten anchor fails the
+ *  ambiguity check on the next run — the error itself names the full paths
+ *  to use). */
 export function extractYamlKeys(source: string): string[] {
   const keys: string[] = [];
   for (const raw of source.split(/\r?\n/)) {
@@ -465,6 +462,157 @@ export function extractYamlKeys(source: string): string[] {
     if (plain !== null) keys.push(plain[1]!.trim());
   }
   return keys;
+}
+
+// ── Issue #58: the shared schematic anchor verdict ──
+
+const SCHEMATIC_FORMAT_LABEL: Record<SchematicFormat, string> = { json: 'JSON', yaml: 'YAML', toml: 'TOML' };
+
+/** Issue #58: the anchor verdict for one artifact target — THE shared code
+ *  path for on-disk targets and `name://` external targets alike (no
+ *  per-format special cases). Callers hand in the target's source and its
+ *  bullet vocabulary (parseOutline over the same source — YAML block
+ *  sequences keep minting bullet nodes, the issue #49 additive behavior);
+ *  `source === null` marks a LOADED spec file (a .md outline, never
+ *  schematic — the bullets are then the whole vocabulary, issue #53
+ *  behavior unchanged). The file is only read/parsed here when a pointer
+ *  actually carries an anchor (contract 7: laziness — no corpus-wide
+ *  schematic parsing).
+ *
+ *  Verdict order (the issue's checker contract):
+ *   1. SCHEMATIC PARSE (json/yaml/toml by extension). A file that cannot be
+ *      parsed — malformed, or using a construct beyond the supported subset
+ *      (documented in schematic.ts) — is a `refs.anchor.parse-error` at the
+ *      pointer site: never a silent pass, a warning, or a broken-anchor
+ *      false positive (contract 5).
+ *   2. PATH RESOLUTION (resolveSchematicAnchor): a scalar leaf resolves
+ *      (contract 2); an intermediate object is a VALID ADDRESS that passes
+ *      but is never presented as leaf proof (contract 4); a flat
+ *      single-segment name matching MULTIPLE leaves is an
+ *      `refs.anchor.ambiguous` error listing the full paths and suggesting
+ *      the dot form (contract 3); a miss falls through to the bullets.
+ *   3. BULLETS (§12 anchorMatches): a hit resolves — the flat YAML-key and
+ *      sequence-item anchors of #49 keep resolving (contract 6: unique flat
+ *      anchors are unchanged).
+ *   4. MISS: a truthful `refs.broken.anchor` error (contract 1) — or, when
+ *      the target has NOTHING addressable at all (prose .md, empty
+ *      schematic), the issue #49 `refs.anchor.no-target` downgrade. */
+function checkArtifactAnchor(
+  fromFile: string,
+  line: number,
+  display: string,
+  anchor: string,
+  path: string,
+  source: string | null,
+  nodes: readonly OutlineNode[],
+): Issue[] {
+  const format = source === null ? null : schematicFormatFor(path);
+  let schematic: { root: SchematicValue; paths: string[] } | null = null;
+  if (format !== null && source !== null) {
+    const parsed: SchematicParse = parseSchematic(format, source);
+    if (!parsed.ok) {
+      return [{
+        file: fromFile, line, level: 'error', category: 'refs',
+        message: `schematic parse error: ${display}#${anchor} — ${SCHEMATIC_FORMAT_LABEL[format]} line ${parsed.line}: ${parsed.message}`,
+        rule: 'refs.anchor.parse-error', // issue #58 contract 5
+        suggestion: `fix ${display} (its ${SCHEMATIC_FORMAT_LABEL[format]} could not be parsed, so anchors cannot be verified), or drop the #${anchor} anchor (file-level refs are valid on any target)`,
+      }];
+    }
+    const res = resolveSchematicAnchor(parsed.root, anchor);
+    if (res.status === 'leaf' || res.status === 'object') return []; // resolved — contract 2 / 4
+    if (res.status === 'ambiguous') {
+      const listed = res.matches.slice(0, 3).map(p => `${display}#${p}`);
+      const more = res.matches.length > 3 ? `, … (${res.matches.length} matches)` : '';
+      return [{
+        file: fromFile, line, level: 'error', category: 'refs',
+        message: `ambiguous anchor: ${display}#${anchor} — flat name matches multiple leaves: ${res.matches.join(', ')}`,
+        rule: 'refs.anchor.ambiguous', // issue #58 contract 3
+        suggestion: `use the full path form: ${listed.join(' or ')}${more}`,
+      }];
+    }
+    // missing → the bullet vocabulary below
+    schematic = { root: parsed.root, paths: schematicAddresses(parsed.root).paths };
+  }
+  if (nodes.some(n => anchorMatches(n.text, anchor))) return [];
+  // Miss. The target having NOTHING addressable (no bullets, no schematic
+  // paths — prose .md, empty schematic) keeps the issue #49 advisory
+  // downgrade: no anchor could ever resolve there by construction. With
+  // anything addressable present, the miss is a truthful error.
+  if (nodes.length === 0 && (schematic === null || schematic.paths.length === 0)) {
+    return [{
+      file: fromFile, line, level: 'warning', category: 'refs',
+      message: `anchor on non-outline target: ${display}#${anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
+      rule: 'refs.anchor.no-target', // issue #49
+      suggestion: `drop the #${anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${display}`,
+    }];
+  }
+  return [{
+    file: fromFile, line, level: 'error', category: 'refs',
+    message: `broken anchor: ${display}#${anchor} — no node matches`,
+    rule: 'refs.broken.anchor', // issue #41
+    // Issue #53 Part 1.3: the ref follows the node — a near match proposes
+    // the corrected ref, never a rename; only a truly missing key earns
+    // add-key advice. Schematic targets suggest PATH-form fixes (#58).
+    suggestion: schematic !== null
+      ? schematicMissSuggestion(display, anchor, schematic.root, nodes)
+      : brokenAnchorSuggestion(display, anchor, nodes, []),
+  }];
+}
+
+/** Issue #58: the refs.broken.anchor suggestion for a schematic target.
+ *  The candidate pool is the file's whole addressable vocabulary, each entry
+ *  carrying the anchor spelling that would actually resolve:
+ *    - escaped dot paths, proposed verbatim (`database.host` — anchorSlug
+ *      would turn the dot into a hyphen and name a non-resolving anchor);
+ *    - the UNESCAPED spelling of a dotted path as an extra MATCH key, mapped
+ *      back to the escaped proposal — `#a.b` failing against the key `a.b`
+ *      must be taught `#a\.b`, not told "no near match";
+ *    - flat key names that resolve UNIQUELY (an ambiguous name is exactly
+ *      what the dot form exists to fix, so it is never proposed);
+ *    - the bullet texts parseOutline minted (issue #53's vocabulary).
+ *  Proposals are then made anchor-safe the §12 way — whitespace runs fold to
+ *  one hyphen, which resolves by the same normalization anchorMatches uses —
+ *  and deduped after spelling (two candidates spelling one anchor are one
+ *  suggestion, not a false ambiguity — the issue #53 rule). */
+function schematicMissSuggestion(
+  target: string,
+  anchor: string,
+  root: SchematicValue,
+  nodes: readonly OutlineNode[],
+): string {
+  const { paths, names } = schematicAddresses(root);
+  const proposalOf = new Map<string, string>(); // match text → proposal spelling
+  const add = (matchText: string, proposal: string): void => {
+    if (!proposalOf.has(matchText)) proposalOf.set(matchText, proposal);
+  };
+  for (const p of paths) {
+    add(p, p);
+    const unescaped = p.replace(/\\(.)/g, '$1');
+    if (unescaped !== p) add(unescaped, p); // teach the escape, not "no match"
+  }
+  for (const name of new Set(names)) {
+    // Only names that resolve uniquely are proposeable.
+    const r = resolveSchematicAnchor(root, name);
+    if (r.status === 'leaf' || r.status === 'object') add(name, name);
+  }
+  for (const n of nodes) {
+    if (n.synthetic !== true) add(n.text, n.text);
+  }
+  const spell = (proposal: string): string => proposal.replace(/\s+/g, '-');
+  const spelled = [...new Set(nearSlugMatches([...proposalOf.keys()], anchor)
+    .map(m => spell(proposalOf.get(m.text)!)))]
+    .filter(spelledAnchor => spelledAnchor !== '' && !spelledAnchor.includes('#') && !/\s/.test(spelledAnchor));
+  if (spelled.length === 1) {
+    return `did you mean ${target}#${spelled[0]}? — fix the ref anchor`;
+  }
+  if (spelled.length >= 2) {
+    // Top 3 by score (nearSlugMatches order), the rest folded into `…` so the
+    // line stays inside the compact-output budget.
+    const named = spelled.slice(0, 3).map(s => `${target}#${s}`).join(', ');
+    const more = spelled.length > 3 ? ', …' : '';
+    return `did you mean ${named}${more}? — fix the ref anchor`;
+  }
+  return `no near match in ${target} — add the "${anchor}" key there, or fix the anchor path`;
 }
 
 /** Issue #53 Part 1.3: the suggestion for a `refs.broken.anchor` error. The
@@ -634,63 +782,26 @@ export function checkRefs(
 
       const anchor = ref.anchor;
       if (anchor !== null) {
-        // Issue #49: an anchored ref may address bullet nodes OR — when the
-        // target is a YAML file — mapping keys. Both resolution paths flow
-        // through one coherent { nodes, yamlKeys } pair so the hit test and
-        // the zero-target downgrade below see a single addressable-target set.
-        let nodes: OutlineNode[] | null = null;
-        let yamlKeys: string[] = [];
+        // Issue #49: an anchored ref may address bullet nodes OR — since
+        // issue #58 — the parsed schematic vocabulary of a JSON/YAML/TOML
+        // target (dot paths down to leaves). One shared verdict function
+        // (checkArtifactAnchor) serves this on-disk path and the name://
+        // external path alike; a loaded spec file (key !== null) is a .md
+        // outline, never schematic, so its bullet nodes are the whole
+        // addressable set (issue #53 behavior unchanged).
         if (key !== null) {
-          nodes = flattenNodes(files.get(key)!);
+          issues.push(...checkArtifactAnchor(
+            file, ref.line, ref.file, anchor, key, null, flattenNodes(files.get(key)!),
+          ));
         } else {
           const p = resolveSpecFile(root, ref.file);
           if (p !== null) {
             try {
               const source = readFileSync(p, 'utf-8');
-              // Issue #49 (a): a .yaml/.yml target exposes its mapping keys
-              // as addressable anchors (#maintenance ↔ `maintenance:`) — YAML
-              // files hold their structure in keys, not bullets, and that is
-              // exactly what people point #anchors at.
-              if (/\.(yaml|yml)$/i.test(p)) yamlKeys = extractYamlKeys(source);
-              nodes = flattenNodes(parseOutline(source, p));
+              const nodes = flattenNodes(parseOutline(source, p));
+              issues.push(...checkArtifactAnchor(file, ref.line, ref.file, anchor, p, source, nodes));
             } catch {
-              nodes = null;
-            }
-          }
-        }
-        if (nodes !== null) {
-          // §12: exact text match, then case-insensitive fallback; the docs' own
-          // anchor convention (`#Data-protection` for node "Data protection") also
-          // matches via hyphen/space normalization. Issue #49: the SAME
-          // normalization runs over YAML mapping keys (#Data-protection matches
-          // key `data protection:`) — key matching is strictly additive; YAML
-          // block sequences keep minting bullet nodes via parseOutline.
-          const hit = nodes.some(n => anchorMatches(n.text, anchor))
-            || yamlKeys.some(k => anchorMatches(k, anchor));
-          if (!hit) {
-            if (nodes.length === 0 && yamlKeys.length === 0) {
-              // Issue #49 (b): the target has NOTHING addressable — no bullet
-              // nodes, no YAML keys (prose .md, empty yaml, any non-outline
-              // file). No anchor can ever resolve there by construction, so
-              // the refs.broken.anchor error was a guaranteed false positive;
-              // a warning states the real fix instead. With addressable
-              // targets present, the miss below stays a truthful error.
-              issues.push({
-                file, line: ref.line, level: 'warning', category: 'refs',
-                message: `anchor on non-outline target: ${ref.file}#${anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
-                rule: 'refs.anchor.no-target', // issue #49
-                suggestion: `drop the #${anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${ref.file}`,
-              });
-            } else {
-              issues.push({
-                file, line: ref.line, level: 'error', category: 'refs',
-                message: `broken anchor: ${ref.file}#${anchor} — no node matches`,
-          rule: 'refs.broken.anchor', // issue #41: machine-readable rule key
-                // Issue #53 Part 1.3: the ref follows the node — a near match
-                // proposes the corrected ref (canonical slug), never a node
-                // rename; only a truly missing node earns add-node advice.
-                suggestion: brokenAnchorSuggestion(ref.file, anchor, nodes, yamlKeys),
-              });
+              // unreadable target: anchor verification is skipped, not fabricated
             }
           }
         }

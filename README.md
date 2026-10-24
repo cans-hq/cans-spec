@@ -279,7 +279,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 |---|---|
 | **Structure** | Node length, depth, sibling count, single-child collapse, empty nodes |
 | **Style** | Sibling vs nested grouping, shared prefix detection |
-| **References** | Broken `see:`, deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are exempt — issue #44), self-refs, orphans, stale back-pointers |
+| **References** | Broken `see:`, broken anchors (incl. schematic leaf paths in JSON/YAML/TOML — issue #58), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are exempt — issue #44), self-refs, orphans, stale back-pointers |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
 
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No
@@ -304,6 +304,18 @@ Subfolder `.md` files join the same engines: a file a spec points at
 (`see: plugins/pty.md`) is promoted to a first-class spec file for the whole
 run; unreferenced ones are plain non-spec content (invisible to the
 engines, like any non-spec repo file).
+
+Anchors into schematic files are verified down to leaves (issue #58): a
+`see: artifacts/config.yaml#database.host` pointer is checked against the
+parsed key paths of the target — same for `.json` and `.toml`, one anchor
+form across all three formats. Dot paths address nested keys (`items.0` or
+`items[0]` for sequence items, `a\.b` for a key containing a dot); an
+existing leaf passes, a missing leaf is a `refs.broken.anchor` error, a flat
+name matching several leaves (`#port` under `database` and `server`) is an
+error listing the full paths, and a malformed schematic is a parse error at
+the pointer site — never a silent pass. Schematic files are parsed only when
+a pointer actually anchors into them. External `name://` targets get the
+same vocabulary through the same code path.
 
 ### Inter-repo pointers (`external_roots`)
 
