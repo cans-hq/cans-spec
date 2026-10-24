@@ -15,8 +15,13 @@
  *                  prints `off`, green report, exit 0).
  *   R3-R1b ....... QA-13 F1 — §18 "Missing file = all defaults": an EMPTY _rules.yaml
  *                  is not a configuration; defaults must apply. Actual: all checks off.
- *   R3-R1c ....... QA-13 F1 — §18: unknown keys are not "listed keys"; a file with only
- *                  `bogus_key: 42` must leave defaults in force. Actual: all checks off.
+ *   R3-R1c ....... QA-13 F1 — SUPERSEDED by issue #56's strict §18
+ *                  validation: an unknown top-level key (`bogus_key: 42`) is
+ *                  a line-numbered config error and the check does not run
+ *                  (QA-13 F1's original finding — unknown keys silently
+ *                  disabling every check — and its interim contract — unknown
+ *                  keys keeping defaults — are both gone; a typo'd key must
+ *                  never read as "no such rule").
  *   R3-R2a ....... QA-13 F2 (MAJOR) — §18 documents the inline-object syntax
  *                  (`inline objects {min: 3, max: 120}`); `synonyms: {vehicle: [car, auto]}`
  *                  must therefore parse and apply. Actual: `✗ Internal error:
@@ -201,12 +206,25 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
   });
 
-  test('R3-R1c (§18 / QA-13 F1 MAJOR): unknown top-level keys are not "listed keys" — defaults apply', () => {
+  test('R3-R1c (§18 / QA-13 F1, superseded by issue #56): an unknown top-level key is a line-numbered config error — the check does not run', () => {
+    // QA-13 F1's interim contract ("unknown keys are not listed keys —
+    // defaults apply") is superseded by issue #56: a file listing ONLY
+    // `bogus_key: 42` now rejects outright — the strict §18 validation turns
+    // an unrecognized key into a line-numbered config error so a typo can
+    // never silently mean "no such rule".
     const ws = mixedWs('r3-r1c-unknown', 'bogus_key: 42\n');
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error present)
-    expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
+    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (the check could not run)
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain('invalid _rules.yaml');
+    expect(parsed.error).toContain('unrecognized key "bogus_key"');
+    expect(parsed.error).toMatch(/line \d+/); // §18: line-numbered error
+    expect(parsed.counts.errors).toBe(1);
+    expect(parsed.issues.some((i: any) => i.category === 'config' && i.rule === 'config.invalid')).toBe(true);
+    // The engines never ran: no structure finding for the 130-char node.
+    expect(parsed.issues.some((i: any) => i.category === 'structure')).toBe(false);
+    expect(parsed.summary.files).toBe(0);
   });
 
   test('R3-R2a (§18 / QA-13 F2 MAJOR): inline-object synonyms parse and apply — no crash', () => {

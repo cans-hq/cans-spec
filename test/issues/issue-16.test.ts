@@ -51,7 +51,9 @@
  * Round 6 (QA-17, issues #15/#16 re-verification) — test map:
  *   f50-a (CLI)      estimate_chars_per_token: 0 → §19 user-correctable error
  *                    naming the key, exit 1; NEVER "Infinity tok" estimates or
- *                    unsatisfiable "raise the limit" advice.
+ *                    unsatisfiable "raise the limit" advice. (Issue #56: the
+ *                    rejection fires at LOAD — line-numbered §18 config
+ *                    error — before any planning runs.)
  *   f50-b (CLI --json) same → ok:false envelope carrying the error.
  *   f50-c (CLI)      estimate_chars_per_token: -1 → same rejection shape.
  *   f25-a (CLI --json) skipped lists EVERY file not in the plan: a task file
@@ -382,12 +384,18 @@ describe('issue #16 round 6 (QA-17 F50): estimate_chars_per_token is validated �
   // `token_budget.estimate_chars_per_token`, exit 1 — no limit can ever fix it.
 
   test('f50-a (CLI): estimate_chars_per_token: 0 → §19 error naming the key, exit 1 — never "Infinity tok"', () => {
+    // Issue #56: the out-of-domain ratio rejects at LOAD (strict §18
+    // validation, line-numbered) — budget.ts's own validation keeps the same
+    // domain as defense in depth. The §19 contract is unchanged: exit 1,
+    // diagnosis naming the key and file.
     const ws = makeWs('r6-cpt-zero', rulesCpt('0'), false);
     const r = runCli(['budget', 'read', 'sessions', '--limit', '999999999'], ws.root);
     expect(r.exit).toBe(1);
     expect(r.out).toContain('✗');
-    expect(r.out).toContain('invalid token_budget.estimate_chars_per_token "0" in _rules.yaml');
-    expect(r.out).toContain('pass a positive number');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.estimate_chars_per_token"');
+    expect(r.out).toContain('got "0"');
+    expect(r.out).toMatch(/line \d+/);
     // The defect's garbage output is gone: no Infinity estimate, no
     // unsatisfiable limit advice blaming --limit for a config problem.
     expect(r.out).not.toContain('Infinity');
@@ -402,8 +410,9 @@ describe('issue #16 round 6 (QA-17 F50): estimate_chars_per_token is validated �
     expect(r.exit).toBe(1);
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(1);
-    expect(j.error).toContain('invalid token_budget.estimate_chars_per_token "0" in _rules.yaml');
-    expect(j.error).toContain('pass a positive number');
+    expect(j.error).toContain('invalid _rules.yaml');
+    expect(j.error).toContain('"token_budget.estimate_chars_per_token"');
+    expect(j.error).toContain('got "0"');
     expect(r.out).not.toContain('Infinity');
   });
 
@@ -411,8 +420,9 @@ describe('issue #16 round 6 (QA-17 F50): estimate_chars_per_token is validated �
     const ws = makeWs('r6-cpt-neg', rulesCpt('-1'), false);
     const r = runCli(['budget', 'read', 'sessions'], ws.root);
     expect(r.exit).toBe(1);
-    expect(r.out).toContain('invalid token_budget.estimate_chars_per_token "-1" in _rules.yaml');
-    expect(r.out).toContain('pass a positive number');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.estimate_chars_per_token"');
+    expect(r.out).toContain('got "-1"');
     expect(r.out).not.toContain('Infinity');
     expect(r.out).not.toContain('Reading plan for');
   });

@@ -48,10 +48,17 @@ function splitTopLevel(s: string, sep: string): string[] {
   return parts;
 }
 
-function scalar(s: string, lineNo: number): string | number | boolean {
+function scalar(s: string, lineNo: number): string | number | boolean | null {
   const t = s.trim();
   if (t === 'true') return true;
   if (t === 'false') return false;
+  // YAML 1.1 null literals (issue #56): the explicit spelling of the §18
+  // empty/delete value — `max_hops: null` means the same as an empty
+  // `max_hops:` (or omitting the key from a template-shaped file): the check
+  // is OFF. The match is on the full raw token, so a QUOTED 'null' / "null"
+  // (quote characters included) falls through to the unwrapping below and
+  // stays the STRING "null".
+  if (t === 'null' || t === 'Null' || t === 'NULL' || t === '~') return null;
   if (NUM_RE.test(t)) return Number(t);
   if (t.length >= 2) {
     const first = t[0];
@@ -115,10 +122,20 @@ function normalizeEol(source: string): string {
   return source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-/** Minimal YAML subset parser: 2-space nested objects, inline objects/arrays,
- *  block arrays (`- item`, items may be inline arrays), scalars, comments. */
-export function parseMinimalYaml(source: string): Record<string, unknown> {
+/** Parse result carrying the line-number index issue #56's strict
+ *  validation needs: every parsed key — as a dotted path (e.g.
+ *  "token_budget.default_limit", array elements as
+ *  "redundancy.stopwords[0]") — maps to the 1-based line it was defined
+ *  on. Inline-object members map to their enclosing key's line. The VALUE
+ *  tree is exactly what parseMinimalYaml has always returned. */
+interface TrackedYaml {
+  value: Record<string, unknown>;
+  keyLines: Map<string, number>;
+}
+
+function parseYamlTracked(source: string): TrackedYaml {
   const lines: YLine[] = [];
+  const keyLines = new Map<string, number>();
   const rawLines = normalizeEol(source).split('\n');
   for (let i = 0; i < rawLines.length; i++) {
     // §18: invalid YAML = line-numbered error. YAML forbids tab indentation.
@@ -134,7 +151,19 @@ export function parseMinimalYaml(source: string): Record<string, unknown> {
 
   let pos = 0;
 
-  const parseMap = (indent: number): Record<string, unknown> => {
+  /** Record `path` (and every nested member of an inline value) at `lineNo`.
+   *  Block-form children record their own paths with their own lines while
+   *  parsing; inline values are flat, so their members share the line. */
+  const track = (path: string, value: unknown, lineNo: number): void => {
+    keyLines.set(path, lineNo);
+    if (isPlainObject(value)) {
+      for (const [k, v] of Object.entries(value)) track(`${path}.${k}`, v, lineNo);
+    } else if (Array.isArray(value)) {
+      value.forEach((v, i) => track(`${path}[${i}]`, v, lineNo));
+    }
+  };
+
+  const parseMap = (indent: number, path: string): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     while (pos < lines.length && lines[pos].indent >= indent) {
       const ln = lines[pos];
@@ -143,54 +172,71 @@ export function parseMinimalYaml(source: string): Record<string, unknown> {
       const m = ln.text.match(/^([^:\s]+):\s*(.*)$/);
       if (!m) throw new Error(`line ${ln.lineNo}: malformed line: ${ln.text}`);
       const key = m[1];
+      const childPath = path === '' ? key : `${path}.${key}`;
       const rest = m[2].trim();
       if (rest === '') {
+        keyLines.set(childPath, ln.lineNo);
         pos++;
         const next = pos < lines.length ? lines[pos] : undefined;
         if (
           next &&
           (next.indent > indent || (next.indent === indent && isItem(next.text)))
         ) {
-          out[key] = isItem(next.text) ? parseArray(next.indent) : parseMap(next.indent);
+          out[key] = isItem(next.text)
+            ? parseArray(next.indent, childPath)
+            : parseMap(next.indent, childPath);
         } else {
           out[key] = null;
         }
       } else {
         out[key] = parseInlineValue(rest, ln.lineNo);
+        track(childPath, out[key], ln.lineNo);
         pos++;
       }
     }
     return out;
   };
 
-  const parseArray = (indent: number): unknown[] => {
+  const parseArray = (indent: number, path: string): unknown[] => {
     const out: unknown[] = [];
     while (pos < lines.length && lines[pos].indent === indent && isItem(lines[pos].text)) {
       const ln = lines[pos];
       const item = ln.text === '-' ? '' : ln.text.slice(2).trim();
+      const idx = out.length;
+      const itemPath = `${path}[${idx}]`;
       if (item === '') {
+        keyLines.set(itemPath, ln.lineNo);
         pos++;
         const next = pos < lines.length ? lines[pos] : undefined;
         if (next && next.indent > indent) {
-          out.push(isItem(next.text) ? parseArray(next.indent) : parseMap(next.indent));
+          out.push(isItem(next.text) ? parseArray(next.indent, itemPath) : parseMap(next.indent, itemPath));
         } else {
           out.push(null);
         }
       } else {
         out.push(parseInlineValue(item, ln.lineNo));
+        track(itemPath, out[out.length - 1], ln.lineNo);
         pos++;
       }
     }
     return out;
   };
 
-  if (lines.length === 0) return {};
+  if (lines.length === 0) return { value: {}, keyLines };
   if (lines[0].indent !== 0) throw new Error(`line ${lines[0].lineNo}: unexpected indentation`);
-  const result = parseMap(0);
+  const result = parseMap(0, '');
   if (pos < lines.length) {
     throw new Error(`line ${lines[pos].lineNo}: unexpected content: ${lines[pos].text}`);
   }
-  return result;
+  return { value: result, keyLines };
+}
+
+/** Minimal YAML subset parser: 2-space nested objects, inline objects/arrays,
+ *  block arrays (`- item`, items may be inline arrays), scalars, comments.
+ *  (Issue #56 keeps this public surface; the strict validator uses the
+ *  line-tracking variant above.) */
+export function parseMinimalYaml(source: string): Record<string, unknown> {
+  return parseYamlTracked(source).value;
 }
 
 export function defaultRules(): Rules {
@@ -258,103 +304,372 @@ function deepMerge(base: unknown, over: unknown): unknown {
   return over === undefined ? base : over;
 }
 
-/** 1-based line number where a top-level `key:` is defined in the raw source (0 when absent). */
-function topLevelKeyLine(source: string, key: string): number {
-  const rawLines = normalizeEol(source).split('\n');
-  for (let i = 0; i < rawLines.length; i++) {
-    const m = rawLines[i].match(/^([A-Za-z0-9_-]+):/);
-    if (m !== null && m[1] === key) return i + 1;
-  }
-  return 0;
+// ── §18 strict _rules.yaml schema (issue #56) ───────────────────────────────
+//
+// ONE table describing the ENTIRE legal `_rules.yaml` surface: every
+// top-level section, every nested key, its value kind and documented domain,
+// and — per key — whether an explicit EMPTY value (`key:` with nothing under
+// it, parsed as null) is legal and what it means. Everything the strict
+// validator enforces, and everything the delete/override reconciliation
+// counts (SECTION_KEYS below), derives from this table. Adding a key (e.g.
+// issue #55's references.external_roots) is one line here.
+
+/** Value shape of one legal _rules.yaml key.
+ *
+ *  nullOk documents the §18 empty-value semantics per key — null is legal
+ *  exactly where the architecture document defines what it means:
+ *  - check keys (thresholds, budgets, ranges): null = the check is OFF
+ *    (engines skip it — never compare against null, which coerces to 0);
+ *  - style.prefer: null = no prefer-driven modulation (issue #2);
+ *  - references.mode / token_budget.enabled: null = the documented default
+ *    (the §18 empty-value convention budget.ts follows);
+ *  - redundancy.stopwords: null = no stopword filtering (issue #42).
+ *  Everywhere else an empty value is out-of-domain and rejects: boolean
+ *  switches take `false` as their off state, and parameters (synonyms,
+ *  fuzzy knobs, budget planning inputs) keep their defaults when OMITTED —
+ *  an explicit empty value is a typo, not a documented state. */
+interface KeySpec {
+  kind: 'boolean' | 'integer' | 'number' | 'enum' | 'range' | 'wordList' | 'synonymGroups' | 'docString';
+  /** integer/number: inclusive lower bound. range: bound for BOTH members. */
+  min?: number;
+  /** number: inclusive upper bound. */
+  max?: number;
+  /** min is exclusive (ratios: > 0). */
+  minExclusive?: boolean;
+  /** enum: the complete member set. */
+  members?: string[];
+  /** Is an explicit empty value (null) legal for this key? */
+  nullOk?: boolean;
 }
 
-/** Validate that the merged rules object has the expected top-level shape.
- *  Catches values like `structure: 42` or empty sections that parse without
- *  YAML syntax errors but produce type-inconsistent rules (§18: invalid config
- *  = line-numbered `_rules.yaml` error, exit 1 — never an internal crash). */
-function validateRulesShape(merged: Record<string, unknown>, source: string): void {
-  const sections: Array<[string, string[]]> = [
-    ['structure', ['node_length', 'siblings', 'depth']],
-    ['style', ['prefer', 'force_nested_above', 'force_sibling_below']],
-    ['content', ['tbd_allowed']],
-    ['references', ['mode', 'max_hops', 'orphan_check']],
-    ['redundancy', ['enabled', 'word_frequency_threshold']],
-    ['token_budget', ['enabled', 'default_limit']],
-  ];
-
-  for (const [section, requiredKeys] of sections) {
-    const val = merged[section];
-    if (val === undefined) continue; // absent = section delete-key semantics apply instead
-    const line = topLevelKeyLine(source, section);
-    const at = line > 0 ? `line ${line}` : 'line 1';
-    if (typeof val !== 'object' || val === null || Array.isArray(val)) {
-      const got = val === null ? 'empty value (nothing under the key)' : typeof val;
-      throw new Error(`${at} — "${section}" must be a mapping, got ${got}`);
-    }
-    const obj = val as Record<string, unknown>;
-    for (const key of requiredKeys) {
-      if (!(key in obj)) continue;
-      const v = obj[key];
-      if (
-        (key === 'node_length' || key === 'siblings' || key === 'depth') &&
-        (typeof v !== 'object' || v === null || Array.isArray(v))
-      ) {
-        throw new Error(`${at} — "${section}.${key}" must be a mapping like { min: 3, max: 120 }`);
-      }
-      // Issue #2: style.prefer / references.mode are validated reserved values.
-      // The merged object always carries the (valid) defaults, so an invalid
-      // value can only come from the user's _rules.yaml. `null` (an empty
-      // `prefer:` / `mode:`) is accepted and means the documented default; a
-      // non-string (e.g. `prefer: 42`) fails the same got-value convention.
-      if (section === 'style' && key === 'prefer') {
-        if (v !== null && (typeof v !== 'string' || (v !== 'sibling' && v !== 'nested'))) {
-          throw new Error(`${at} — "style.prefer" must be "sibling" or "nested", got "${String(v)}"`);
-        }
-      }
-      if (section === 'references' && key === 'mode') {
-        if (v !== null && (typeof v !== 'string' || v !== 'pointer')) {
-          throw new Error(`${at} — "references.mode" must be "pointer", got "${String(v)}"`);
-        }
-      }
-    }
-  }
-}
+const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
+  structure: {
+    // node_length: chars of node text; siblings: children per parent — both
+    // 0-based counts. depth is 1-based (a root bullet is depth 1).
+    node_length: { kind: 'range', min: 0 },
+    siblings: { kind: 'range', min: 0 },
+    depth: { kind: 'range', min: 1 },
+    single_child_collapse: { kind: 'boolean' },
+    empty_nodes: { kind: 'boolean' },
+  },
+  style: {
+    prefer: { kind: 'enum', members: ['sibling', 'nested'], nullOk: true },
+    force_nested_above: { kind: 'integer', min: 0, nullOk: true },
+    force_sibling_below: { kind: 'integer', min: 0, nullOk: true },
+    shared_prefix_detection: { kind: 'boolean' },
+  },
+  content: {
+    tbd_allowed: { kind: 'boolean' },
+    max_tbd_per_file: { kind: 'integer', min: 0, nullOk: true },
+  },
+  references: {
+    mode: { kind: 'enum', members: ['pointer'], nullOk: true },
+    back_pointers: { kind: 'boolean' },
+    max_hops: { kind: 'integer', min: 0, nullOk: true },
+    orphan_check: { kind: 'boolean' },
+    duplicate_home_check: { kind: 'boolean' },
+  },
+  redundancy: {
+    enabled: { kind: 'boolean' },
+    word_frequency_threshold: { kind: 'integer', min: 1, nullOk: true },
+    // Ratios are positive numbers with NO upper bound: a value above 1 can
+    // never fire (overlap/usage are ≤ 100%) — the historical disable
+    // spelling (e.g. the issue #3 repro's 1.1); §18 null is the documented
+    // one. 0 or below is out-of-domain: it would flag every pair / warn on
+    // every plan.
+    phrase_overlap_threshold: { kind: 'number', min: 0, minExclusive: true, nullOk: true },
+    cross_file_threshold: { kind: 'integer', min: 1, nullOk: true },
+    fuzzy: { kind: 'boolean' },
+    // Issue #47 layer-3 tuning parameters — omitted keeps the default.
+    fuzzy_max_distance: { kind: 'integer', min: 1 },
+    fuzzy_min_word_length: { kind: 'integer', min: 1 },
+    stopwords: { kind: 'wordList', nullOk: true },
+    synonyms: { kind: 'synonymGroups' },
+  },
+  token_budget: {
+    enabled: { kind: 'boolean', nullOk: true },
+    default_limit: { kind: 'integer', min: 0 },
+    estimate_chars_per_token: { kind: 'number', min: 0, minExclusive: true },
+    warn_threshold: { kind: 'number', min: 0, minExclusive: true, nullOk: true },
+  },
+  // templates/_rules.yaml ships this inert documentation section (issue #53:
+  // the anchor algorithm is fixed, not configurable — the section teaches it).
+  // Accepted so `cans init` output is strictly valid; never read by engines.
+  slug: {
+    algorithm: { kind: 'docString' },
+    collapse: { kind: 'docString' },
+    case: { kind: 'docString' },
+    example: { kind: 'docString' },
+  },
+};
 
 /** §18 default keys per section — drives the delete/override reconciliation in
- *  loadRules. Parameters (references.mode, redundancy.stopwords/synonyms,
- *  redundancy.fuzzy_max_distance/fuzzy_min_word_length (issue #47),
- *  token_budget.enabled/default_limit/estimate_chars_per_token) are listed
- *  too: they count towards a section's coverage but are never flipped OFF —
- *  omitted parameters keep their documented defaults (§18 overrides only
- *  what the file lists for them). references.mode is additionally a VALIDATED
- *  reserved parameter: validateRulesShape rejects any value other than
- *  'pointer' (or a deleted/empty null) with a line-numbered error, and
- *  style.prefer is validated the same way against 'sibling' | 'nested'. */
-const SECTION_KEYS: Record<string, string[]> = {
-  structure: ['node_length', 'siblings', 'depth', 'single_child_collapse', 'empty_nodes'],
-  style: ['prefer', 'force_nested_above', 'force_sibling_below', 'shared_prefix_detection'],
-  content: ['tbd_allowed', 'max_tbd_per_file'],
-  references: ['mode', 'back_pointers', 'max_hops', 'orphan_check', 'duplicate_home_check'],
-  redundancy: [
-    'enabled',
-    'word_frequency_threshold',
-    'phrase_overlap_threshold',
-    'cross_file_threshold',
-    'fuzzy',
-    'fuzzy_max_distance',
-    'fuzzy_min_word_length',
-    'stopwords',
-    'synonyms',
-  ],
-  token_budget: ['enabled', 'default_limit', 'estimate_chars_per_token', 'warn_threshold'],
-};
+ *  loadRules. Derived from RULES_SCHEMA (every key of every rules section;
+ *  the inert slug: documentation section is not a rules section) so the
+ *  schema stays the single source of truth. Parameters (references.mode,
+ *  redundancy.stopwords/synonyms, redundancy.fuzzy_max_distance/
+ *  fuzzy_min_word_length (issue #47), token_budget.enabled/default_limit/
+ *  estimate_chars_per_token) are listed too: they count towards a section's
+ *  coverage but are never flipped OFF — omitted parameters keep their
+ *  documented defaults (§18 overrides only what the file lists for them). */
+const SECTION_KEYS: Record<string, string[]> = Object.fromEntries(
+  Object.entries(RULES_SCHEMA)
+    .filter(([section]) => section !== 'slug')
+    .map(([section, keys]) => [section, Object.keys(keys)]),
+);
+
+/** How an offending value is named in strict-validation errors. Scalars keep
+ *  the issue #2 got-value convention (`got "banana"`, `got "42"`); structural
+ *  values name their shape; null names itself as the empty value. */
+function gotText(v: unknown): string {
+  if (v === null) return 'null (empty value)';
+  if (Array.isArray(v)) return 'a list';
+  if (typeof v === 'object') return 'a mapping';
+  return `"${String(v)}"`;
+}
+
+/** 1-based line of `path`, walking up (dropping trailing segments / [i]
+ *  indices) to the nearest tracked ancestor. Every parsed key is tracked, so
+ *  the walk only fires for synthesized sub-paths. */
+function lineOf(keyLines: Map<string, number>, path: string): number {
+  let cur = path;
+  for (;;) {
+    const hit = keyLines.get(cur);
+    if (hit !== undefined) return hit;
+    const stripped = cur.replace(/\[\d+\]$/, '');
+    if (stripped !== cur) {
+      cur = stripped;
+      continue;
+    }
+    const dot = cur.lastIndexOf('.');
+    if (dot <= 0) return 1;
+    cur = cur.slice(0, dot);
+  }
+}
+
+/** The "must be …" expectation text for integer/number specs. */
+function numericExpectation(spec: KeySpec): string {
+  const lower = spec.minExclusive
+    ? `> ${spec.min ?? 0}`
+    : spec.min !== undefined
+      ? `>= ${spec.min}`
+      : undefined;
+  const upper = spec.max !== undefined ? `<= ${spec.max}` : undefined;
+  const bounds = [lower, upper].filter((p): p is string => p !== undefined).join(' and ');
+  const kindText = spec.kind === 'integer' ? 'an integer' : 'a number';
+  return bounds === '' ? kindText : `${kindText} ${bounds}`;
+}
+
+/** Expectation text shared by the null-rejection branch and synonyms. */
+const SYNONYM_GROUPS_EXPECTATION =
+  'a list of synonym groups (like "- [flavour, flavor]" or a head: [words] mapping)';
+
+const UNRECOGNIZED_SUFFIX =
+  '(issue #56: _rules.yaml is validated strictly — §18 documents the legal keys)';
+
+/** Expectation text for a spec, used when the value is null (out-of-domain
+ *  empty) or otherwise needs the kind’s full shape description. */
+function numericOrOtherExpectation(spec: KeySpec): string {
+  if (spec.kind === 'boolean') return 'true or false';
+  if (spec.kind === 'integer' || spec.kind === 'number') return numericExpectation(spec);
+  if (spec.kind === 'enum') return (spec.members ?? []).map(m => `"${m}"`).join(' or ');
+  if (spec.kind === 'range') return 'a mapping like { min: 3, max: 120 }';
+  if (spec.kind === 'wordList') return 'a list of words';
+  if (spec.kind === 'synonymGroups') return SYNONYM_GROUPS_EXPECTATION;
+  return 'a string';
+}
+
+/** Validate one user-supplied value against its KeySpec. Throws the §18
+ *  line-numbered config error (same shape/style as the issue #2 reserved
+ *  values: `line N — "section.key" must be …, got …`). */
+function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<string, number>): void {
+  // Explicit annotation: calls to `fail` must narrow (never-returning) so the
+  // switch cases below can treat `v` by its validated type afterwards.
+  const fail: (expectation: string, at?: string, got?: unknown) => never = (
+    expectation,
+    at = path,
+    got = v,
+  ) => {
+    throw new Error(`line ${lineOf(keyLines, at)} — "${at}" must be ${expectation}, got ${gotText(got)}`);
+  };
+  if (v === null) {
+    if (spec.nullOk === true) return; // documented empty-value semantics (see KeySpec)
+    fail(numericOrOtherExpectation(spec));
+  }
+  switch (spec.kind) {
+    case 'boolean':
+      if (typeof v !== 'boolean') fail('true or false');
+      return;
+    case 'integer':
+    case 'number': {
+      if (typeof v !== 'number' || !Number.isFinite(v)) fail(numericExpectation(spec));
+      if (spec.kind === 'integer' && !Number.isInteger(v)) fail(numericExpectation(spec));
+      if (spec.min !== undefined && (spec.minExclusive ? v <= spec.min : v < spec.min)) {
+        fail(numericExpectation(spec));
+      }
+      if (spec.max !== undefined && v > spec.max) fail(numericExpectation(spec));
+      return;
+    }
+    case 'enum': {
+      const members = spec.members ?? [];
+      if (typeof v !== 'string' || !members.includes(v)) {
+        fail(members.map(m => `"${m}"`).join(' or '));
+      }
+      return;
+    }
+    case 'range': {
+      if (!isPlainObject(v)) fail('a mapping like { min: 3, max: 120 }');
+      for (const [member, mv] of Object.entries(v)) {
+        const memberPath = `${path}.${member}`;
+        if (member !== 'min' && member !== 'max') {
+          throw new Error(
+            `line ${lineOf(keyLines, memberPath)} — unrecognized key "${memberPath}" ` +
+            UNRECOGNIZED_SUFFIX,
+          );
+        }
+        if (mv === null) continue; // null member = that side of the range is OFF (§18)
+        if (typeof mv !== 'number' || !Number.isFinite(mv) || !Number.isInteger(mv) || mv < (spec.min ?? 0)) {
+          throw new Error(
+            `line ${lineOf(keyLines, memberPath)} — "${memberPath}" must be ` +
+            `an integer >= ${spec.min ?? 0}, got ${gotText(mv)}`,
+          );
+        }
+      }
+      return;
+    }
+    case 'wordList': {
+      if (!Array.isArray(v)) fail('a list of words');
+      v.forEach((entry, i) => {
+        // Issue #42: scalar entries (numbers, booleans) are legal — coerced to
+        // strings at load; only nested structures are malformed.
+        if (entry === null || typeof entry === 'object') {
+          throw new Error(
+            `line ${lineOf(keyLines, `${path}[${i}]`)} — "${path}" entries must be words, ` +
+            `got ${gotText(entry)}`,
+          );
+        }
+      });
+      return;
+    }
+    case 'synonymGroups': {
+      // Map form (§18 inline objects): { head: [words] } / { head: word }.
+      if (isPlainObject(v)) {
+        for (const [head, rest] of Object.entries(v)) {
+          const at = `${path}.${head}`;
+          if (rest === null || typeof rest === 'object') {
+            if (rest !== null && Array.isArray(rest)) {
+              rest.forEach((w, i) => {
+                if (w === null || typeof w === 'object') {
+                  throw new Error(
+                    `line ${lineOf(keyLines, `${at}[${i}]`)} — "${path}" group entries must be words, ` +
+                    `got ${gotText(w)}`,
+                  );
+                }
+              });
+              continue;
+            }
+            throw new Error(
+              `line ${lineOf(keyLines, at)} — "${at}" must be a word or a list of words, ` +
+              `got ${gotText(rest)}`,
+            );
+          }
+        }
+        return;
+      }
+      if (!Array.isArray(v)) {
+        fail(SYNONYM_GROUPS_EXPECTATION);
+      }
+      v.forEach((group, i) => {
+        const at = `${path}[${i}]`;
+        if (Array.isArray(group)) {
+          group.forEach((w, j) => {
+            if (w === null || typeof w === 'object') {
+              throw new Error(
+                `line ${lineOf(keyLines, `${at}[${j}]`)} — "${path}" group entries must be words, ` +
+                `got ${gotText(w)}`,
+              );
+            }
+          });
+        } else {
+          // A bare word (or nested map) where a group belongs — pre-#56 this
+          // reached normalizeWord and crashed/mis-normalized; reject it.
+          fail('lists of words', at, group);
+        }
+      });
+      return;
+    }
+    case 'docString':
+      if (typeof v !== 'string') fail('a string (the slug: section is documentation only)');
+      return;
+  }
+}
+
+/** Issue #56 strict validation: every top-level and nested key must be a
+ *  known §18 key (the only exception-by-design: an ABSENT or EMPTY file keeps
+ *  all defaults — an empty parse produces nothing to walk), and every
+ *  supplied value must sit inside its documented domain. Relational
+ *  invariants the engines assume (range min <= max, on the EFFECTIVE values —
+ *  user-set members override, unset members keep their defaults) are checked
+ *  too. Any violation throws the §18 line-numbered config error that
+ *  checkWorkspace/budget report as rule config.invalid, exit 2/1 — the same
+ *  treatment style.prefer and references.mode have received since issue #2. */
+function validateRulesStrict(parsed: Record<string, unknown>, keyLines: Map<string, number>): void {
+  for (const [section, value] of Object.entries(parsed)) {
+    const sectionSpec = RULES_SCHEMA[section];
+    if (sectionSpec === undefined) {
+      throw new Error(
+        `line ${lineOf(keyLines, section)} — unrecognized key "${section}" ${UNRECOGNIZED_SUFFIX}`,
+      );
+    }
+    if (!isPlainObject(value)) {
+      const got = value === null
+        ? 'empty value (nothing under the key)'
+        : Array.isArray(value)
+          ? 'a list'
+          : typeof value;
+      throw new Error(`line ${lineOf(keyLines, section)} — "${section}" must be a mapping, got ${got}`);
+    }
+    for (const [key, v] of Object.entries(value)) {
+      const spec = sectionSpec[key];
+      const path = `${section}.${key}`;
+      if (spec === undefined) {
+        throw new Error(`line ${lineOf(keyLines, path)} — unrecognized key "${path}" ${UNRECOGNIZED_SUFFIX}`);
+      }
+      validateValue(path, v, spec, keyLines);
+    }
+  }
+
+  // Relational invariant on EFFECTIVE values: a user-set min above the
+  // effective max (user-set, or the §18 default when unset) is a
+  // contradictory range — nothing could ever satisfy both sides.
+  const defaults = defaultRules();
+  for (const key of ['node_length', 'siblings', 'depth'] as const) {
+    const user = isPlainObject(parsed.structure) ? parsed.structure[key] : undefined;
+    const userRange = isPlainObject(user) ? user : {};
+    const effMin = userRange.min !== undefined ? userRange.min : defaults.structure[key].min;
+    const effMax = userRange.max !== undefined ? userRange.max : defaults.structure[key].max;
+    if (typeof effMin === 'number' && typeof effMax === 'number' && effMin > effMax) {
+      const line =
+        keyLines.get(`structure.${key}.min`) ??
+        keyLines.get(`structure.${key}.max`) ??
+        keyLines.get(`structure.${key}`) ??
+        keyLines.get('structure') ?? 1;
+      throw new Error(
+        `line ${line} — "structure.${key}" min must not exceed max (min ${effMin} > max ${effMax})`,
+      );
+    }
+  }
+}
 
 /** Load rules from `<root>/_rules.yaml`, reconciling §18's three loading
  *  clauses ("Missing file = all defaults. Partial file = only listed keys
  *  override. Delete a key = check turns off.") with the blackbox contracts of
  *  both QA rounds (QA-13 F1 vs the round-2 delete-key suite):
  *
- *  - File absent, empty, or listing only unknown keys → all defaults.
+ *  - File absent or empty → all defaults. (A file listing only unknown keys
+ *    is NO LONGER silently defaults — issue #56: an unrecognized key is a
+ *    line-numbered config error; a typo'd key name must never read as "no
+ *    such rule" while the author believes a limit is enforced.)
  *  - A file that mirrors the template shape — the `structure:` section is
  *    present, or any listed section spells out ALL of its §18 default keys —
  *    is a curated config: deletions are intentional, so an absent section AND
@@ -364,14 +679,15 @@ const SECTION_KEYS: Record<string, string[]> = {
  *    deleted only when that section spells out at least half of its default
  *    keys (otherwise the key defaults). Listed keys always apply; parameters
  *    always keep their defaults when omitted.
- *  Invalid YAML or type-inconsistent shape → Error carrying the line number. */
+ *  Invalid YAML, an unrecognized key, or a value outside its documented §18
+ *  domain → Error carrying the line number (validateRulesStrict, issue #56). */
 export function loadRules(root: string): Rules {
   const p = join(root, '_rules.yaml');
   if (!existsSync(p)) return defaultRules();
   const source = readFileSync(p, 'utf-8');
-  const parsed = parseMinimalYaml(source);
+  const { value: parsed, keyLines } = parseYamlTracked(source);
+  validateRulesStrict(parsed, keyLines);
   const merged = deepMerge(defaultRules(), parsed) as Record<string, unknown>;
-  validateRulesShape(merged, source);
 
   const rules = merged as unknown as Rules;
 
@@ -391,9 +707,9 @@ export function loadRules(root: string): Rules {
   // of `see: 10-sdk.md`) — `stopwords.includes("10")` could never match a
   // Number entry, so numeric stopwords (and numeric members of a synonym
   // group, the same token-type class of bug) were silently inert. Coerce
-  // well-formed array entries to strings at load time. Non-array shapes
-  // (empty `stopwords:` → null, scalar `stopwords: 10`) keep their current
-  // behavior: only arrays are coerced, per the issue #42 fix design.
+  // well-formed array entries to strings at load time. An empty `stopwords:`
+  // (null) keeps its documented meaning (no stopword filtering); a non-list
+  // shape now rejects up front in validateRulesStrict (issue #56).
   if (Array.isArray(rules.redundancy.stopwords)) {
     rules.redundancy.stopwords = rules.redundancy.stopwords.map(String);
   }

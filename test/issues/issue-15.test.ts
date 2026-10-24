@@ -65,8 +65,17 @@
  *   f16-d (CLI)       enabled key deleted (section intact) → planning stays
  *                     ON (§18 planning switch: delete ≠ off, parameter keeps
  *                     its default) — pin the delete-key semantics.
- *   f16-e (CLI)       enabled: "false" (string, not boolean) → §19 type error
- *                     — a truthy string must never silently keep planning ON.
+ *   f16-e (CLI)       enabled: "false" (string, not boolean) → rejected at
+ *                     LOAD (issue #56 strict §18 validation: line-numbered
+ *                     config error) — a truthy string must never silently
+ *                     keep planning ON.
+ *
+ * Issue #56 note: the f47/f16-e VALUE rejections now fire in loadRules
+ * (strict §18 validation) rather than in budget.ts's own
+ * validateTokenBudgetRules — the domains are identical (non-negative integer
+ * limit, positive ratio, boolean switch), so the §19 contract (exit 1,
+ * diagnosis naming the key and file) is unchanged; the diagnosis gains the
+ * §18 line number. budget.ts's own validation stays as defense in depth.
  */
 import { describe, test, expect, afterEach } from '../testing.ts';
 import { join } from 'path';
@@ -286,12 +295,19 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
   const VALID_REST = { estimate_chars_per_token: '3.5', warn_threshold: '0.8' };
 
   test('f47-a (CLI): default_limit: abc → §19 error naming the key and file, exit 1 — never a garbage success', () => {
+    // Issue #56: the value rejects at LOAD — the strict §18 validation throws
+    // a line-numbered config error before any planning runs (budget's own
+    // validateTokenBudgetRules keeps the same domain as defense in depth).
+    // The §19 contract is unchanged: exit 1, diagnosis names the file, the
+    // key, and the offending value.
     const ws = makeWsRules('r6-limit-abc', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
     const r = runCli(['budget', 'read', 'sessions'], ws.root);
     expect(r.exit).toBe(1);
     expect(r.out).toContain('✗');
-    expect(r.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
-    expect(r.out).toContain('pass a positive integer');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.default_limit"');
+    expect(r.out).toContain('got "abc"');
+    expect(r.out).toMatch(/line \d+/); // §18: line-numbered error (issue #56)
     // Never the defect's garbage success: no plan, no string-limit math.
     expect(r.out).not.toContain('Reading plan for');
     expect(r.out).not.toContain('/ abc tokens');
@@ -306,8 +322,10 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(1);
     expect(j.budgetLimit).not.toBe('abc');
-    expect(j.error).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
-    expect(j.error).toContain('pass a positive integer');
+    expect(j.error).toContain('invalid _rules.yaml');
+    expect(j.error).toContain('"token_budget.default_limit"');
+    expect(j.error).toContain('got "abc"');
+    expect(j.error).toMatch(/line \d+/); // §18: line-numbered error (issue #56)
     expect(r.out).not.toContain('Infinity');
   });
 
@@ -315,11 +333,13 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
     // The flag path rejects `--limit -5` with an invalid-value error; the
     // config path must behave the same way for the same value — the old
     // behavior folded -5 into "plan empty: token_budget.default_limit (-5) …".
+    // Issue #56: the rejection fires at load with a line number.
     const ws = makeWsRules('r6-limit-neg', tokenBudgetRules({ default_limit: '-5', ...VALID_REST }));
     const r = runCli(['budget', 'read', 'sessions'], ws.root);
     expect(r.exit).toBe(1);
-    expect(r.out).toContain('invalid token_budget.default_limit "-5" in _rules.yaml');
-    expect(r.out).toContain('pass a positive integer');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.default_limit"');
+    expect(r.out).toContain('got "-5"');
     expect(r.out).not.toContain('plan empty');
     expect(r.out).not.toContain('below the top-priority item');
   });
@@ -330,7 +350,9 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
     const j = parseJsonOut(r.out);
     expect(r.exit).toBe(1);
     expect(j.ok).toBe(false);
-    expect(j.error).toContain('invalid token_budget.default_limit "2.5" in _rules.yaml');
+    expect(j.error).toContain('invalid _rules.yaml');
+    expect(j.error).toContain('"token_budget.default_limit"');
+    expect(j.error).toContain('got "2.5"');
     // Flag parity control: the same value through the flag is non-integer too.
     const wsFlag = makeWs('r6-limit-frac-flag', 4096);
     const rFlag = runCli(['budget', 'read', 'sessions', '--limit', '2.5'], wsFlag.root);
@@ -346,13 +368,15 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
     expect(rFlag.out).toContain('invalid --limit value "abc"');
     expect(rFlag.out).toContain('pass a positive integer');
     expect(rFlag.out).not.toContain('Reading plan for');
-    // "abc" through the config: rejected, exit 1, names the value + fix (and
-    // the config key + file, its actual source).
+    // "abc" through the config: rejected, exit 1, names the value (and the
+    // config key + file, its actual source — issue #56: at load, with the
+    // §18 line number).
     const wsConfig = makeWsRules('r6-parity-config', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
     const rConfig = runCli(['budget', 'read', 'sessions'], wsConfig.root);
     expect(rConfig.exit).toBe(1);
-    expect(rConfig.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
-    expect(rConfig.out).toContain('pass a positive integer');
+    expect(rConfig.out).toContain('invalid _rules.yaml');
+    expect(rConfig.out).toContain('"token_budget.default_limit"');
+    expect(rConfig.out).toContain('got "abc"');
     expect(rConfig.out).not.toContain('Reading plan for');
     // Neither mode ever reports ok:true / a plan for the bogus value.
     const rConfigJson = runCli(['budget', 'read', 'sessions', '--json'], wsConfig.root);
@@ -363,10 +387,12 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
   test('f47-f (CLI): a valid --limit never launders a garbage config limit — default_limit: abc + --limit 4096 still exits 1 naming the config key', () => {
     // F47's exact hole was the SILENT pass-through of garbage config values; a
     // flag override must not become a new laundering path for the same garbage.
+    // Issue #56: the load-time rejection fires regardless of any flag.
     const ws = makeWsRules('r6-limit-abc-flagged', tokenBudgetRules({ default_limit: 'abc', ...VALID_REST }));
     const r = runCli(['budget', 'read', 'sessions', '--limit', '4096'], ws.root);
     expect(r.exit).toBe(1);
-    expect(r.out).toContain('invalid token_budget.default_limit "abc" in _rules.yaml');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.default_limit"');
     expect(r.out).not.toContain('Reading plan for');
   });
 
@@ -434,15 +460,19 @@ describe('issue #15 round 6 (QA-17 F47/F16): token_budget config values are vali
     expect(r.out).toContain('01-auth.md#Sessions ← canonical home');
   });
 
-  test('f16-e (CLI): enabled: "false" (a string, not a boolean) → §19 type error — a truthy string must never silently keep planning ON', () => {
-    // YAML would happily hand the budget engine the STRING "false"; a plain
+  test('f16-e (CLI): enabled: "false" (a string, not a boolean) → rejected at load with a line-numbered config error — a truthy string must never silently keep planning ON', () => {
+    // YAML would happily hand the engine the STRING "false"; a plain
     // `=== false` check would ignore it (dead config again, in the other
-    // direction). The switch accepts booleans only.
+    // direction). The switch accepts booleans only — and since issue #56 the
+    // strict §18 validation rejects the string at LOAD, before any command
+    // runs (budget.ts's own boolean check remains as defense in depth).
     const ws = makeWsRules('r6-enabled-string', tokenBudgetRules({ enabled: '"false"', default_limit: '4096', ...VALID_REST }));
     const r = runCli(['budget', 'read', 'sessions'], ws.root);
     expect(r.exit).toBe(1);
-    expect(r.out).toContain('invalid token_budget.enabled "false" in _rules.yaml');
-    expect(r.out).toContain('pass true or false');
+    expect(r.out).toContain('invalid _rules.yaml');
+    expect(r.out).toContain('"token_budget.enabled"');
+    expect(r.out).toContain('got "false"');
+    expect(r.out).toMatch(/line \d+/);
     expect(r.out).not.toContain('Reading plan for');
   });
 });
