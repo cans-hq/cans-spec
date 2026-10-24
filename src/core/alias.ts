@@ -113,9 +113,10 @@ export interface AliasDef {
 }
 
 /** One definition-SHAPED line, legal or not — the raw material for the
- *  config-aware issue pass. `primary` marks the first definition of a
- *  grammar-legal name (the one that resolves); duplicates and illegal names
- *  carry their own errors instead. */
+ *  config-aware issue pass. `primary` marks the first RESOLVABLE definition
+ *  of a grammar-legal name (legal name AND full-pointer target — the one
+ *  that resolves); duplicates, illegal names and alias-shaped targets carry
+ *  their own errors instead and never join the table. */
 export interface AliasLine {
   line: number;
   name: string;
@@ -124,7 +125,9 @@ export interface AliasLine {
   nameLegal: boolean;
   /** False when the target is itself alias-shaped (`- [1]: [2]`) —
    *  definitions must hold the FULL pointer, never another alias: one level
-   *  of indirection, no chains, no cycles. */
+   *  of indirection, no chains, no cycles. A non-legal target never
+   *  resolves: its uses report as undefined beside the definition's own
+   *  bad-target error. */
   targetLegal: boolean;
   primary: boolean;
 }
@@ -159,7 +162,7 @@ export function extractAliases(source: string): AliasTable {
     if (m === null) continue;
     const nameLegal = legalAliasName(m.name);
     const targetLegal = !m.target.startsWith('[');
-    const primary = nameLegal && !defs.has(m.name);
+    const primary = nameLegal && targetLegal && !defs.has(m.name);
     out.push({
       line: i + 1,
       name: m.name,
