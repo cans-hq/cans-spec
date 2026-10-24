@@ -560,15 +560,20 @@ function checkArtifactAnchor(
 }
 
 /** Issue #58: the refs.broken.anchor suggestion for a schematic target.
- *  The candidate pool is the file's whole addressable vocabulary — escaped
- *  dot paths, flat key names that resolve UNIQUELY (an ambiguous name is
- *  exactly what the dot form exists to fix, so it is never proposed), and
- *  the bullet texts parseOutline minted (issue #53's vocabulary). Spelling:
- *  paths and safe names are proposed VERBATIM (anchorSlug would turn
- *  `database.host` into `database-host`, which does not resolve); bullet
- *  texts get the canonical slug. Proposals are deduped after spelling —
- *  two candidates that spell the same anchor are one suggestion, not a
- *  false ambiguity (the issue #53 rule). */
+ *  The candidate pool is the file's whole addressable vocabulary, each entry
+ *  carrying the anchor spelling that would actually resolve:
+ *    - escaped dot paths, proposed verbatim (`database.host` — anchorSlug
+ *      would turn the dot into a hyphen and name a non-resolving anchor);
+ *    - the UNESCAPED spelling of a dotted path as an extra MATCH key, mapped
+ *      back to the escaped proposal — `#a.b` failing against the key `a.b`
+ *      must be taught `#a\.b`, not told "no near match";
+ *    - flat key names that resolve UNIQUELY (an ambiguous name is exactly
+ *      what the dot form exists to fix, so it is never proposed);
+ *    - the bullet texts parseOutline minted (issue #53's vocabulary).
+ *  Proposals are then made anchor-safe the §12 way — whitespace runs fold to
+ *  one hyphen, which resolves by the same normalization anchorMatches uses —
+ *  and deduped after spelling (two candidates spelling one anchor are one
+ *  suggestion, not a false ambiguity — the issue #53 rule). */
 function schematicMissSuggestion(
   target: string,
   anchor: string,
@@ -576,18 +581,27 @@ function schematicMissSuggestion(
   nodes: readonly OutlineNode[],
 ): string {
   const { paths, names } = schematicAddresses(root);
-  const pathSet = new Set(paths);
-  const safeNames = new Set<string>();
-  for (const name of new Set(names)) {
-    const r = resolveSchematicAnchor(root, name);
-    if (r.status === 'leaf' || r.status === 'object') safeNames.add(name);
+  const proposalOf = new Map<string, string>(); // match text → proposal spelling
+  const add = (matchText: string, proposal: string): void => {
+    if (!proposalOf.has(matchText)) proposalOf.set(matchText, proposal);
+  };
+  for (const p of paths) {
+    add(p, p);
+    const unescaped = p.replace(/\\(.)/g, '$1');
+    if (unescaped !== p) add(unescaped, p); // teach the escape, not "no match"
   }
-  const texts = nodes.filter(n => n.synthetic !== true).map(n => n.text);
-  const pool = [...new Set([...paths, ...safeNames, ...texts])];
-  const spell = (text: string): string =>
-    pathSet.has(text) || safeNames.has(text) ? text : anchorSlug(text);
-  const spelled = [...new Set(nearSlugMatches(pool, anchor).map(m => spell(m.text)))]
-    .filter(spelledAnchor => spelledAnchor !== '');
+  for (const name of new Set(names)) {
+    // Only names that resolve uniquely are proposeable.
+    const r = resolveSchematicAnchor(root, name);
+    if (r.status === 'leaf' || r.status === 'object') add(name, name);
+  }
+  for (const n of nodes) {
+    if (n.synthetic !== true) add(n.text, n.text);
+  }
+  const spell = (proposal: string): string => proposal.replace(/\s+/g, '-');
+  const spelled = [...new Set(nearSlugMatches([...proposalOf.keys()], anchor)
+    .map(m => spell(proposalOf.get(m.text)!)))]
+    .filter(spelledAnchor => spelledAnchor !== '' && !spelledAnchor.includes('#') && !/\s/.test(spelledAnchor));
   if (spelled.length === 1) {
     return `did you mean ${target}#${spelled[0]}? — fix the ref anchor`;
   }
