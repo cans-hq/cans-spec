@@ -269,6 +269,38 @@ function topLevelKeyLine(source: string, key: string): number {
   return 0;
 }
 
+/** Issue #55: 1-based line number of one `references.external_roots.<name>:`
+ *  entry (0 when the block/entry cannot be located). Walks the raw source the
+ *  same 2-space-indent way parseMinimalYaml does: find `references:` at indent
+ *  0, then `external_roots:` nested under it, then the `name:` entry at one
+ *  deeper indent. Falls back to the `external_roots:` line itself (inline
+ *  object form) — the error still names a line inside the author's file. */
+function externalRootEntryLine(source: string, name: string): number {
+  const rawLines = normalizeEol(source).split('\n');
+  let refsLine = -1;
+  for (let i = 0; i < rawLines.length; i++) {
+    if (/^references:\s*(#.*)?$/.test(rawLines[i]!)) {
+      refsLine = i;
+      break;
+    }
+  }
+  if (refsLine === -1) return 0;
+  for (let i = refsLine + 1; i < rawLines.length; i++) {
+    const line = rawLines[i]!;
+    if (/^\S/.test(line)) break; // left the references: block
+    const m = line.match(/^(\s+)external_roots:\s*(#.*)?$/);
+    if (m === null) continue;
+    const entryPrefix = `${m[1]!}  `; // one indent level (2 spaces) deeper
+    for (let j = i + 1; j < rawLines.length; j++) {
+      const l = rawLines[j]!;
+      if (/^\S/.test(l)) break;
+      if (l.startsWith(entryPrefix + name + ':')) return j + 1;
+    }
+    return i + 1; // inline object form (`external_roots: {a: ../a}`) — no block entry lines
+  }
+  return 0;
+}
+
 /** Validate that the merged rules object has the expected top-level shape.
  *  Catches values like `structure: 42` or empty sections that parse without
  *  YAML syntax errors but produce type-inconsistent rules (§18: invalid config
@@ -317,6 +349,36 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
         if (v !== null && (typeof v !== 'string' || v !== 'pointer')) {
           throw new Error(`${at} — "references.mode" must be "pointer", got "${String(v)}"`);
         }
+      }
+    }
+  }
+
+  // Issue #55: references.external_roots — a PARAMETER (§18), not a check
+  // switch, so it is deliberately NOT part of SECTION_KEYS (adding it there
+  // would retroactively change what "a complete references section" means for
+  // the delete/override reconciliation in loadRules). Entries are validated
+  // with the same line-numbered convention as every other §18 key.
+  const refsSection = merged.references as Record<string, unknown> | undefined;
+  const ext = refsSection?.external_roots;
+  if (ext !== undefined && ext !== null) {
+    if (!isPlainObject(ext)) {
+      const line = topLevelKeyLine(source, 'references');
+      const at = line > 0 ? `line ${line}` : 'line 1';
+      throw new Error(
+        `${at} — "references.external_roots" must be a mapping of root names to paths, got ${typeof ext}`,
+      );
+    }
+    for (const [name, value] of Object.entries(ext)) {
+      const entryLine = externalRootEntryLine(source, name);
+      const at = entryLine > 0 ? `line ${entryLine}` : 'line 1';
+      if (!/^[a-z][a-z0-9_-]*$/.test(name)) {
+        throw new Error(
+          `${at} — invalid external root name "${name}" — must match ^[a-z][a-z0-9_-]*$ (lowercase, no slashes, no dots)`,
+        );
+      }
+      if (typeof value !== 'string' || value.trim() === '') {
+        const got = value === null ? 'empty value (nothing under the key)' : typeof value;
+        throw new Error(`${at} — external root "${name}" must be a non-empty path string, got ${got}`);
       }
     }
   }

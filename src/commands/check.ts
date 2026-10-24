@@ -828,7 +828,16 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
-  issues.push(...checkRefs(allFiles, graph, root));
+  issues.push(...checkRefs(allFiles, graph, root, {
+    // Issue #55: inter-repo pointers — the §18 references.external_roots map
+    // (empty when undeclared: every name:// target is then an undeclared-root
+    // broken ref), plus the two switches that gate the external verifications
+    // (orphan_check: missing file under a present root; duplicate_home_check:
+    // the same sub-path existing in another root).
+    externalRoots: rules.references.external_roots ?? {},
+    orphanCheck: rules.references.orphan_check,
+    duplicateHomeCheck: rules.references.duplicate_home_check,
+  }));
   issues.push(...deepHops);
   if (rules.references.orphan_check) {
     issues.push(...detectOrphans(specFiles, graph));

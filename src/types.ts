@@ -113,6 +113,18 @@ export interface ReferenceRules {
   max_hops: number | null;
   orphan_check: boolean;
   duplicate_home_check: boolean;
+  /** Issue #55: inter-repo pointer roots — root name → path, both author-
+   *  declared in `cans/_rules.yaml`. The path resolves from the PROJECT root
+   *  (the parent of the `cans/` workspace), so `"../kelir-cloud/cans"` names a
+   *  sibling checkout. A `see: name://sub/path` target resolves `sub/path`
+   *  under that root as an artifact-style TERMINAL target: no promotion into
+   *  the spec graph, no chaining, no back-pointer requirement, never a deep
+   *  hop (§12). Optional parameter (§18): absent/empty = no external roots,
+   *  and every `name://` target is an `undeclared external root` broken ref.
+   *  Root names match ^[a-z][a-z0-9_-]*$; values are non-empty strings
+   *  (malformed entries are line-numbered config errors, like every §18 key).
+   *  `http://` and `https://` targets are URLs, never root pointers. */
+  external_roots?: Record<string, string>;
 }
 
 export interface RedundancyRules {

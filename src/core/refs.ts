@@ -1,5 +1,5 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, realpathSync } from 'fs';
+import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
@@ -94,6 +94,264 @@ export function looksLikeSpecRef(target: string, hasAnchor: boolean): boolean {
   if (target.includes('/')) return true;            // path-like
   if (/^\d/.test(target)) return true;              // numeric-prefix spec stems (02-auth)
   return false;
+}
+
+// ── Issue #55: external roots / inter-repo pointers ──
+
+/** The `name://sub/path` pointer form. The name grammar is deliberately wide
+ *  (any URI-scheme shape) so an UNDECLARED root still reaches the dedicated
+ *  `undeclared external root` error instead of the generic missing-file one.
+ *  `http://` and `https://` are URLs, never root pointers — they keep their
+ *  exact pre-#55 treatment everywhere (broken-ref classification, deep-hop
+ *  mesh-exiting classification, create-advice), untouched by this feature. */
+const EXTERNAL_POINTER_RE = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.+)$/;
+
+/** §18 references.external_roots root-name grammar: lowercase, no slashes, no
+ *  dots — a name that can never be confused with a path or a URL scheme. */
+const EXTERNAL_ROOT_NAME_RE = /^[a-z][a-z0-9_-]*$/;
+
+/** Parse a raw see: target into its external-pointer parts, or null when the
+ *  target is not in the `name://sub/path` form (or is an http/https URL). */
+export function externalPointerParts(target: string): { root: string; subPath: string } | null {
+  const m = target.match(EXTERNAL_POINTER_RE);
+  if (m === null) return null;
+  const scheme = m[1]!.toLowerCase();
+  if (scheme === 'http' || scheme === 'https') return null;
+  return { root: m[1]!, subPath: m[2]! };
+}
+
+/** Issue #55 config bundle for the external-pointer half of checkRefs.
+ *  `externalRoots` is the §18 references.external_roots mapping (name →
+ *  author-declared path), `orphanCheck` gates the missing-file verification
+ *  (a pointer at a path that does not exist under a PRESENT root is a broken
+ *  ref only with orphan_check on), and `duplicateHomeCheck` gates the
+ *  cross-root duplicate-home check. */
+export interface ExternalRefsConfig {
+  externalRoots: Record<string, string>;
+  orphanCheck: boolean;
+  duplicateHomeCheck: boolean;
+}
+
+/** One declared external root, resolved. The declared path resolves from the
+ *  PROJECT root — the parent of the `cans/` workspace — so `"../kelir/cans"`
+ *  names a sibling checkout (the issue #55 anchor decision). The path itself
+ *  is author-declared and may traverse (`..` is fine in the ROOT value); only
+ *  the POINTER sub-path is containment-guarded. */
+interface ExternalRootState {
+  name: string;
+  declared: string;
+  /** Resolved absolute root directory. */
+  dir: string;
+  /** Symlink-resolved dir (equal to `dir` when realpath is unavailable). */
+  realDir: string;
+  /** False when the declared root is not checked out locally — pointers into
+   *  it are NOT verified that run (one warning names the root; CI that only
+   *  clones the spec repo stays usable). */
+  present: boolean;
+}
+
+function realpathOrDefault(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/** Containment guard, the external-root twin of fs.ts's isInsideRoot: the
+ *  candidate must sit strictly INSIDE `dir` after resolution. */
+function isInsideDir(dir: string, candidate: string): boolean {
+  const rel = relative(dir, candidate);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/** Resolve the declared external roots against the project root. */
+function buildExternalRootStates(
+  workspaceRoot: string,
+  externalRoots: Record<string, string>,
+): Map<string, ExternalRootState> {
+  const projectRoot = dirname(workspaceRoot);
+  const states = new Map<string, ExternalRootState>();
+  for (const [name, declared] of Object.entries(externalRoots)) {
+    const dir = resolve(projectRoot, declared);
+    states.set(name, { name, declared, dir, realDir: realpathOrDefault(dir), present: dirExists(dir) });
+  }
+  return states;
+}
+
+export type ExternalTargetResolution =
+  | { kind: 'escape' }
+  | { kind: 'missing' }
+  | { kind: 'ok'; path: string; subPath: string };
+
+/** Resolve one external pointer's sub-path under its root dir.
+ *
+ *  Containment is enforced TWICE (issue #10 discipline extended to external
+ *  roots — the #55 feature must not reopen the traversal hole):
+ *  1. lexically — the joined path must stay inside the root (a `..` sub-path
+ *     that normalizes back INSIDE the root still resolves, exactly like the
+ *     workspace resolver treats interior `..`; `root://../..` never does);
+ *  2. after realpath — a symlink inside the root that points outside is an
+ *     escape, never a resolution. The root's own realpath is the comparison
+ *     base, so a symlinked root directory still works.
+ *  Existence follows symlinks (statSync): the target must be a FILE. */
+export function resolveExternalTarget(rootDir: string, rawSubPath: string): ExternalTargetResolution {
+  const subPath = rawSubPath.replace(/\/+$/, '');
+  if (subPath === '' || subPath.startsWith('/') || subPath.startsWith('\\') || isAbsolute(subPath)) {
+    return { kind: 'escape' };
+  }
+  const candidate = join(rootDir, subPath);
+  if (!isInsideDir(rootDir, candidate)) return { kind: 'escape' };
+  if (!isFile(candidate)) return { kind: 'missing' };
+  const realRoot = realpathOrDefault(rootDir);
+  const realTarget = realpathOrDefault(candidate);
+  if (!isInsideDir(realRoot, realTarget)) return { kind: 'escape' };
+  return { kind: 'ok', path: realTarget, subPath };
+}
+
+/** Per-run context for the external-pointer walk inside checkRefs. */
+interface ExternalCheckContext {
+  workspaceRoot: string;
+  projectRoot: string;
+  states: Map<string, ExternalRootState>;
+  /** Absent roots already warned about — one warning per root per run. */
+  absentWarned: Set<string>;
+  orphanCheck: boolean;
+  duplicateHomeCheck: boolean;
+}
+
+/** Verify one external-form see: ref. Order of verdicts:
+ *  undeclared root → broken ref (error, always);
+ *  absent root     → ONE warning per root per run, pointer unverified;
+ *  escape          → broken ref (error, always — security, never optional);
+ *  missing         → broken ref (error) only under orphan_check;
+ *  ok              → terminal artifact-style target: cross-root duplicate-home
+ *                    check (duplicate_home_check), then anchor resolution
+ *                    against the target's addressable vocabulary exactly like
+ *                    an on-disk artifact target (issue #49). */
+function checkExternalRef(
+  ctx: ExternalCheckContext,
+  fromFile: string,
+  ref: RefTarget,
+  parts: { root: string; subPath: string },
+): Issue[] {
+  const { root: name, subPath } = parts;
+  const state = ctx.states.get(name);
+  if (state === undefined) {
+    return [{
+      file: fromFile, line: ref.line, level: 'error', category: 'refs',
+      message: `broken ref: see ${ref.file} — undeclared external root '${name}'`,
+      rule: 'refs.broken.file', // issue #41 vocabulary: a broken ref target
+      suggestion: EXTERNAL_ROOT_NAME_RE.test(name)
+        ? `declare '${name}' under references.external_roots in _rules.yaml, or fix the ref target`
+        : `fix the ref target — external root names must match ^[a-z][a-z0-9_-]*$ (declared in references.external_roots)`,
+    }];
+  }
+  if (!state.present) {
+    // Decision (issue #55): an absent declared root is a WARNING, never an
+    // error — CI that only clones the spec repo must stay usable. Pointers
+    // into the root are not verified this run (neither broken nor resolved),
+    // so exactly one warning names the root, attached to the first ref.
+    if (ctx.absentWarned.has(name)) return [];
+    ctx.absentWarned.add(name);
+    return [{
+      file: fromFile, line: ref.line, level: 'warning', category: 'refs',
+      message: `external root '${name}' is not checked out (${state.declared} from the project root) — pointers into it are not verified`,
+      rule: 'refs.external.absent',
+      suggestion: 'check out the sibling repo so its targets can be verified (this warning never fails the run)',
+    }];
+  }
+  const resolved = resolveExternalTarget(state.dir, subPath);
+  if (resolved.kind === 'escape') {
+    return [{
+      file: fromFile, line: ref.line, level: 'error', category: 'refs',
+      message: `broken ref: see ${ref.file} — target escapes external root '${name}'`,
+      rule: 'refs.broken.file',
+      suggestion: `external see: targets must stay inside the declared root (no ../ or absolute sub-paths)`,
+    }];
+  }
+  if (resolved.kind === 'missing') {
+    if (!ctx.orphanCheck) return []; // §18: the missing-file verification is orphan_check-gated
+    return [{
+      file: fromFile, line: ref.line, level: 'error', category: 'refs',
+      message: `broken ref: see ${ref.file} — file not found under external root '${name}'`,
+      rule: 'refs.broken.file',
+      suggestion: `create the file under external root '${name}', or fix the ref target`,
+    }];
+  }
+
+  // Resolved: an artifact-style TERMINAL target (decision 3, issue #55).
+  const issues: Issue[] = [];
+
+  // duplicate_home_check across roots: the pointer's sub-path must not name a
+  // second home. The probes are existence-only (they never resolve refs):
+  //  - the workspace root, and the project root — the two local anchors, so
+  //    both root spellings are covered (a root declared as the sibling's cans/
+  //    dir pairs with the workspace probe; a root declared as the sibling
+  //    repo root pairs with the project probe, `cans/artifacts/...` style);
+  //  - every OTHER present declared root (alias roots — same realDir — are
+  //    one root with two names, not two homes).
+  if (ctx.duplicateHomeCheck) {
+    const otherHomes: string[] = [];
+    let firstOther: string | null = null;
+    if (isFile(join(ctx.workspaceRoot, resolved.subPath))) {
+      firstOther = resolved.subPath;
+      otherHomes.push(`workspace (${resolved.subPath})`);
+    }
+    if (isFile(join(ctx.projectRoot, resolved.subPath))) {
+      if (firstOther === null) firstOther = resolved.subPath;
+      otherHomes.push(`project root (${resolved.subPath})`);
+    }
+    for (const other of [...ctx.states.values()].sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (other.name === name || !other.present || other.realDir === state.realDir) continue;
+      if (isFile(join(other.dir, resolved.subPath))) {
+        if (firstOther === null) firstOther = `${other.name}://${resolved.subPath}`;
+        otherHomes.push(`external root '${other.name}' (${other.name}://${resolved.subPath})`);
+      }
+    }
+    if (firstOther !== null) {
+      issues.push({
+        file: fromFile, line: ref.line, level: 'error', category: 'structure',
+        message: `duplicate home: both ${firstOther} and ${name}://${resolved.subPath} exist — keep exactly one home`,
+        suggestion: `keep the file in exactly one root — remove the copies in: ${otherHomes.join(', ')} — or point every see: at the surviving home`,
+        rule: 'structure.duplicate_home', // the existing duplicate-home shape (§12 edge cases)
+      });
+    }
+  }
+
+  // Anchor resolution mirrors the on-disk artifact path (issue #49): bullet
+  // nodes + YAML mapping keys of the EXTERNAL file are the addressable
+  // vocabulary. The external repo's own see: graph is never entered — only
+  // this one file is read, and it is never loaded into the spec set.
+  if (ref.anchor !== null) {
+    try {
+      const source = readFileSync(resolved.path, 'utf-8');
+      const yamlKeys = /\.(yaml|yml)$/i.test(resolved.path) ? extractYamlKeys(source) : [];
+      const nodes = flattenNodes(parseOutline(source, ref.file));
+      const hit = nodes.some(n => anchorMatches(n.text, ref.anchor!))
+        || yamlKeys.some(k => anchorMatches(k, ref.anchor!));
+      if (!hit) {
+        if (nodes.length === 0 && yamlKeys.length === 0) {
+          issues.push({
+            file: fromFile, line: ref.line, level: 'warning', category: 'refs',
+            message: `anchor on non-outline target: ${ref.file}#${ref.anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
+            rule: 'refs.anchor.no-target', // issue #49
+            suggestion: `drop the #${ref.anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${ref.file}`,
+          });
+        } else {
+          issues.push({
+            file: fromFile, line: ref.line, level: 'error', category: 'refs',
+            message: `broken anchor: ${ref.file}#${ref.anchor} — no node matches`,
+            rule: 'refs.broken.anchor', // issue #41
+            suggestion: brokenAnchorSuggestion(ref.file, ref.anchor, nodes, yamlKeys),
+          });
+        }
+      }
+    } catch {
+      // unreadable target: anchor verification is skipped, not fabricated
+    }
+  }
+  return issues;
 }
 
 export function buildRefGraph(
@@ -249,8 +507,23 @@ export function checkRefs(
   files: Map<string, OutlineNode[]>,
   graph: RefGraph,
   root: string,
+  external?: ExternalRefsConfig,
 ): Issue[] {
   const issues: Issue[] = [];
+  // Issue #55: external-root pointers are recognized only when the caller
+  // supplies the config bundle — `cans check` always does (even with an empty
+  // external_roots map, so an undeclared `name://` target gets the dedicated
+  // error). Library callers that omit it keep the exact legacy treatment.
+  const extCtx: ExternalCheckContext | null = external === undefined
+    ? null
+    : {
+        workspaceRoot: root,
+        projectRoot: dirname(root),
+        states: buildExternalRootStates(root, external.externalRoots),
+        absentWarned: new Set<string>(),
+        orphanCheck: external.orphanCheck,
+        duplicateHomeCheck: external.duplicateHomeCheck,
+      };
   for (const [file, targets] of graph.forward) {
     for (const ref of targets) {
       if (ref.file === file) {
@@ -279,6 +552,19 @@ export function checkRefs(
           suggestion: 'move the content into a spec file and ref that',
         });
         continue;
+      }
+
+      // Issue #55: a `name://sub/path` target is an inter-repo pointer —
+      // verified against the declared external roots, never against the
+      // workspace (so it can never collide with loadedKeyFor, and an
+      // undeclared name is diagnosed as such, not as a missing workspace
+      // file). http:// and https:// URLs never take this branch.
+      if (extCtx !== null) {
+        const extParts = externalPointerParts(ref.file);
+        if (extParts !== null) {
+          issues.push(...checkExternalRef(extCtx, file, ref, extParts));
+          continue;
+        }
       }
 
       const key = loadedKeyFor(files, root, ref.file);
@@ -590,6 +876,13 @@ export function detectDeepHops(
       if (r.file === b) return false; // self-reference, as before
       const t = resolveKey(r.file);
       if (t !== null && sccId.get(t) === bScc) return false; // back-ref into b's own mesh
+      // Issue #55: an external-root pointer (`name://sub/path`, http/https
+      // excluded) is a TERMINAL target — it can never name a loaded spec file
+      // (its resolution domain is a different root), so it can never form an
+      // A→B→C spec chain and is never mesh-exiting. Checked only when the
+      // target is NOT a loaded key, so a (pathological) workspace file whose
+      // key literally matches keeps its ordinary graph treatment.
+      if (t === null && externalPointerParts(r.file) !== null) return false;
       // Issue #44: target not a loaded spec file, but a real file on disk
       // inside the workspace → cannot form an A→B→C spec chain by
       // construction; not mesh-exiting. (Missing-on-disk targets fall through

@@ -165,6 +165,13 @@ function sectionFor(rule: string, category: string): string {
 // ── Message normalizers (one per engine emission format) ──
 
 const RE_BROKEN_FILE = /^broken ref: see (\S+) — file not found$/;
+// Issue #55: external-root pointer verdicts — same refs.broken.file family
+// (they count in the refs.broken JSON counter, check.ts), keyed by the full
+// pointer so the missing-file block lists them as targets.
+const RE_EXT_UNDECLARED = /^broken ref: see (\S+) — undeclared external root '(\S+)'$/;
+const RE_EXT_ESCAPE = /^broken ref: see (\S+) — target escapes external root '(\S+)'$/;
+const RE_EXT_MISSING = /^broken ref: see (\S+) — file not found under external root '(\S+)'$/;
+const RE_EXT_ABSENT = /^external root '(\S+)' is not checked out \(\S+ from the project root\) — pointers into it are not verified$/;
 const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 // Issue #49: zero-addressable-target downgrade (prose .md, empty yaml) —
 // same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
@@ -244,6 +251,23 @@ function normalizeMessage(issue: IssueLike): Normalized {
   if ((mt = m.match(RE_BROKEN_FILE)) !== null) {
     // issue #41: group per missing target — pattern generic, key = target path.
     return { rule: 'refs.broken.file', pattern: 'missing file', key: mt[1]!, targetItem: true };
+  }
+  if ((mt = m.match(RE_EXT_UNDECLARED)) !== null) {
+    // issue #55: name:// pointer whose root is not in references.external_roots.
+    return { rule: 'refs.broken.file', pattern: 'undeclared external root', key: mt[1]!, targetItem: true };
+  }
+  if ((mt = m.match(RE_EXT_ESCAPE)) !== null) {
+    // issue #55: sub-path escaped the declared root (traversal or symlink).
+    return { rule: 'refs.broken.file', pattern: 'escapes external root', key: mt[1]!, targetItem: true };
+  }
+  if ((mt = m.match(RE_EXT_MISSING)) !== null) {
+    // issue #55: declared, present root — the pointed-at file is not there.
+    return { rule: 'refs.broken.file', pattern: 'missing file', key: mt[1]!, targetItem: true };
+  }
+  if ((mt = m.match(RE_EXT_ABSENT)) !== null) {
+    // issue #55: declared root not checked out — pointers unverified, one
+    // warning per root per run.
+    return { rule: 'refs.external.absent', pattern: 'external root absent', key: mt[1]! };
   }
   if ((mt = m.match(RE_BROKEN_ANCHOR)) !== null) {
     const detail = `${issue.file}:${issue.line} → ${mt[1]}#${mt[2]}`;
