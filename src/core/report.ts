@@ -175,6 +175,12 @@ const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 // Issue #49: zero-addressable-target downgrade (prose .md, empty yaml) —
 // same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
 const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets or YAML keys\); use a file-level ref$/;
+// Issue #58: the schematic-anchor errors (JSON/YAML/TOML targets). Both are
+// error-level refs findings — grouped per pointer target like the no-target
+// advisory, so several anchors on the same broken/ambiguous file stay
+// addressable in the report.
+const RE_ANCHOR_AMBIGUOUS = /^ambiguous anchor: (\S+)#(\S+) — flat name matches multiple leaves: (.+)$/;
+const RE_ANCHOR_PARSE_ERROR = /^schematic parse error: (\S+)#(\S+) — (?:JSON|YAML|TOML) line \d+: /;
 // Issue #53 Part 1.5: info-level slug-safety notes — one per confusable node
 // (first SLUG_HINT_CAP per file) plus one per-file cap summary line. Greedy
 // first group: a node text containing `"` still matches (backtracking lands
@@ -285,6 +291,18 @@ function normalizeMessage(issue: IssueLike): Normalized {
     // Issue #49: anchored ref to a target with nothing addressable — advisory
     // downgrade, grouped per file#anchor target like the other ref families.
     return { rule: 'refs.anchor.no-target', pattern: 'anchor on non-outline target', key: `${mt[1]}#${mt[2]}` };
+  }
+  if ((mt = m.match(RE_ANCHOR_AMBIGUOUS)) !== null) {
+    // Issue #58 contract 3: a flat single-segment anchor matching multiple
+    // leaves — error listing the full paths (the group key keeps the target;
+    // the message already carries the path list verbatim).
+    return { rule: 'refs.anchor.ambiguous', pattern: 'ambiguous anchor', key: `${mt[1]}#${mt[2]}` };
+  }
+  if ((mt = m.match(RE_ANCHOR_PARSE_ERROR)) !== null) {
+    // Issue #58 contract 5: the pointed-at schematic file could not be parsed
+    // (malformed or beyond the supported subset) — an explicit error at the
+    // pointer site, never a silent pass or a broken-anchor false positive.
+    return { rule: 'refs.anchor.parse-error', pattern: 'schematic parse error', key: `${mt[1]}#${mt[2]}` };
   }
   if ((mt = m.match(RE_SLUG_HINT)) !== null) {
     // Issue #53 Part 1.5: info-level slug-safety note. All notes (per-node

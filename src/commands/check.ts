@@ -1143,9 +1143,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // message-prefix filter left refs.broken: 0 beside a broken-anchor ERROR
   // with errorCount 1 / ok:false — machine consumers filtered on the counter
   // missed the error.) Rule keys are the stable vocabulary (issue #41).
+  // Issue #58 extends the family with the schematic-anchor errors: a
+  // refs.anchor.ambiguous (flat name, multiple leaves) and a
+  // refs.anchor.parse-error (unparseable target) are both error-level refs
+  // findings the pointer cannot be verified against — same truthfulness
+  // contract, same counter.
   const broken = issues.filter(
     i => i.category === 'refs' && i.level === 'error'
-      && (i.rule === 'refs.broken.file' || i.rule === 'refs.broken.anchor'),
+      && (i.rule === 'refs.broken.file' || i.rule === 'refs.broken.anchor'
+        || i.rule === 'refs.anchor.ambiguous' || i.rule === 'refs.anchor.parse-error'),
   ).length;
 
   const errorCount = issues.filter(i => i.level === 'error').length;

@@ -1069,17 +1069,21 @@ class TomlParser {
         continue;
       }
       if (last && kind === 'array') {
+        let arr: { kind: 'array'; items: SchematicValue[] };
         if (entry === undefined) {
-          entry = { key: seg, value: { kind: 'array', items: [] }, line: no };
+          arr = { kind: 'array', items: [] };
+          entry = { key: seg, value: arr, line: no };
           node.entries.push(entry);
         } else if (entry.value.kind !== 'array') {
           fail(no, `key '${seg}' is already a value, not an array — cannot define [[${segs.join('.')}]]`);
         } else if (inlineArrays.has(canonical)) {
           fail(no, `cannot extend the static (inline) array '${seg}' with [[${segs.join('.')}]]`);
+        } else {
+          arr = entry.value;
         }
         const table: SchematicValue = { kind: 'object', entries: [] };
-        entry.value.items.push(table);
-        return { node: table, canonical: `${canonical}\0${entry.value.items.length - 1}` };
+        arr.items.push(table);
+        return { node: table, canonical: `${canonical}\0${arr.items.length - 1}` };
       }
       // Intermediate segment: create/verify the sub-table. An array here is
       // an array-of-tables created by [[…]] headers — TOML rule: continue
@@ -1332,7 +1336,7 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
       const body = text.slice(i + 3, close - 3);
       return { value: scalar(decodeEscapes(body.replace(/\\\n\s*/g, ''), no)), end: close };
     }
-    const q = scanQuoted(text, i);
+    const q = scanQuoted(text, i, no);
     if (q === null) fail(no, 'unterminated basic string');
     if (q.value.includes('\n')) fail(no, 'raw newline in a single-line basic string');
     return { value: scalar(q.value), end: q.end };
@@ -1343,7 +1347,7 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
       if (close === null) fail(no, 'unterminated multiline literal string');
       return { value: scalar(text.slice(i + 3, close - 3)), end: close };
     }
-    const q = scanQuoted(text, i);
+    const q = scanQuoted(text, i, no);
     if (q === null) fail(no, 'unterminated literal string');
     if (q.value.includes('\n')) fail(no, 'raw newline in a single-line literal string');
     return { value: scalar(q.value), end: q.end };
@@ -1374,7 +1378,7 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
       // key
       let key: string;
       if (text[i] === '"' || text[i] === "'") {
-        const q = scanQuoted(text, i);
+        const q = scanQuoted(text, i, no);
         if (q === null) fail(no, 'unterminated quoted key in inline table');
         key = q.value;
         i = q.end;
