@@ -495,7 +495,10 @@ class YamlParser {
         fail(l.no, 'tab indentation is not allowed in YAML (use spaces)');
       }
       l.indent = n;
-      l.content = stripped;
+      // Content is INDENT-STRIPPED: every dispatcher (isDashItem,
+      // startsWith, splitYamlKey, flow columns) works on the bare text, with
+      // l.indent carrying the column separately.
+      l.content = content;
     } else {
       l.indent = -1; // blank / comment-only — never structural
       l.content = '';
@@ -521,19 +524,20 @@ class YamlParser {
   parseDocument(): SchematicValue {
     let i = this.nextStructural();
     if (i === null) return scalar(null); // empty document: valid (null) YAML
-    if (this.lines[i]!.content === '---') {
+    if (this.lines[i]!.indent === 0 && this.lines[i]!.content === '---') {
       this.pos++;
       i = this.nextStructural();
       if (i === null) return scalar(null);
     }
     const root = this.parseNode(0, -1);
     // Multi-document YAML: v1 addresses the FIRST document — a later `---`
-    // (or the `...` end marker) terminates it and the rest is ignored.
+    // (or the `...` end marker, both only at column 0) terminates it and the
+    // rest is ignored.
     const j = this.nextStructural();
     if (j !== null) {
-      const t = this.lines[j]!.content;
-      if (t !== '---' && t !== '...') {
-        fail(this.lines[j]!.no, `unexpected content ('${t.slice(0, 24)}') — not part of the first YAML document`);
+      const l = this.lines[j]!;
+      if (l.indent === 0 && l.content !== '---' && l.content !== '...') {
+        fail(l.no, `unexpected content ('${l.content.slice(0, 24)}') — not part of the first YAML document`);
       }
     }
     return root;
@@ -581,8 +585,9 @@ class YamlParser {
       if (l.indent > d) fail(l.no, `unexpected indentation (${l.indent} spaces) at line ${l.no}`);
       const text = l.content;
       // Multi-document YAML: v1 addresses the FIRST document — a `---` (or
-      // `...`) at the mapping's own indent ends it; the rest is ignored.
-      if (text === '---' || text === '...') break;
+      // `...`, only at column 0) at the mapping's own indent ends it; the
+      // rest is ignored.
+      if (l.indent === 0 && (text === '---' || text === '...')) break;
       if (isDashItem(text)) {
         if (!lastWasKeyOnly) {
           fail(l.no, `unexpected sequence item ('${text.slice(0, 16)}') where a mapping key was expected`);
@@ -623,7 +628,7 @@ class YamlParser {
         if (bi !== null) {
           value = this.parseBlockScalar(d, kv.rest, keyLine);
         } else {
-          value = this.parseInlineValue(kv.rest, d, i, keyLine);
+          value = this.parseInlineValue(kv.rest, d, i, kv.restCol, keyLine);
         }
         lastWasKeyOnly = false;
       }
@@ -706,7 +711,7 @@ class YamlParser {
       if (j === null) break;
       const l = this.ensure(j);
       if (l.indent <= parentIndent) break;
-      if (l.content === '---' || l.content === '...') break;
+      if (l.indent === 0 && (l.content === '---' || l.content === '...')) break;
       value += ' ' + l.content;
       this.pos = j + 1;
     }
@@ -1076,10 +1081,22 @@ class TomlParser {
         entry.value.items.push(table);
         return { node: table, canonical: `${canonical}\0${entry.value.items.length - 1}` };
       }
-      // Intermediate segment: create/verify the sub-table.
+      // Intermediate segment: create/verify the sub-table. An array here is
+      // an array-of-tables created by [[…]] headers — TOML rule: continue
+      // from its LAST element (a static inline array may not be extended).
       if (entry === undefined) {
         entry = { key: seg, value: { kind: 'object', entries: [] }, line: no };
         node.entries.push(entry);
+      } else if (entry.value.kind === 'array') {
+        if (inlineArrays.has(canonical)) {
+          fail(no, `key '${seg}' is a static (inline) array — cannot open [${segs.join('.')}] under it`);
+        }
+        const item = entry.value.items[entry.value.items.length - 1];
+        if (item === undefined || item.kind !== 'object') {
+          fail(no, `key '${seg}' is an empty array — cannot open [${segs.join('.')}] under it`);
+        }
+        node = item;
+        continue;
       } else if (entry.value.kind !== 'object') {
         fail(no, `key '${seg}' is not a table — cannot open [${segs.join('.')}] under it`);
       }
@@ -1188,7 +1205,7 @@ function parseDottedKeyPath(text: string, no: number): string[] {
     const c = text[i];
     if (c === undefined) break;
     if (c === '"' || c === "'") {
-      const q = scanQuoted(text, i);
+      const q = scanQuoted(text, i, no);
       if (q === null) fail(no, `unterminated quoted key segment in '${text.slice(0, 24)}'`);
       segs.push(q.value);
       i = q.end;
@@ -1217,15 +1234,20 @@ function parseDottedKeyPath(text: string, no: number): string[] {
  *  another line). String-aware for both quote styles, including the multiline
  *  `'''`/`"""` delimiters. */
 function scanTomlValueEnd(text: string): number | null {
-  const c = text[0]!;
+  // Leading spaces between '=' and the value are allowed — skip them before
+  // dispatching (a value starting with whitespace is otherwise misread as a
+  // bare scalar ending at the first newline).
+  let k = 0;
+  while (text[k] === ' ' || text[k] === '\t') k++;
+  const c = text[k]!;
   if (c === '"' || c === "'") {
-    const triple = text.slice(0, 3) === c.repeat(3);
+    const triple = text.slice(k, k + 3) === c.repeat(3);
     if (triple) {
-      const close = findTripleClose(text, 3, c);
+      const close = findTripleClose(text, k + 3, c);
       return close === null ? null : close;
     }
     // Single-line string: must close before the first newline.
-    let i = 1;
+    let i = k + 1;
     while (i < text.length) {
       const d = text[i]!;
       if (d === '\n') return null;
@@ -1242,7 +1264,7 @@ function scanTomlValueEnd(text: string): number | null {
     const closer = c === '[' ? ']' : '}';
     const open = c;
     let depth = 0;
-    let i = 0;
+    let i = k;
     while (i < text.length) {
       const d = text[i]!;
       if (d === '"' || d === "'") {
@@ -1379,9 +1401,11 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
       fail(no, `expecting ',' or '}' in inline table (near '${text.slice(i, i + 16)}')`);
     }
   }
-  // Bare token: bool / number / datetime-as-string.
+  // Bare token: bool / number / datetime-as-string. (The class escapes `]`:
+  // an unescaped `]` would close the character class early and the scan would
+  // run to end-of-text — commas and brackets never stopped it.)
   let j = i;
-  while (j < text.length && !/[\s,]}#]/.test(text[j]!)) j++;
+  while (j < text.length && !/[\s,\]}#]/.test(text[j]!)) j++;
   const token = text.slice(i, j);
   if (token === '') fail(no, 'missing value');
   return { value: scalar(classifyTomlBare(token)), end: j };
