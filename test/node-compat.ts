@@ -80,6 +80,7 @@ interface ExpectApi {
   toBeLessThanOrEqual(n: number): void;
   toHaveLength(n: number): void;
   toMatchObject(expected: Record<string, unknown>): void;
+  toBeInstanceOf(constructor: Function): void;
   toThrow(expected?: string | RegExp): void;
   readonly not: ExpectApi;
 }
@@ -165,6 +166,13 @@ function makeExpect(actual: unknown, message?: string): ExpectApi {
       toMatchObject(expected) {
         const pass = subsetMatches(actual, expected);
         check(negated ? !pass : pass, that(`to match object ${fmt(expected)}`));
+      },
+      toBeInstanceOf(constructor) {
+        const pass = actual instanceof constructor;
+        check(
+          negated ? !pass : pass,
+          `expected ${fmt(actual)} ${negated ? 'NOT ' : ''}to be instance of ${constructor?.name ?? String(constructor)}`,
+        );
       },
       get not() { return build(!negated); },
       toThrow(expected?: string | RegExp) {
