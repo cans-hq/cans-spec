@@ -286,6 +286,8 @@ export function defaultRules(): Rules {
       estimate_chars_per_token: 3.5,
       warn_threshold: 0.8,
     },
+    // issue #59: display preferences — the slug-hint band is opt-in.
+    output: { slug_hints: false },
   };
 }
 
@@ -412,6 +414,17 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
     estimate_chars_per_token: { kind: 'number', min: 0, minExclusive: true },
     warn_threshold: { kind: 'number', min: 0, minExclusive: true, nullOk: true },
   },
+  // Issue #59: output-surface preferences. DISPLAY switches, not checks —
+  // the section is strictly validated like every §18 key (a typo like
+  // `slug_hint` is a line-numbered unrecognized-key error; a non-boolean
+  // value is a domain error) but never joins CHECK_SECTIONS below, so it
+  // cannot participate in the delete/override reconciliation: listing
+  // `output:` alone must never read as a curated config (which would flip
+  // every unlisted engine off). An omitted key keeps its documented default
+  // — false, the hints-off default of issue #59.
+  output: {
+    slug_hints: { kind: 'boolean' },
+  },
   // templates/_rules.yaml ships this inert documentation section (issue #53:
   // the anchor algorithm is fixed, not configurable — the section teaches it).
   // Accepted so `cans init` output is strictly valid; never read by engines.
@@ -423,10 +436,17 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
   },
 };
 
+/** §18 CHECK sections — the RULES_SCHEMA sections whose keys drive the
+ *  delete/override reconciliation in loadRules. Everything else in the schema
+ *  is not a check surface: the inert slug: documentation section (issue #53)
+ *  and the output: display-preference section (issue #59 — a display switch
+ *  must never decide what a "curated config" means, or listing `output:`
+ *  alone would flip every unlisted engine off). */
+const CHECK_SECTIONS = new Set(['structure', 'style', 'content', 'references', 'redundancy', 'token_budget']);
+
 /** §18 default keys per section — drives the delete/override reconciliation in
- *  loadRules. Derived from RULES_SCHEMA (every key of every rules section;
- *  the inert slug: documentation section is not a rules section) so the
- *  schema stays the single source of truth. Parameters (references.mode,
+ *  loadRules. Derived from RULES_SCHEMA (every key of every CHECK section) so
+ *  the schema stays the single source of truth. Parameters (references.mode,
  *  redundancy.stopwords/synonyms, redundancy.fuzzy_max_distance/
  *  fuzzy_min_word_length (issue #47), token_budget.enabled/default_limit/
  *  estimate_chars_per_token) are listed too: they count towards a section's
@@ -438,7 +458,7 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
  *  means for configs that predate the key. */
 const SECTION_KEYS: Record<string, string[]> = Object.fromEntries(
   Object.entries(RULES_SCHEMA)
-    .filter(([section]) => section !== 'slug')
+    .filter(([section]) => CHECK_SECTIONS.has(section))
     .map(([section, keys]) => [
       section,
       Object.entries(keys)
@@ -745,10 +765,12 @@ export function loadRules(root: string): Rules {
 
   // The strict validator admits known-but-inert documentation sections (the
   // template's slug: block, issue #53) — they are not rules sections, so strip
-  // them here: the returned object is exactly the Rules surface (SECTION_KEYS
-  // = every rules section of RULES_SCHEMA), never read by engines either way.
+  // them here: the returned object is exactly the Rules surface (every
+  // RULES_SCHEMA section except the doc-only slug: block — SECTION_KEYS lists
+  // the CHECK sections, but output (issue #59) is a rules section too, just
+  // not a reconcilable one), never read by engines either way.
   for (const section of Object.keys(merged)) {
-    if (!(section in SECTION_KEYS)) delete merged[section];
+    if (section === 'slug' || !(section in RULES_SCHEMA)) delete merged[section];
   }
 
   const rules = merged as unknown as Rules;

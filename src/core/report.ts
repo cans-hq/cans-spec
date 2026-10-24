@@ -118,7 +118,14 @@ export interface CheckResultLike {
   nodes: number;
   maxDepth: number;
   elapsedMs?: number;
-  refs: { total: number; broken: number; deepHops: number };
+  refs: {
+    total: number;
+    broken: number;
+    deepHops: number;
+    /** issue #59: refs.slug.hint items the workspace holds — the opt-in
+     *  discoverability signal. Present only when > 0 (additive wire). */
+    hintCount?: number;
+  };
   backPointers: { total: number; current: number; stale: number };
   errorCount: number;
   warningCount: number;
@@ -673,7 +680,18 @@ export function checkReportJson(result: CheckResultLike): unknown {
     command: 'check',
     exitCode: result.exitCode,
     summary,
-    refs: { total: result.refs.total, broken: result.refs.broken, deepHops: result.refs.deepHops },
+    refs: {
+      total: result.refs.total,
+      broken: result.refs.broken,
+      deepHops: result.refs.deepHops,
+      // issue #59: the slug-hint count rides the refs section as the
+      // discoverability signal while the info band is opt-in (info items
+      // reach sections only under --hints). Additive: absent when zero, so
+      // a hint-free corpus keeps the exact pre-#59 wire shape.
+      ...(result.refs.hintCount !== undefined && result.refs.hintCount > 0
+        ? { hintCount: result.refs.hintCount }
+        : {}),
+    },
     backPointers: {
       total: result.backPointers.total,
       current: result.backPointers.current,

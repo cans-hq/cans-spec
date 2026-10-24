@@ -47,6 +47,16 @@ export interface CheckArgs {
    *  legal without --fix, and mutually exclusive with --yes (apply and
    *  preview are different transactions). Optional, same rule as --yes. */
   dryRun?: boolean;
+  /** issue #59: opt-in switch for the slug-hint info band (`refs.slug.hint`,
+   *  issue #53 Part 1.5). Default off — a plain check emits NO hint items
+   *  (neither text nor JSON; only the refs.hintCount discoverability
+   *  integer) — and either this flag or the `_rules.yaml` key
+   *  `output.slug_hints` enables the band (the flag is the explicit per-run
+   *  override; there is no --no-hints because off is the default).
+   *  Emission-time concern only — engine verdicts (ok, exit codes, error /
+   *  warning counts, findings) are identical either way. Optional: internal
+   *  callers (done.ts's ZERO_CHECK_ARGS) never set it. */
+  hints?: boolean;
   /** §24 (done): the archiving task's parsed nodes, injected under their
    *  former `_tasks/<name>.md` identity so refs held by the archived task
    *  still count for the back-pointer rebuild. Never set by `check` itself. */
@@ -65,6 +75,10 @@ const CHECK_FLAGS: FlagSpec[] = [
   { name: 'no-redundancy', boolean: true },
   { name: 'show', boolean: false },
   { name: 'json', boolean: true },
+  // issue #59: opt-in switch for the slug-hint info band. Boolean, no
+  // value; default off in both the flag set and `_rules.yaml`
+  // (output.slug_hints) — the band is opt-in only, never default-on.
+  { name: 'hints', boolean: true },
 ];
 
 /** issue #41: user-facing --show targets. `all` unfolds every section. */
@@ -161,6 +175,8 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
     refsOnly: parsed.flags.has('refs-only'),
     noRedundancy: parsed.flags.has('no-redundancy'),
     json: parsed.flags.has('json'),
+    // issue #59: --hints opts the run into the slug-hint info band.
+    hints: parsed.flags.has('hints'),
     show,
     file,
     errors,
@@ -649,6 +665,14 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   const issues: Issue[] = [];
 
+  // issue #59: refs.slug.hint items the workspace holds (the would-be info
+  // band). Counted on EVERY run — hints off is the default, and the count is
+  // the whole discoverability signal: `--json` carries it as refs.hintCount
+  // so an agent can see there are N hints before paying for them. Equal to
+  // the info items emitted under --hints (the #59 suite pins that identity);
+  // never a finding — it changes no ok/exit/count anywhere.
+  let hintCount = 0;
+
   // §37: malformed workspace entries (directories named like spec files) are
   // reported, never silently skipped.
   for (const name of detectMalformedSpecDirs(root)) {
@@ -821,10 +845,16 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       issues.push(...checkTbdPolicy(specFiles.get(key)!, key, rules.content));
     }
     // Issue #53 Part 1.5: author-time slug-safety notes (info level — never
-    // counted among errors/warnings, never touching ok/exit codes). Scoped
-    // by the [file] filter like every other per-file check (issue #11).
+    // counted among errors/warnings, never touching ok/exit codes), OPT-IN
+    // since issue #59: the `--hints` flag or the `output.slug_hints` config
+    // key (either enables) must ask for the band; a plain run gets only the
+    // count. Scoped by the [file] filter like every other per-file check
+    // (issue #11).
+    const hintsOn = opts.hints === true || rules.output.slug_hints === true;
     for (const key of checkable) {
-      issues.push(...slugSafetyHints(specFiles.get(key)!, key));
+      const hints = slugSafetyHints(specFiles.get(key)!, key);
+      hintCount += hints.length;
+      if (hintsOn) issues.push(...hints);
     }
   }
 
@@ -1166,7 +1196,17 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     nodes: nodeCount,
     // §35: maxDepth is 1-based (a 4-level chain reports 4); 0 for an empty workspace.
     maxDepth: nodeCount === 0 ? 0 : depthMax + 1,
-    refs: { total: refsTotal, broken, deepHops: deepHops.length },
+    refs: {
+      total: refsTotal,
+      broken,
+      deepHops: deepHops.length,
+      // issue #59: the opt-in discoverability signal — present only when the
+      // workspace actually holds hints (additive wire: a hint-free corpus is
+      // byte-identical to the pre-#59 JSON). Under --hints it equals the
+      // info items in sections; without it, the items are omitted and this
+      // integer alone says "N hints exist — run with --hints to see them".
+      ...(hintCount > 0 ? { hintCount } : {}),
+    },
     backPointers: { total: bpTotal, current: bpCurrent, stale: bpStale },
     issues,
     errorCount,
