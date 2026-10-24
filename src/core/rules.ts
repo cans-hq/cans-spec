@@ -593,7 +593,7 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
         } else {
           // A bare word (or nested map) where a group belongs — pre-#56 this
           // reached normalizeWord and crashed/mis-normalized; reject it.
-          fail('lists of words', at, group);
+          fail('a list of words', at, group);
         }
       });
       return;
@@ -688,6 +688,14 @@ export function loadRules(root: string): Rules {
   const { value: parsed, keyLines } = parseYamlTracked(source);
   validateRulesStrict(parsed, keyLines);
   const merged = deepMerge(defaultRules(), parsed) as Record<string, unknown>;
+
+  // The strict validator admits known-but-inert documentation sections (the
+  // template's slug: block, issue #53) — they are not rules sections, so strip
+  // them here: the returned object is exactly the Rules surface (SECTION_KEYS
+  // = every rules section of RULES_SCHEMA), never read by engines either way.
+  for (const section of Object.keys(merged)) {
+    if (!(section in SECTION_KEYS)) delete merged[section];
+  }
 
   const rules = merged as unknown as Rules;
 
