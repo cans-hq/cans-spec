@@ -300,17 +300,26 @@ function checkExternalRef(
   if (ctx.duplicateHomeCheck) {
     const otherHomes: string[] = [];
     let firstOther: string | null = null;
-    if (isFile(join(ctx.workspaceRoot, resolved.subPath))) {
+    // A probe only names a second home when it lands on a DIFFERENT file
+    // than the pointer resolved to (realpath comparison — the per-file twin
+    // of the alias-root exemption below): a root declared as the project
+    // root itself (".", pointing at repo files outside cans/) makes the
+    // project probe hit the very same file, and a workspace SYMLINK at the
+    // same sub-path is the target itself — one home with two spellings,
+    // never a duplicate.
+    const secondHome = (probe: string): boolean =>
+      isFile(probe) && realpathOrDefault(probe) !== resolved.path;
+    if (secondHome(join(ctx.workspaceRoot, resolved.subPath))) {
       firstOther = resolved.subPath;
       otherHomes.push(`workspace (${resolved.subPath})`);
     }
-    if (isFile(join(ctx.projectRoot, resolved.subPath))) {
+    if (secondHome(join(ctx.projectRoot, resolved.subPath))) {
       if (firstOther === null) firstOther = resolved.subPath;
       otherHomes.push(`project root (${resolved.subPath})`);
     }
     for (const other of [...ctx.states.values()].sort((a, b) => (a.name < b.name ? -1 : 1))) {
       if (other.name === name || !other.present || other.realDir === state.realDir) continue;
-      if (isFile(join(other.dir, resolved.subPath))) {
+      if (secondHome(join(other.dir, resolved.subPath))) {
         if (firstOther === null) firstOther = `${other.name}://${resolved.subPath}`;
         otherHomes.push(`external root '${other.name}' (${other.name}://${resolved.subPath})`);
       }

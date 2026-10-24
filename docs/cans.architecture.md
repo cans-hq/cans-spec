@@ -469,7 +469,11 @@ Verdicts, in order:
    artifacts/examples/multi-vm-swarm.rs and
    kelir-cloud://artifacts/examples/multi-vm-swarm.rs exist — keep exactly
    one home`). One issue per offending pointer; roots that alias the same
-   directory (same realpath) are one root with two names, not two homes.
+   directory (same realpath) are one root with two names, not two homes — and
+   every probe compares realpaths per file, so a probe that lands on the very
+   file the pointer resolved to (a root declared as the project root itself,
+   `"."`, pointing at repo files outside `cans/`; a workspace symlink at the
+   same sub-path) is one home with two spellings, never a duplicate.
 6. **Anchors** resolve against the external target's addressable vocabulary
    — its bullet nodes and (for `.yaml`/`.yml`) mapping keys — exactly like an
    on-disk artifact target (issue #49). A miss is `refs.broken.anchor`, a

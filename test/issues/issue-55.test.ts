@@ -47,6 +47,9 @@
  *           workspace (or another external root) + pointer → the existing
  *           structure.duplicate_home error shape; off-switch respected;
  *           repo-root spelling (`cans/...` sub-path, project-root probe)
+ *   dup-sf . duplicate-home probes compare realpaths: a root declared as the
+ *           project root itself, and a workspace symlink at the same
+ *           sub-path, land on the SAME file — one home, never a duplicate
  *   cfg .... malformed external_roots entries → line-numbered config errors
  *           (bad name, empty value, numeric value, non-mapping)
  *   http ... http:// and https:// targets keep their exact pre-#55 treatment
@@ -539,6 +542,47 @@ describe('issue #55: inter-repo pointers via declared external_roots', () => {
     expect(dups).toHaveLength(2);
     expect(dups[0].detail).toBe('duplicate home: both other://artifacts/examples/multi-vm-swarm.rs and kelir://artifacts/examples/multi-vm-swarm.rs exist — keep exactly one home');
     expect(dups[0].suggestion).toContain("external root 'other' (other://artifacts/examples/multi-vm-swarm.rs)");
+  });
+
+  test('dup-same-file: a probe landing on the SAME file is one home, not a duplicate', () => {
+    // A root declared as the project root itself (".") — pointing at repo
+    // files outside cans/ is a legitimate spelling — makes the project-root
+    // probe hit the very file the pointer resolves to. One home with two
+    // spellings: 0 errors (a naive existence-only probe would false-positive
+    // here, "duplicate home" against itself).
+    const rulesSelf = RULES_EXT.replace('    kelir: "../ext/kelir-cans"', '    self: "."');
+    const spec = '- Lifecycle\n  - a: see: self://docs/example.rs\n';
+    const ws = makeWs('dup-same-file', { '07-lifecycle.md': spec }, rulesSelf, {});
+    mkdirSync(join(ws.projectRoot, 'docs'), { recursive: true });
+    writeFileSync(join(ws.projectRoot, 'docs', 'example.rs'), 'fn e() {}\n', 'utf8');
+    const r = runCli(['check', '--json'], ws.projectRoot);
+    expect(r.exit).toBe(0);
+    const j = parseJsonOut(r.out);
+    expect(j.ok).toBe(true);
+    expect(j.issues).toEqual([]);
+    expect(j.refs).toEqual({ total: 1, broken: 0, deepHops: 0 });
+
+    // A workspace SYMLINK at the same sub-path IS the external target (not a
+    // copy): still one home. A real COPY at the same sub-path (control) is the
+    // genuine second home the check exists to catch.
+    const ws2 = makeWs('dup-symlink', { '07-lifecycle.md': LIFECYCLE_MAP }, RULES_EXT, {
+      'kelir-cans': KELIR_CANS,
+    });
+    mkdirSync(join(ws2.root, 'artifacts', 'examples'), { recursive: true });
+    let linked = false;
+    try {
+      symlinkSync('../../../../ext/kelir-cans/artifacts/examples/multi-vm-swarm.rs', join(ws2.root, 'artifacts', 'examples', 'multi-vm-swarm.rs'));
+      linked = true;
+    } catch {
+      linked = false; // filesystem forbids symlinks — the case cannot arise
+    }
+    if (linked) {
+      const rLink = runCli(['check', '--json'], ws2.projectRoot);
+      expect(rLink.exit).toBe(0);
+      const jLink = parseJsonOut(rLink.out);
+      expect(jLink.ok).toBe(true);
+      expect(jLink.issues.filter((i: any) => i.rule === 'structure.duplicate_home')).toEqual([]);
+    }
   });
 
   test('cfg: malformed external_roots entries → line-numbered config errors', () => {
