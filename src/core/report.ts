@@ -15,21 +15,20 @@
  *
  *  Design decisions pinned here (integration agents read this):
  *  - Group key = `rule + '|' + (key ?? pattern)`. Threshold-family rules
- *    (siblings/depth/node-length/node_chars/tbd.max/collapse/parse.indent)
+ *    (siblings/depth/node-length/tbd.max/collapse/parse.indent)
  *    encode the observed ratio IN the pattern, so `<min children (2/3)` and
  *    `<min children (1/3)` are distinct patterns; identity-family rules
  *    (missing file, stale target, keyword, overlap class, duplicate-home
  *    concept, prefix word, malformed dir) use a stable pattern plus a `key`
  *    carrying the root-cause identity.
  *  - Group ordering: section (structure → style → refs → redundancy →
- *    overflow → config → parse → content → io → other), then count desc, then
+ *    config → parse → content → io → other), then count desc, then
  *    first occurrence in the input. Nothing is dropped: every input issue
  *    raises its group's count exactly once. ('config', issue #43, sits after
  *    the engines: a config error preempts every check, and its group only
  *    ever exists alone on the checkFail path.)
  *  - `category` on a group is the SECTION (rule prefix wins over the engine
- *    category — e.g. content.tbd.* lands under `content`, refs.chaining
- *    under `refs` even though the overflow engine emits it).
+ *    category — e.g. content.tbd.* lands under `content`).
  *  - `level` is the first member's level; sections count errors/warnings
  *    (and, since issue #53 Part 1.5, info — its own bucket, never folded
  *    into the other two) from the raw issues, so a hypothetically mixed
@@ -71,7 +70,7 @@ export interface GroupItem {
 }
 
 export interface IssueGroup {
-  /** Section: structure|style|refs|redundancy|overflow|parse|content|io|other */
+  /** Section: structure|style|refs|redundancy|config|parse|content|io|other */
   category: string;
   /** Normalized rule id (issue.rule when present, else derived from the message). */
   rule: string;
@@ -144,15 +143,15 @@ export interface CheckResultLike {
 
 // ── Section/rule vocabulary ──
 
-const SECTION_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'parse', 'content', 'io', 'other'];
+const SECTION_ORDER = ['structure', 'style', 'refs', 'redundancy', 'config', 'parse', 'content', 'io', 'other'];
 // issue #43: 'config' joins the rule prefixes and the section order (after
 // the engines, before the meta sections) so a config.invalid group lands in
 // its own section on both the rule path and the message-derived fallback
 // path. It is NOT an engine category: ENGINE_CATEGORIES stays untouched so
 // unknown rules never re-route, and checkReportJson buckets 'config'
 // explicitly (additively — see below).
-const KNOWN_RULE_PREFIXES = new Set(['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'content', 'parse', 'io']);
-const ENGINE_CATEGORIES = new Set(['structure', 'style', 'refs', 'redundancy', 'overflow']);
+const KNOWN_RULE_PREFIXES = new Set(['structure', 'style', 'refs', 'redundancy', 'config', 'content', 'parse', 'io']);
+const ENGINE_CATEGORIES = new Set(['structure', 'style', 'refs', 'redundancy']);
 
 function sectionFor(rule: string, category: string): string {
   const dot = rule.indexOf('.');
@@ -179,7 +178,6 @@ const RE_STALE_BP = /^stale back-pointer: (\S+) no longer refs (\S+)$/;
 const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
 const RE_DEEP_HOP = /^DEEP HOP: (.+)$/;
-const RE_CHAINING = /^no chaining: overflow target (\S+) must not contain its own see: refs \(found see (\S+)\)$/;
 const RE_PROSE = /^see-like prose: "see (\S+)" did not resolve to a spec file/;
 const RE_KEYWORD = /^"([^"]+)" × (\d+) nodes \(threshold: (\d+)\)$/;
 const RE_OVERLAP = /^(\d+)% overlap: (\S+) ↔ (\S+)$/;
@@ -198,8 +196,6 @@ const RE_SHARED_PREFIX = /^(\d+) siblings share prefix "([^"]+)"/;
 const RE_COLLAPSE = /^".*" has (\d+) child(?:ren)?\. Collapse to sibling style\.$/;
 const RE_TBD_MAX = /^(\d+) TBD nodes exceed content\.max_tbd_per_file \((\d+)\)$/;
 const RE_TBD_DISALLOWED = /^TBD used but content\.tbd_allowed is false$/;
-const RE_CONTENT_TYPE = /^(code fence|table|[a-z_ ]+?) detected — extract to file/;
-const RE_NODE_CHARS = /^node exceeds max chars \((\d+) > (\d+)\)$/;
 const RE_UNREADABLE = /^unreadable spec file: /;
 const RE_PARSE_ERROR = /^parse error: /;
 const RE_PARSE_INDENT = /^odd indentation \((\d+) spaces?\) —/;
@@ -305,9 +301,6 @@ function normalizeMessage(issue: IssueLike): Normalized {
   if ((mt = m.match(RE_DEEP_HOP)) !== null) {
     return { rule: 'refs.deep_hop', pattern: 'deep hop chain', detail: mt[1]! };
   }
-  if ((mt = m.match(RE_CHAINING)) !== null) {
-    return { rule: 'refs.chaining', pattern: 'chaining in overflow target', key: mt[1]! };
-  }
   if ((mt = m.match(RE_PROSE)) !== null) {
     // Main's see-like-prose finding (advisory rephrase hint) — per-target group.
     return { rule: 'refs.prose', pattern: 'see-like prose', key: mt[1]!, detail: m };
@@ -394,17 +387,6 @@ function normalizeMessage(issue: IssueLike): Normalized {
   }
   if (RE_TBD_DISALLOWED.test(m)) {
     return { rule: 'content.tbd.disallowed', pattern: 'tbd disallowed' };
-  }
-
-  // ── overflow ──
-  if ((mt = m.match(RE_CONTENT_TYPE)) !== null) {
-    const kind = mt[1]!.trim();
-    if (kind === 'code fence') return { rule: 'overflow.code_fence', pattern: 'code fence (extract to file)' };
-    if (kind === 'table') return { rule: 'overflow.table', pattern: 'table (extract to file)' };
-    return { rule: 'overflow.force_file', pattern: `${kind} forced to file` };
-  }
-  if ((mt = m.match(RE_NODE_CHARS)) !== null) {
-    return { rule: 'overflow.node_chars', pattern: `node chars >max (${mt[1]}/${mt[2]})` };
   }
 
   // ── io / parse ──
@@ -631,12 +613,13 @@ export function estimateTokens(text: string): number {
 export function checkReportJson(result: CheckResultLike): unknown {
   const sections: Record<string, Array<{ file: string; line: number; level: string; rule: string; detail: string; suggestion?: string }>> = {};
   // issue #43: ADDITIVE `config` section. test/report.test.ts pins
-  // Object.keys(sections) to exactly these six keys for plain runs (and the
+  // Object.keys(sections) to exactly these five keys for plain runs (and the
   // §35 fixtures pin the wire shape byte-for-byte), so 'config' must NOT
   // join the always-present list — it is added ONLY when a config-category
   // issue exists (the invalid-_rules.yaml configFail). Position: after the
-  // engines, before the catch-all, mirroring SECTION_ORDER.
-  const sectionNames = ['structure', 'style', 'refs', 'redundancy', 'overflow'];
+  // engines, before the catch-all, mirroring SECTION_ORDER. (Issue #56: the
+  // 'overflow' section left the fixed set with the §16 engine.)
+  const sectionNames = ['structure', 'style', 'refs', 'redundancy'];
   if (result.issues.some((issue) => issue.category === 'config')) sectionNames.push('config');
   sectionNames.push('other');
   for (const name of sectionNames) {

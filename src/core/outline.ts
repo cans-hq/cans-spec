@@ -111,7 +111,7 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     const raw = lines[i];
     const lineNo = i + 1;
 
-    // Code fence toggling: fence content is overflow, never bullets.
+    // Code fence toggling: fence content is never bullets.
     if (FENCE_RE.test(raw.trimEnd()) && raw.trim() !== '```' + '') {
       // treat any line whose trimmed form starts with ``` as a fence marker
     }
@@ -327,7 +327,7 @@ export function extractBackPointers(source: string, file: string): BackPointer[]
 /** Flattened tree WITHOUT synthetic placeholder nodes — the view every
  *  node-count and content-comparison consumer should use (issue #8).
  *  flattenNodes itself is unchanged: the tree shape keeps the placeholders
- *  (they carry hasTable/hasCodeFence for the overflow engine). */
+ *  (they carry the hasTable/hasCodeFence parse signals). */
 export function realNodes(nodes: OutlineNode[]): OutlineNode[] {
   return flattenNodes(nodes).filter(n => !isSyntheticNode(n));
 }

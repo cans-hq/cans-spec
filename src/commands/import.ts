@@ -10,7 +10,7 @@ import { parseLogseq } from '../converters/logseq.ts';
 import { parseObsidian, stripFrontmatter } from '../converters/obsidian.ts';
 import {
   serializeToCans, parseFromCans, stripMetadata, parseCheckbox,
-  extractOverflowContent, type OverflowExtraction,
+  extractFencedBlocks, type ExtractedBlock,
 } from '../converters/shared.ts';
 
 export interface ImportArgs {
@@ -623,15 +623,16 @@ export async function run(args: string[]): Promise<ImportResult> {
       }
     }
 
-    // §27: fenced code blocks under bullets are extracted to overflow files
-    // before parsing, so their content survives as files + see: refs (QA-05 F5).
-    let overflow: OverflowExtraction[] = [];
+    // §27: fenced code blocks under bullets are extracted to separate
+    // artifact files before parsing, so their content survives as files +
+    // see: refs (QA-05 F5).
+    let extractedBlocks: ExtractedBlock[] = [];
     let cleanText = text;
     if (fmt === 'obsidian' || fmt === 'logseq') {
       const baseSlug = slugify(basename(src).replace(/\.[^.]+$/, '')) || 'import';
-      const extracted = extractOverflowContent(text, baseSlug);
+      const extracted = extractFencedBlocks(text, baseSlug);
       cleanText = extracted.cleanedSource;
-      overflow = extracted.extractions;
+      extractedBlocks = extracted.extractions;
     }
 
     let imported: ExternalNode[];
@@ -674,14 +675,14 @@ export async function run(args: string[]): Promise<ImportResult> {
       if (outcome.content !== null) {
         if (!opts.dryRun) {
           await writeText(absTarget, canonicalizeRefTargets(outcome.content));
-          for (const ovf of overflow) {
-            const ovfAbs = join(workspace, ovf.overflowFile);
-            mkdirp(dirname(ovfAbs));
-            await writeText(ovfAbs, `${ovf.content}\n`);
+          for (const blk of extractedBlocks) {
+            const blkAbs = join(workspace, blk.extractedFile);
+            mkdirp(dirname(blkAbs));
+            await writeText(blkAbs, `${blk.content}\n`);
           }
         }
         merged.push(existingRel);
-        for (const ovf of overflow) newFiles.push(ovf.overflowFile);
+        for (const blk of extractedBlocks) newFiles.push(blk.extractedFile);
       }
       continue;
     }
@@ -697,14 +698,14 @@ export async function run(args: string[]): Promise<ImportResult> {
     if (!opts.dryRun) {
       mkdirp(dirname(absTarget));
       await writeText(absTarget, cansText);
-      for (const ovf of overflow) {
-        const ovfAbs = join(workspace, ovf.overflowFile);
-        mkdirp(dirname(ovfAbs));
-        await writeText(ovfAbs, `${ovf.content}\n`);
+      for (const blk of extractedBlocks) {
+        const blkAbs = join(workspace, blk.extractedFile);
+        mkdirp(dirname(blkAbs));
+        await writeText(blkAbs, `${blk.content}\n`);
       }
     }
     newFiles.push(relName);
-    for (const ovf of overflow) newFiles.push(ovf.overflowFile);
+    for (const blk of extractedBlocks) newFiles.push(blk.extractedFile);
     if (titleBase === null) nextNum++;
   }
 

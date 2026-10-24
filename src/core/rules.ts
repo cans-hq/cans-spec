@@ -240,7 +240,6 @@ export function defaultRules(): Rules {
       estimate_chars_per_token: 3.5,
       warn_threshold: 0.8,
     },
-    overflow: { max_node_chars: 200, force_file_for: ['code_block', 'table', 'diagram'] },
   };
 }
 
@@ -281,7 +280,6 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
     ['references', ['mode', 'max_hops', 'orphan_check']],
     ['redundancy', ['enabled', 'word_frequency_threshold']],
     ['token_budget', ['enabled', 'default_limit']],
-    ['overflow', ['max_node_chars']],
   ];
 
   for (const [section, requiredKeys] of sections) {
@@ -349,7 +347,6 @@ const SECTION_KEYS: Record<string, string[]> = {
     'synonyms',
   ],
   token_budget: ['enabled', 'default_limit', 'estimate_chars_per_token', 'warn_threshold'],
-  overflow: ['max_node_chars', 'force_file_for'],
 };
 
 /** Load rules from `<root>/_rules.yaml`, reconciling §18's three loading
@@ -437,8 +434,7 @@ export function loadRules(root: string): Rules {
   //   mapping/numeric  → null    (node_length, siblings, depth, max_tbd_per_file,
   //                               force_nested_above, force_sibling_below, max_hops,
   //                               word_frequency_threshold, phrase_overlap_threshold,
-  //                               cross_file_threshold, warn_threshold, max_node_chars,
-  //                               force_file_for, prefer)
+  //                               cross_file_threshold, warn_threshold, prefer)
   //   parameters (NOT checks — keep defaults when omitted): mode, stopwords,
   //   synonyms, fuzzy_max_distance, fuzzy_min_word_length (issue #47),
   //   estimate_chars_per_token, default_limit; token_budget.enabled
@@ -589,20 +585,6 @@ export function loadRules(root: string): Rules {
     }
   } else if (deleted('token_budget', 'warn_threshold')) {
     rules.token_budget = { ...rules.token_budget, warn_threshold: null };
-  }
-
-  // overflow: max_node_chars / force_file_for — both are check keys.
-  if (!listed('overflow')) {
-    if (deleteMode) {
-      rules.overflow = { max_node_chars: null, force_file_for: null };
-    }
-  } else {
-    if (deleted('overflow', 'max_node_chars')) {
-      rules.overflow = { ...rules.overflow, max_node_chars: null };
-    }
-    if (deleted('overflow', 'force_file_for')) {
-      rules.overflow = { ...rules.overflow, force_file_for: null };
-    }
   }
 
   return rules;

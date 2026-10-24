@@ -38,13 +38,13 @@ export function globFiles(dir: string, pattern: string): string[] {
  *  tool artifacts are skipped at every level, exactly like the root.
  *
  *  Only `index.md` counts below the root: a NON-index subfolder .md (e.g.
- *  `plugins/pty.md`) is §16 overflow-target material (leaf content) unless a
- *  loaded spec file references it — the check engine's promotion pass (issue
- *  #54) promotes those; discovery itself never loads them.
+ *  `plugins/pty.md`) is plain non-spec content (§8) unless a loaded spec
+ *  file references it — the check engine's promotion pass (issue #54)
+ *  promotes those; discovery itself never loads them.
  *
- *  Relative keys are '/'-joined (the same convention as discoverOverflow
- *  Targets and toRelative, never path.join's platform separator) so ref
- *  targets like `plugins/topic/index.md` always match a discovered key. */
+ * Relative keys are '/'-joined (the same convention as toRelative, never
+ *  path.join's platform separator) so ref targets like
+ *  `plugins/topic/index.md` always match a discovered key. */
 export function discoverSpecFiles(root: string): string[] {
   const out: string[] = [];
   if (!dirExists(root)) return out;
@@ -125,38 +125,6 @@ export function detectMalformedSpecDirs(root: string): string[] {
   return out.sort();
 }
 
-/** Overflow target files: `.md` content files inside workspace subfolders
- *  (e.g. `04-api/request-schema.md`) that are not spec files themselves.
- *  §16: these must NOT contain their own `see:` refs (no chaining).
- *  Issue #54: a subfolder .md that the check engine PROMOTED to a first-class
- *  spec file (a loaded spec file references it) is excluded from this set by
- *  the caller — its `see:` refs are ordinary graph edges. Only the
- *  UNREFERENCED subfolder .md files remain §16 leaf content here. */
-export function discoverOverflowTargets(root: string): string[] {
-  const out: string[] = [];
-  if (!dirExists(root)) return out;
-  const walk = (dir: string, prefix: string): void => {
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
-      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
-      if (entry.isFile() && entry.name.endsWith('.md')) {
-        // `*/index.md` is a folder-mode spec file, not an overflow target.
-        if (prefix !== '' && entry.name !== 'index.md') out.push(rel);
-      } else if (entry.isDirectory()) {
-        walk(join(dir, entry.name), rel);
-      }
-    }
-  };
-  walk(root, '');
-  return out.sort();
-}
-
 export function discoverActiveTasks(root: string): string[] {
   return globFiles(join(root, '_tasks'), '*.md')
     .map(p => join('_tasks', basename(p)))
@@ -220,7 +188,7 @@ export function resolveSpecFile(root: string, name: string): string | null {
  *    `_tasks/`/`_adr/` files stay aux (parsed for refs only) and AGENTS.md
  *    is not spec, exactly as in discovery.
  *  The returned key uses the '/'-joined relative convention shared by
- *  discoverSpecFiles / discoverOverflowTargets / toRelative. */
+ *  discoverSpecFiles / toRelative. */
 export function promotableSpecKey(root: string, name: string): string | null {
   const target = name.replace(/\/+$/, '');
   if (target === '') return null;

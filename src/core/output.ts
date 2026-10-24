@@ -231,14 +231,14 @@ export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set
 
 const DISPLAY_NAMES: Record<string, string> = {
   structure: 'STRUCTURE', style: 'STYLE', refs: 'REFS', redundancy: 'REDUNDANCY',
-  overflow: 'OVERFLOW', config: 'CONFIG', parse: 'PARSE', content: 'CONTENT', io: 'IO', other: 'OTHER',
+  config: 'CONFIG', parse: 'PARSE', content: 'CONTENT', io: 'IO', other: 'OTHER',
 };
 // 'config' (issue #43) sits after the engines, mirroring report.ts's
 // SECTION_ORDER. It never renders in practice: a config failure carries the
 // §37 top-level `error` field, and printCheckHuman prints that standalone
 // and returns BEFORE any section — the invalid-rules diagnosis can never
 // leak into a bogus report body. Listed for coherence only.
-const SECTION_PRINT_ORDER = ['structure', 'style', 'refs', 'redundancy', 'overflow', 'config', 'parse', 'content', 'io', 'other'];
+const SECTION_PRINT_ORDER = ['structure', 'style', 'refs', 'redundancy', 'config', 'parse', 'content', 'io', 'other'];
 const FOLD_TOP_GROUPS = 5;
 const FOLD_KEYWORD_ITEMS = 5;
 const FOLD_OVERLAP_ITEMS = 3;
@@ -283,13 +283,10 @@ function printCheckHuman(r: CheckResult, refsOnly?: boolean, show?: Set<string>)
       section = { name: 'refs', errorCount: 0, warningCount: 0, infoCount: 0, groups: [] };
     }
     // Compact contract: STRUCTURE/STYLE/REDUNDANCY (and the small sections)
-    // print only when they carry findings; REFS and OVERFLOW always print
-    // (they carry the ✓ healthy state, as in the issue's expected output).
+    // print only when they carry findings; REFS always prints (it carries the
+    // ✓ healthy state, as in the issue's expected output). Issue #56: the
+    // OVERFLOW block is gone with the §16 engine.
     if (section === undefined) {
-      if (name === 'overflow' && !refsOnly) {
-        console.log('');
-        console.log('OVERFLOW  ✓');
-      }
       continue;
     }
     console.log('');

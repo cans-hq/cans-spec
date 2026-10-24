@@ -3,7 +3,7 @@ import type { BackPointer, CheckResult, Issue, OutlineNode } from '../types.ts';
 import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
-  dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs, discoverOverflowTargets,
+  dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs,
   resolveSpecFile, promotableSpecKey,
 } from '../core/fs.ts';
 import {
@@ -13,7 +13,6 @@ import {
 import { loadRules } from '../core/rules.ts';
 import { checkStructure, checkTbdPolicy } from '../core/structure.ts';
 import { checkStyle } from '../core/style.ts';
-import { checkOverflow, checkNoChaining } from '../core/overflow.ts';
 import { checkRedundancy } from '../core/redundancy.ts';
 import {
   buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
@@ -70,7 +69,7 @@ const CHECK_FLAGS: FlagSpec[] = [
 
 /** issue #41: user-facing --show targets. `all` unfolds every section. */
 const SHOW_SECTIONS = new Set([
-  'structure', 'style', 'refs', 'redundancy', 'overflow', 'parse', 'content', 'io', 'other', 'all',
+  'structure', 'style', 'refs', 'redundancy', 'parse', 'content', 'io', 'other', 'all',
 ]);
 
 const REF_BY_RE = /<!--\s*ref-by:\s*(.*?)\s*-->/;
@@ -131,7 +130,7 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
       const s = part.trim().toLowerCase();
       if (s === '') continue;
       if (!SHOW_SECTIONS.has(s)) {
-        errors.push(`unknown --show section "${s}" — use structure|style|refs|redundancy|overflow|all`);
+        errors.push(`unknown --show section "${s}" — use structure|style|refs|redundancy|all`);
       } else {
         show.push(s);
       }
@@ -722,14 +721,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   // Issue #54: transitive promotion of referenced subfolder .md files to
   // first-class spec files. Discovery loads root *.md plus any-depth
-  // <dir>/index.md; every OTHER subfolder .md is §16 overflow-target
-  // material (leaf content) UNLESS a loaded SPEC file points at it —
+  // <dir>/index.md; every OTHER subfolder .md is leaf content (not a spec
+  // file, §8) UNLESS a loaded SPEC file points at it —
   // pointerizing it promotes it: it joins specFiles/specSources above and
   // is thereafter indistinguishable from a discovered file (counted in
-  // files/nodes, subject to structure/style/content/overflow/redundancy
+  // files/nodes, subject to structure/style/content/redundancy
   // checks, a ref-graph node for deep-hop/orphan/back-pointer purposes,
   // --file-filterable, --fix-rewritable). Unreferenced subfolder .md files
-  // stay §16 overflow targets.
+  // stay plain non-spec content (issue #56 removed the §16 overflow-target
+  // class together with the engine).
   //
   // Ref sources are SPEC FILES ONLY, by design: refs held by _tasks/ and
   // _adr/ files (auxFiles below — transient and decisional pointers) do NOT
@@ -792,7 +792,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   }
   let graph = buildRefGraph(allFiles, root);
 
-  // File filter: restrict structure/style/overflow/redundancy to one file (refs stay global).
+  // File filter: restrict structure/style/redundancy to one file (refs stay global).
   const checkable = opts.file !== null
     ? [...specFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
     : [...specFiles.keys()];
@@ -1021,48 +1021,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     if (!opts.noRedundancy && rules.redundancy.enabled) {
       issues.push(...checkRedundancy(checkableMap, rules.redundancy, rules.references.duplicate_home_check));
     }
-    // Issue #45: same-value dedup. structure.node_length.max and
-    // overflow.max_node_chars compare the SAME quantity (node.text.length),
-    // so when both budgets are set to the SAME value every over-limit node
-    // is guaranteed to be flagged twice — once per rule — doubling
-    // errorCount and the report. When they are equal, structure.node_length.max
-    // is the authoritative home for that budget: the overflow.node_chars
-    // check is skipped (max_node_chars nulled for this run only). DISTINCT
-    // values are genuinely different budgets and still both fire, each at
-    // its own threshold. Either budget null (deleted/off, §18) → no dedup,
-    // the surviving check runs unchanged.
-    const overflowRules =
-      rules.overflow.max_node_chars !== null &&
-      rules.structure.node_length.max !== null &&
-      rules.overflow.max_node_chars === rules.structure.node_length.max
-        ? { ...rules.overflow, max_node_chars: null } // issue #45: structure owns the same-value budget
-        : rules.overflow;
-    for (const key of checkable) {
-      issues.push(...checkOverflow(specFiles.get(key)!, key, overflowRules));
-    }
-
-    // §16 no-chaining: overflow target files (spec subfolder content) must not
-    // contain their own see: refs. Issue #54: a subfolder .md that promotion
-    // loaded as a first-class spec file is NOT an overflow target anymore —
-    // its see: refs are ordinary graph edges (mesh back-pointers). Only the
-    // UNREFERENCED subfolder .md files remain §16 leaf content here. Both
-    // sides use the '/'-joined relative-key convention
-    // (discoverOverflowTargets / discoverSpecFiles / toRelative), compared
-    // case-insensitively so spelling variants of one file cannot dodge the
-    // exclusion (and backslashes from any foreign key form are normalized).
-    const specKeys = new Set(
-      [...specFiles.keys()].map(k => k.split('\\').join('/').toLowerCase()),
-    );
-    const targetFiles = new Map<string, OutlineNode[]>();
-    for (const rel of discoverOverflowTargets(root)) {
-      if (specKeys.has(rel.toLowerCase())) continue; // promoted (issue #54)
-      try {
-        targetFiles.set(rel, parseOutline(await readText(join(root, rel)), rel));
-      } catch {
-        // unreadable overflow target: skipped
-      }
-    }
-    issues.push(...checkNoChaining(targetFiles));
+    // Issue #56: the overflow engine (§16 — code-fence/table flags and the
+    // overflow.max_node_chars budget) is REMOVED. structure.node_length
+    // (§15) is the single node-text-length limit; `overflow.*` keys in
+    // _rules.yaml now reject as unrecognized (strict §18 validation).
   }
 
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.
