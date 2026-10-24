@@ -394,6 +394,104 @@ The suggested fix is two-part and never a duplicate (issue #22): adding the dire
 Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remove the intermediate hop via 02-authentication.md: delete 04-api.md's "see: 02-authentication.md" (line 3)
 ```
 
+### External roots / inter-repo pointers (issue #55)
+
+A `see:` target of the form `name://sub/path` is an inter-repo pointer: it
+resolves `sub/path` under the external root declared as `name` in
+`references.external_roots` (§18). `http://` and `https://` targets are URLs,
+never pointers — they keep their exact pre-#55 treatment (broken-ref
+classification, create-advice, deep-hop mesh classification).
+
+**Anchor (binding decision):** the root PATH resolves from the PROJECT root —
+the parent directory of the `cans/` workspace — so `"../kelir-cloud/cans"`
+names a sibling checkout:
+
+```yaml
+# cans/_rules.yaml
+references:
+  mode: pointer
+  back_pointers: false
+  max_hops: 1
+  orphan_check: true
+  duplicate_home_check: true
+  external_roots:
+    kelir-cloud: "../kelir-cloud/cans"
+```
+
+```text
+# cans/07-lifecycle.md — a per-primitive exercise map whose examples live in the sibling repo
+- map_shared_region: see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+- register_veto: see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+```
+
+The sub-path is always relative to the DECLARED root — declare the sibling's
+repo root (`"../kelir-cloud"`) and spell `kelir-cloud://cans/artifacts/…`, or
+declare its cans/ dir and spell `kelir-cloud://artifacts/…`; both work.
+
+Verdicts, in order:
+
+1. **Undeclared root** (`ghost://x` with no `ghost` in `external_roots`) →
+   broken ref error, `refs.broken.file`, message `undeclared external root
+   'ghost'` — counted in `refs.broken`. Fires whether or not any
+   `external_roots` map is configured.
+2. **Absent root** (declared but not checked out locally) → ONE warning per
+   referenced root per run (`refs.external.absent`), attached to the first
+   pointer into it; pointers into the root are NOT verified that run —
+   neither broken nor resolved. Binding decision: a warning, never an error —
+   CI that only clones the spec repo must stay usable. An absent root that
+   nothing points at is silent.
+3. **Escape** → broken ref error, always (security, never optional): the
+   sub-path must stay INSIDE the resolved root, checked twice — lexically
+   (`root://../..`, `root://../../etc/passwd`, absolute sub-paths are
+   rejected; interior `..` that normalizes back inside the root still
+   resolves, the same lexical-containment semantics the workspace resolver
+   applies) and after realpath (a symlink inside the root pointing outside is
+   an escape, never a resolution). The ROOT value itself may traverse — it is
+   author-declared; only the pointer sub-path is containment-guarded. This
+   extends the issue #10 discipline to external roots: an undeclared `../`
+   target in an ordinary `see:` stays exactly the broken ref it was, and a
+   sibling file that exists on disk beyond an ordinary `../` target still
+   never resolves.
+4. **Missing file** (present root, contained sub-path, no file) → broken ref
+   error (`file not found under external root 'name'`), gated by
+   `orphan_check` like the issue's proposed config; with
+   `orphan_check: false` the missing-file verification is off. Directories
+   are not valid targets — external pointers resolve to files.
+5. **Resolved** → a valid terminal ref. `duplicate_home_check` then applies
+   ACROSS roots: if the pointer's (normalized) sub-path also names an
+   existing file under the workspace root, the project root, or another
+   present declared root — the migration-leftover shape where the example
+   still exists locally AND in the sibling repo — the existing
+   `structure.duplicate_home` error shape fires (`duplicate home: both
+   artifacts/examples/multi-vm-swarm.rs and
+   kelir-cloud://artifacts/examples/multi-vm-swarm.rs exist — keep exactly
+   one home`). One issue per offending pointer; roots that alias the same
+   directory (same realpath) are one root with two names, not two homes — and
+   every probe compares realpaths per file, so a probe that lands on the very
+   file the pointer resolved to (a root declared as the project root itself,
+   `"."`, pointing at repo files outside `cans/`; a workspace symlink at the
+   same sub-path) is one home with two spellings, never a duplicate.
+6. **Anchors** resolve against the external target's addressable vocabulary
+   — its bullet nodes and (for `.yaml`/`.yml`) mapping keys — exactly like an
+   on-disk artifact target (issue #49). A miss is `refs.broken.anchor`, a
+   target with nothing addressable downgrades to the `refs.anchor.no-target`
+   advisory.
+
+**Terminal-target semantics (binding decision):** an inter-repo pointer is an
+artifact-style TERMINAL target, one hop like `see: artifacts/final-chain.ts`
+(issue #44):
+
+- never a deep hop — it can never name a loaded spec file (its resolution
+  domain is a different root), so it can never form an A→B→C spec chain and
+  is never mesh-exiting;
+- never promoted into the spec graph — the #54 promotion applies to files
+  inside THIS repo's workspace only, so an external `.md` target is not
+  loaded, its own `see:` refs are invisible to the graph, and §16 chaining
+  never applies to it;
+- never requires a back-pointer — the external repo is not owned by this
+  check run; `--fix` writes nothing there (and `back_pointers` never applies
+  to external targets in either direction).
+
 ### Edge cases
 
 | Case | Behavior |
@@ -407,6 +505,13 @@ Fix: add "see: 06-operations.md#Data-protection" directly to 04-api.md and remov
 | Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §5 deep-hop rules apply |
+| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's bullets/YAML keys (issue #55, #49) |
+| External pointer, undeclared root name | Broken ref error — `undeclared external root 'name'` (issue #55) |
+| External pointer, declared root not checked out | ONE warning per referenced root; pointers into it unverified that run (issue #55) |
+| External pointer, sub-path escaping the root (`root://../..`, symlink out) | Broken ref error — containment is lexical AND realpath; never resolves outside the declared root (issue #55, extends #10) |
+| External pointer, missing file under a present root | Broken ref error under `orphan_check: true` (`file not found under external root 'name'`); verification off with `orphan_check: false` (issue #55) |
+| External `.md` target | NOT promoted — terminal target only; its own `see:` refs are invisible (issue #55 decision 3) |
+| `see: http://…` / `see: https://…` | URLs, never external-root pointers — exact pre-#55 treatment (broken ref error when unresolved) (issue #55) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
@@ -557,6 +662,7 @@ references:
   max_hops: 1
   orphan_check: true
   duplicate_home_check: true
+  # external_roots: {}     # issue #55 — inter-repo pointer roots; default: none
 redundancy:
   enabled: true
   word_frequency_threshold: 4
@@ -580,6 +686,13 @@ token_budget:
 ```
 
 `redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
+
+`references.external_roots` (issue #55) maps root names to paths for inter-repo `see:` pointers (`name://sub/path` — §12). It is a PARAMETER, not a check switch: absent/empty = no external roots (every `name://` target is an `undeclared external root` broken ref), and it never participates in the delete/override reconciliation. Rules:
+
+- **Anchor:** the path resolves from the PROJECT root — the parent directory of the `cans/` workspace — so `"../kelir-cloud/cans"` names a sibling checkout. Any non-empty string is accepted (absolute paths included — the root is author-declared and only the POINTER sub-path is containment-guarded, §12).
+- **Name grammar:** `^[a-z][a-z0-9_-]*$` — case-sensitive, no slashes, no dots.
+- **Validation:** malformed entries are line-numbered config errors like every §18 key: a non-mapping `external_roots` (`line N — "references.external_roots" must be a mapping of root names to paths, got …`), an invalid name (`line N — invalid external root name "Kelir" — must match ^[a-z][a-z0-9_-]*$`), or a non-string/empty value (`line N — external root "kelir" must be a non-empty path string, got …`). A declared root that is not checked out locally is NOT a config error — it is a runtime warning (§12).
+- Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
 
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
 
@@ -658,6 +771,20 @@ Runs all validation engines. The most-used command.
 **Reads:** `_rules.yaml`, spec files, `_tasks/*.md` (light ref check only), `_adr/*.md` (ref check).
 **Writes:** Nothing by default. `--fix` updates back-pointer comments; `--fix --yes` additionally repairs broken ref anchors (issue #53 Part 2.4, below). `--fix --dry-run` writes nothing at all.
 **Excludes:** `_collab/`, `AGENTS.md`, `_rules.yaml` from structural checks.
+
+**External roots (issue #55):** with `references.external_roots` declared
+(§18), `see: name://sub/path` pointers verify against the sibling checkouts
+— `check` READS them (existence, containment, and — for anchored pointers —
+the one target file's bullets/YAML keys) and never writes anything there:
+`--fix` writes spec files only, external targets earn no back-pointers, and
+the external repo's own `see:` graph is never entered (terminal targets,
+§12). A declared root that is not checked out is a warning, so CI that only
+clones the spec repo keeps working. JSON output needs no new fields: external
+pointers count in `refs.total`, their verdicts surface as issues with the
+existing rule keys (`refs.broken.file` for undeclared/escape/missing,
+`refs.external.absent` for the absent-root warning, `structure.duplicate_home`
+for the cross-root duplicate home), and the absent-root warning lands in
+`sections.refs` like every other refs warning.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits. (The one exception, gated behind `--fix --yes`: pure anchor-segment rewrites inside `see:` tokens — see the anchor-repair contract below. Node text is never touched.)
 

@@ -305,6 +305,44 @@ Subfolder `.md` files join the same engines: a file a spec points at
 run; unreferenced ones are plain non-spec content (invisible to the
 engines, like any non-spec repo file).
 
+### Inter-repo pointers (`external_roots`)
+
+A spec can point at files in a sibling repo — the example lives in exactly
+one place and the spec still gets a machine-checked pointer. Declare the
+roots in `cans/_rules.yaml` (paths resolve from the project root, the parent
+of `cans/`), then use `name://sub/path` in `see:` targets:
+
+```yaml
+references:
+  mode: pointer
+  back_pointers: false
+  max_hops: 1
+  orphan_check: true
+  duplicate_home_check: true
+  external_roots:
+    kelir-cloud: "../kelir-cloud/cans"
+```
+
+```text
+# cans/07-lifecycle.md — a per-primitive exercise map whose examples live in the sibling repo
+- map_shared_region: see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+- register_veto: see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+- export_snapshot, import_snapshot: see: kelir-cloud://artifacts/examples/db-backed-runtime.py
+- adjust_balloon: see: kelir-cloud://artifacts/examples/serverless-webhook.ts
+```
+
+Semantics: only declared roots resolve (an undeclared `name://` is a broken
+ref, and plain `../` escapes stay broken refs — containment is enforced
+lexically and after symlink resolution, so a pointer can never read outside
+its root). Inter-repo pointers are terminal targets like artifacts: one hop
+under `max_hops: 1`, never promoted into the spec graph, no back-pointer
+required in the external repo, and `http://`/`https://` targets are URLs,
+never pointers. A missing file under a present root is a broken ref
+(`orphan_check`), a sub-path that exists in two roots trips
+`duplicate_home_check`, and a declared root that is not checked out is a
+warning — pointers into it are simply unverified, so CI that only clones the
+spec repo stays green.
+
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line

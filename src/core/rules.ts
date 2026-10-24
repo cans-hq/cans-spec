@@ -329,7 +329,16 @@ function deepMerge(base: unknown, over: unknown): unknown {
  *  fuzzy knobs, budget planning inputs) keep their defaults when OMITTED —
  *  an explicit empty value is a typo, not a documented state. */
 interface KeySpec {
-  kind: 'boolean' | 'integer' | 'number' | 'enum' | 'range' | 'wordList' | 'synonymGroups' | 'docString';
+  kind:
+    | 'boolean'
+    | 'integer'
+    | 'number'
+    | 'enum'
+    | 'range'
+    | 'wordList'
+    | 'synonymGroups'
+    | 'docString'
+    | 'rootMap';
   /** integer/number: inclusive lower bound. range: bound for BOTH members. */
   min?: number;
   /** number: inclusive upper bound. */
@@ -340,6 +349,10 @@ interface KeySpec {
   members?: string[];
   /** Is an explicit empty value (null) legal for this key? */
   nullOk?: boolean;
+  /** Strict-validated by the schema but excluded from SECTION_KEYS (issue
+   *  #55: parameters whose presence must not retroactively change the
+   *  delete/override reconciliation for configs that predate them). */
+  reconcile?: false;
 }
 
 const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
@@ -368,6 +381,13 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
     max_hops: { kind: 'integer', min: 0, nullOk: true },
     orphan_check: { kind: 'boolean' },
     duplicate_home_check: { kind: 'boolean' },
+    // Issue #55: declared inter-repo pointer roots — root name → path from
+    // the PROJECT root (§12/§18). A PARAMETER, not a check switch: null =
+    // no roots (the default). reconcile: false keeps it out of SECTION_KEYS
+    // so listing it never changes what a "complete references section"
+    // means for the delete/override reconciliation (pre-#55 configs behave
+    // identically); entry validation keeps the issue-#55 message shapes.
+    external_roots: { kind: 'rootMap', nullOk: true, reconcile: false },
   },
   redundancy: {
     enabled: { kind: 'boolean' },
@@ -411,11 +431,20 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
  *  fuzzy_min_word_length (issue #47), token_budget.enabled/default_limit/
  *  estimate_chars_per_token) are listed too: they count towards a section's
  *  coverage but are never flipped OFF — omitted parameters keep their
- *  documented defaults (§18 overrides only what the file lists for them). */
+ *  documented defaults (§18 overrides only what the file lists for them).
+ *  The one deliberate exception is references.external_roots (issue #55,
+ *  reconcile: false): schema-validated but NOT counted, so listing it never
+ *  changes what a "complete" or "majority-covered" references section
+ *  means for configs that predate the key. */
 const SECTION_KEYS: Record<string, string[]> = Object.fromEntries(
   Object.entries(RULES_SCHEMA)
     .filter(([section]) => section !== 'slug')
-    .map(([section, keys]) => [section, Object.keys(keys)]),
+    .map(([section, keys]) => [
+      section,
+      Object.entries(keys)
+        .filter(([, spec]) => spec.reconcile !== false)
+        .map(([key]) => key),
+    ]),
 );
 
 /** How an offending value is named in strict-validation errors. Scalars keep
@@ -476,6 +505,7 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   if (spec.kind === 'range') return 'a mapping like { min: 3, max: 120 }';
   if (spec.kind === 'wordList') return 'a list of words';
   if (spec.kind === 'synonymGroups') return SYNONYM_GROUPS_EXPECTATION;
+  if (spec.kind === 'rootMap') return 'a mapping of root names to paths';
   return 'a string';
 }
 
@@ -601,6 +631,30 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
     case 'docString':
       if (typeof v !== 'string') fail('a string (the slug: section is documentation only)');
       return;
+    case 'rootMap': {
+      // Issue #55: entries are root names → path strings from the PROJECT
+      // root (§12/§18). Messages keep the issue-#55 shapes that
+      // test/issues/issue-55.test.ts pins (name grammar + got-value text);
+      // block-form entries carry their own tracked line, inline members
+      // share the key's line (parseYamlTracked).
+      if (!isPlainObject(v)) fail('a mapping of root names to paths');
+      for (const [name, value] of Object.entries(v)) {
+        const at = `${path}.${name}`;
+        if (!/^[a-z][a-z0-9_-]*$/.test(name)) {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — invalid external root name "${name}" — ` +
+              'must match ^[a-z][a-z0-9_-]*$ (lowercase, no slashes, no dots)',
+          );
+        }
+        if (value === null || typeof value !== 'string' || value.trim() === '') {
+          const got = value === null ? 'empty value (nothing under the key)' : typeof value;
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — external root "${name}" must be a non-empty path string, got ${got}`,
+          );
+        }
+      }
+      return;
+    }
   }
 }
 

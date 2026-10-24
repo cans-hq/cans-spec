@@ -38,6 +38,14 @@ references:
   max_hops: 1
   orphan_check: true
   duplicate_home_check: true
+  # Issue #55 — inter-repo pointers. Declare a sibling checkout by name and
+  # point at it with `see: name://sub/path` (path relative to the declared
+  # root; the root path resolves from the PROJECT root, the parent of cans/):
+  #   external_roots:
+  #     kelir-cloud: "../kelir-cloud/cans"
+  #   → see: kelir-cloud://artifacts/examples/multi-vm-swarm.rs
+  # Default: none (every name:// target is an undeclared-root broken ref).
+  # external_roots: {}
 
 redundancy:
   enabled: true
