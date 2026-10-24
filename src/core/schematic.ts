@@ -567,6 +567,12 @@ class YamlParser {
     if (blockIndicator(text) !== null) return this.parseBlockScalar(parentIndent, text, l.no);
     const kv = splitYamlKey(text);
     if (kv !== null) return this.parseMapping(d);
+    // Consume the scalar's own line before the continuation scan — every
+    // other dispatcher (mapping, sequence, flow, block scalar) consumes it
+    // itself; parsePlainOrQuoted starts scanning at this.pos and must not
+    // absorb the line it is parsing (the sequence-dash rewrite path reaches
+    // here with pos still ON the rewritten line).
+    this.pos++;
     return this.parsePlainOrQuoted(text, parentIndent, l.no);
   }
 
@@ -740,10 +746,11 @@ class YamlParser {
       }
       break;
     }
-    // Trailing blank runs are not content (chomping detail — value fidelity
-    // beyond existence is not this module's contract).
+    // Trailing blank runs are not content for clip/strip; `+` (keep) counts
+    // them as newlines.
     let last = end;
     while (last > start && this.lines[last - 1]!.raw.trim() === '') last--;
+    const cut = end - last; // trailing blank lines (physical)
     const body: string[] = [];
     let contentIndent = -1;
     for (let i = start; i < last; i++) {
@@ -756,7 +763,12 @@ class YamlParser {
       body.push(raw.slice(Math.min(contentIndent, leadingSpaces(raw))));
     }
     this.pos = end;
-    return scalar(body.join(bi!.fold ? ' ' : '\n'));
+    // Chomping: clip (no indicator) keeps ONE trailing newline, strip (-)
+    // none, keep (+) every trailing blank line as a newline.
+    const joined = body.join(bi!.fold ? ' ' : '\n');
+    if (bi!.chomp === '-') return scalar(joined);
+    if (bi!.chomp === '+') return scalar(body.length > 0 ? joined + '\n'.repeat(cut + 1) : '\n'.repeat(cut));
+    return scalar(body.some(b => b !== '') ? joined + '\n' : '');
   }
 
   // ── flow collections (possibly spanning lines) ──
@@ -1333,7 +1345,9 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
     if (text.startsWith('"""', i)) {
       const close = findTripleClose(text, i + 3, '"');
       if (close === null) fail(no, 'unterminated multiline basic string');
-      const body = text.slice(i + 3, close - 3);
+      let body = text.slice(i + 3, close - 3);
+      if (body.startsWith('\r')) body = body.slice(1);
+      if (body.startsWith('\n')) body = body.slice(1); // TOML: the newline after the opening delimiter is trimmed
       return { value: scalar(decodeEscapes(body.replace(/\\\n\s*/g, ''), no)), end: close };
     }
     const q = scanQuoted(text, i, no);
@@ -1345,7 +1359,10 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
     if (text.startsWith("'''", i)) {
       const close = findTripleClose(text, i + 3, "'");
       if (close === null) fail(no, 'unterminated multiline literal string');
-      return { value: scalar(text.slice(i + 3, close - 3)), end: close };
+      let body = text.slice(i + 3, close - 3);
+      if (body.startsWith('\r')) body = body.slice(1);
+      if (body.startsWith('\n')) body = body.slice(1); // same trim as basic strings
+      return { value: scalar(body), end: close };
     }
     const q = scanQuoted(text, i, no);
     if (q === null) fail(no, 'unterminated literal string');
