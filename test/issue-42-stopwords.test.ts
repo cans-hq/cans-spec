@@ -10,8 +10,9 @@
  * Fix under test: loadRules() coerces every entry of a well-formed
  * `redundancy.stopwords` array (and every member of a well-formed synonym
  * group — the same token-type class of bug) with `.map(String)` after the
- * merge/normalization pass. Non-array shapes (empty `stopwords:`, scalar
- * `stopwords: 10`) keep their current behavior; only arrays are coerced.
+ * merge/normalization pass. An empty `stopwords:` (null) keeps its documented
+ * meaning (no stopword filtering); a non-list scalar shape now rejects at
+ * load (issue #56 strict §18 validation) — only arrays are coerced.
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly.
  */
@@ -102,17 +103,25 @@ describe('issue #42 — loadRules coerces unquoted numeric stopwords/synonyms', 
     expect(merged).toBeDefined();
   });
 
-  test('guard: non-array shapes keep their current behavior (only arrays are coerced)', () => {
+  test('guard: empty stopwords stays null; a scalar shape rejects (only arrays are coerced)', () => {
     // `stopwords:` with nothing under it parses to null — preserved as null
     // (the layers read null as "no stopword filtering").
     expect(load('redundancy:\n  stopwords:\n').redundancy.stopwords).toBeNull();
-    // A scalar `stopwords: 10` is a type-inconsistent shape, not an array —
-    // the coercion must not invent an array for it (issue #42 fixes the
-    // token type of well-formed array entries only). `unknown` on purpose:
-    // the declared type is string[] but the runtime value is the Number 10.
-    const scalar: unknown = load('redundancy:\n  stopwords: 10\n').redundancy.stopwords;
-    expect(Array.isArray(scalar)).toBe(false);
-    expect(scalar).toBe(10);
+    // Issue #56: a scalar `stopwords: 10` is out-of-domain (a word LIST is a
+    // list) — the strict §18 validation rejects it with a line-numbered
+    // config error instead of letting a non-array shape reach the layers
+    // (issue #42's coercion still invents nothing: only arrays are coerced).
+    let scalarError: unknown = null;
+    try {
+      load('redundancy:\n  stopwords: 10\n');
+    } catch (e) {
+      scalarError = e;
+    }
+    expect(scalarError).toBeInstanceOf(Error);
+    const msg = (scalarError as Error).message;
+    expect(msg).toContain('"redundancy.stopwords" must be a list of words');
+    expect(msg).toContain('got "10"');
+    expect(msg).toMatch(/line \d+/);
   });
 
   test('defaults are untouched: every default stopword/synonym member is a string', () => {

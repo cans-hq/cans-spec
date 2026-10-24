@@ -117,9 +117,6 @@ function templateRules(styleLines: string[]): string {
     '  duplicate_home_check: true',
     'redundancy:',
     '  enabled: false',
-    'overflow:',
-    '  max_node_chars: 200',
-    '  force_file_for: [code_block, table, diagram]',
     '',
   ].join('\n');
 }
@@ -328,9 +325,6 @@ describe('issue #2 — style.prefer / references.mode value validation (validate
       '  mode:',
       'redundancy:',
       '  enabled: false',
-      'overflow:',
-      '  max_node_chars: 200',
-      '  force_file_for: [code_block, table, diagram]',
       '',
     ].join('\n'));
 

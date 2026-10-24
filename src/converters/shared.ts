@@ -21,10 +21,11 @@ export function parseCheckbox(text: string): { isTask: boolean; isDone: boolean;
   return { isTask: false, isDone: false, clean: s };
 }
 
-/** A fenced code block extracted during import into an overflow file (§27). */
-export interface OverflowExtraction {
-  /** Overflow file path relative to the workspace (e.g. `cb-note/request-schema.json`). */
-  overflowFile: string;
+/** A fenced code block extracted during import into a separate artifact file,
+ *  referenced from the outline via `see:` (§27). */
+export interface ExtractedBlock {
+  /** Extracted-file path relative to the workspace (e.g. `cb-note/request-schema.json`). */
+  extractedFile: string;
   /** The raw fenced body. */
   content: string;
   /** The bullet text the fence hung under. */
@@ -147,8 +148,8 @@ function slugFor(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-/** §27 "Extract code blocks → overflow files" (§16: extracted to a separate file
- *  and referenced via see:). A proper fence state machine — every fence shape
+/** §27 "Extract code blocks → separate files" (extracted to a file outside the
+ *  outline and referenced via see:). A proper fence state machine — every fence shape
  *  that appears in imported outline notes is handled, and NO line is ever
  *  silently dropped (QA-08 E9 / QA-05 F4+F5):
  *    - plain fence lines (    ```json … ```) hanging under a bullet,
@@ -159,13 +160,13 @@ function slugFor(text: string): string {
  *  `see:` reference node, so the fence's presence survives and content AFTER
  *  the closing fence keeps parsing as normal bullets. Returns the cleaned
  *  bullet source plus the extractions to write. */
-export function extractOverflowContent(
+export function extractFencedBlocks(
   source: string,
   baseSlug: string,
-): { cleanedSource: string; extractions: OverflowExtraction[] } {
+): { cleanedSource: string; extractions: ExtractedBlock[] } {
   const lines = source.split(/\r?\n/);
   const outLines: string[] = [];
-  const extractions: OverflowExtraction[] = [];
+  const extractions: ExtractedBlock[] = [];
   const usedNames = new Set<string>();
 
   let inFence = false;
@@ -177,9 +178,9 @@ export function extractOverflowContent(
   let lastBulletIdx = -1;     // index of that bullet within outLines
   let extractionIndex = 0;
 
-  /** Overflow paths are workspace-relative and collision-free (two fences under
+  /** Extraction paths are workspace-relative and collision-free (two fences under
    *  the same bullet must never overwrite each other's extraction). */
-  const uniqueOverflowFile = (slug: string, ext: string): string => {
+  const uniqueExtractedFile = (slug: string, ext: string): string => {
     let name = `${baseSlug}/${slug}.${ext}`;
     let n = 2;
     while (usedNames.has(name)) name = `${baseSlug}/${slug}-${n++}.${ext}`;
@@ -187,35 +188,35 @@ export function extractOverflowContent(
     return name;
   };
 
-  /** Close the open fence: extract the body to an overflow file and leave a
+  /** Close the open fence: extract the body to its own file and leave a
    *  `see:` reference where the fence hung. */
   const closeFence = (): void => {
     // Sanitize the fence language into a safe file extension: plain
     // alphanumerics only (a crafted fence like ``` ../../../evil must
-    // never escape the workspace overflow directory).
+    // never escape the workspace extraction directory).
     const rawExt = fenceLang !== '' ? fenceLang : 'md';
     const ext = /^[A-Za-z0-9]{1,12}$/.test(rawExt) ? rawExt : 'md';
     const slug = lastBulletText !== '' ? slugFor(lastBulletText) : `block-${extractionIndex}`;
-    const overflowFile = uniqueOverflowFile(slug, ext);
+    const extractedFile = uniqueExtractedFile(slug, ext);
     extractions.push({
-      overflowFile,
+      extractedFile,
       content: fenceBody.join('\n'),
       parentText: lastBulletText,
     });
     if (fenceAsBullet) {
       // The fence was itself a bullet → that bullet becomes the see: reference
       // node, at the fence bullet's own indent (hierarchy preserved).
-      outLines.push(`${fenceBulletIndent}- see ${overflowFile}`);
+      outLines.push(`${fenceBulletIndent}- see ${extractedFile}`);
     } else if (lastBulletIdx >= 0 && lastBulletIdx === outLines.length - 1) {
       // Fence hangs directly under the last bullet → reference replaces it.
       const indent = outLines[lastBulletIdx].match(/^\s*/)?.[0] ?? '';
-      outLines[lastBulletIdx] = `${indent}- ${lastBulletText}: see ${overflowFile}`;
+      outLines[lastBulletIdx] = `${indent}- ${lastBulletText}: see ${extractedFile}`;
     } else {
       // Fence detached from any bullet → reference after the block.
       const anchorLine = outLines[outLines.length - 1] ?? '';
       const indent = anchorLine.match(/^\s*/)?.[0] ?? '';
       const label = lastBulletText !== '' ? `${lastBulletText}: ` : '';
-      outLines.push(`${indent}- ${label}see ${overflowFile}`);
+      outLines.push(`${indent}- ${label}see ${extractedFile}`);
     }
     // A following fence must never clobber the reference just written.
     lastBulletIdx = -1;

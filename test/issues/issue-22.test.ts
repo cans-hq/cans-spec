@@ -246,11 +246,11 @@ describe('issue #22: trailing-slash folder targets resolve to the same key', () 
     expect(broken).toHaveLength(1);
     expect(broken[0]!.suggestion).toBe('create auth/index.md or fix the ref target');
 
-    // Folder complete with an (overflow) index.md deeper in the tree — a spec
+    // Folder complete with a non-root index.md deeper in the tree — a spec
     // file cannot be created out of it; the only fix is the target spelling.
     const ws3 = makeWs('unit-dir-complete', { '04-api.md': '- API\n  - Storage: see auth/sub/#Rules\n' });
     mkdirSync(join(ws3.root, 'auth', 'sub'), { recursive: true });
-    writeFileSync(join(ws3.root, 'auth', 'sub', 'index.md'), '- Overflow content\n', 'utf8');
+    writeFileSync(join(ws3.root, 'auth', 'sub', 'index.md'), '- Extra content\n', 'utf8');
     files = loadFiles({ '04-api.md': '- API\n  - Storage: see auth/sub/#Rules\n' });
     issues = checkRefs(files, buildRefGraph(files, ws3.root), ws3.root);
     broken = issues.filter(i => i.message.startsWith('broken ref:'));

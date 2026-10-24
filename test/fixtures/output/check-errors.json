@@ -17,7 +17,6 @@
       { "file": "02-auth.md", "line": 4, "level": "warning", "rule": "redundancy.keyword", "detail": "\"authentication\" × 7 nodes (threshold: 4)", "suggestion": "pick one canonical home for \"authentication\" and see: it from the others" },
       { "file": "04-api.md", "line": 12, "level": "warning", "rule": "redundancy.overlap.fuzzy", "detail": "85% overlap: 02-auth.md:4 ↔ 04-api.md:12", "suggestion": "merge the duplicated bullets or see: the canonical one" }
     ],
-    "overflow": [],
     "other": []
   },
   "backPointersUpdated": 0,

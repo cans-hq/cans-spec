@@ -261,9 +261,10 @@ describe('issue #6: check --fix end-to-end (CLI blackbox)', () => {
     const spec02Y = ['- Consumer', '  - Reads the overview: see 01-x.md', '  - Tracks progress locally', ''].join('\n');
     writeFileSync(join(ws.cans, '01-x.md'), FENCED_DOC + '\n');
     writeFileSync(join(ws.cans, '02-y.md'), spec02Y);
-    // §18: an empty `force_file_for` list turns the code-fence overflow flag off
-    // (otherwise the fenced EXAMPLE itself is an unrelated error under default
-    // rules and would mask the ref-by behavior under test). Everything else
+    // Template-shaped file (structure listed → curated: unlisted sections
+    // and omitted keys are OFF), keeping the ref-by surface under test minimal.
+    // Issue #56 removed the overflow engine, so the fenced EXAMPLE can never
+    // be flagged anymore — no force_file_for override needed. Everything else
     // stays at the template defaults — back_pointers stays on.
     writeFileSync(join(ws.cans, '_rules.yaml'), [
       'structure:',
@@ -303,9 +304,6 @@ describe('issue #6: check --fix end-to-end (CLI blackbox)', () => {
       '  default_limit: 4096',
       '  estimate_chars_per_token: 3.5',
       '  warn_threshold: 0.8',
-      'overflow:',
-      '  max_node_chars: 200',
-      '  force_file_for: []',
       '',
     ].join('\n'));
 

@@ -5,6 +5,5 @@ export * from './refs.ts';
 export * from './structure.ts';
 export * from './style.ts';
 export * from './redundancy.ts';
-export * from './overflow.ts';
 export * from './rules.ts';
 export * from './token-budget.ts';

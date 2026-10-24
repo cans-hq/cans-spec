@@ -9,7 +9,7 @@
  *
  * Fix contract (tag + filter, materialization preserved):
  *   - synthetic nodes carry `synthetic: true` and keep carrying hasTable /
- *     hasCodeFence (overflow detection on leading tables still works).
+ *     hasCodeFence (the parse signals survive on the phantom).
  *   - redundancy inputs, reported node counts, and budget token estimates
  *     exclude them.
  *   - flattenNodes itself is UNCHANGED (still includes synthetic nodes) —
@@ -63,7 +63,7 @@ describe('issue #8: synthetic node materialization is preserved and tagged', () 
     expect(phantom.text).toBe('(table)');
     expect(phantom.synthetic).toBe(true);
     expect(isSyntheticNode(phantom)).toBe(true);
-    expect(phantom.hasTable).toBe(true); // overflow signal must survive
+    expect(phantom.hasTable).toBe(true); // parse signal must survive
     const real = nodes[1]!;
     expect(real.text).toBe('Real root');
     expect(real.synthetic).toBe(false); // makeNode initializes false
@@ -246,9 +246,9 @@ describe('issue #8: budget planning ignores synthetic node text', () => {
 
 // ── workspace-level: check header counts + CLI output ──
 
-// Full §18 template shape (curated config → omitted keys would turn OFF) with
-// overflow.force_file_for: [] so leading tables/fences are NOT overflow errors —
-// isolating the redundancy/count behavior, as in the issue repro.
+// Full §18 template shape (curated config → omitted keys would turn OFF),
+// isolating the redundancy/count behavior, as in the issue repro. (Issue #56
+// removed the overflow engine — leading tables/fences are never flagged.)
 const RULES_NO_FORCE_FILE = [
   'structure:',
   '  node_length: { min: 3, max: 120 }',
@@ -283,9 +283,6 @@ const RULES_NO_FORCE_FILE = [
   '  default_limit: 4096',
   '  estimate_chars_per_token: 3.5',
   '  warn_threshold: 0.8',
-  'overflow:',
-  '  max_node_chars: 200',
-  '  force_file_for: []',
   '',
 ].join('\n');
 

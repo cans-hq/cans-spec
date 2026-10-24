@@ -94,10 +94,6 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
-
-overflow:
-  max_node_chars: 200
-  force_file_for: []
 `;
 
 const RULES_CLEAN = `structure:
@@ -137,10 +133,6 @@ token_budget:
   default_limit: 4096
   estimate_chars_per_token: 3.5
   warn_threshold: 0.8
-
-overflow:
-  max_node_chars: 200
-  force_file_for: []
 `;
 
 const AGENTS_MD = `# AGENTS

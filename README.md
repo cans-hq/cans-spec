@@ -218,7 +218,7 @@ Done. You have a `cans/` directory. Start writing bullets.
 
 1. **Scaffold** — `cans init` creates `cans/` with 7 spec files, `_adr/`, `_tasks/`, `_collab/`. Use `cans init --flat` for a flat layout, `--bare` for the minimal skeleton, `--tool claude` to also emit `CLAUDE.md`.
 2. **Write your spec as dense bullets** — hierarchy is indentation, cross-links are `see:` references. The outline is the spec; there is nothing else to learn.
-3. **Check health** — `cans check` lints structure, broken refs, deep hops, redundancy, style, and overflow. `cans check --fix` repairs back-pointers and proposes broken-anchor fixes; `--fix --yes` applies them, `--fix --dry-run` previews everything. Exit codes: `0` clean · `1` warnings · `2` errors — agents read `$?`, skip parsing.
+3. **Check health** — `cans check` lints structure, broken refs, deep hops, redundancy, and style. `cans check --fix` repairs back-pointers and proposes broken-anchor fixes; `--fix --yes` applies them, `--fix --dry-run` previews everything. Exit codes: `0` clean · `1` warnings · `2` errors — agents read `$?`, skip parsing.
 4. **Track work** — `cans new task add-dark-mode` creates a task, `cans status` shows the board, `cans done add-dark-mode` archives it (it blocks on `← @human` gates until a human signs off).
 5. **Mind the budget** — `cans budget read <concept>` gives your agent a token-budgeted reading plan; `cans budget write <concept>` says what it may edit.
 6. **Interoperate** — `cans export logseq --from cans` and `cans import logseq <path>` round-trip OPML / Dynalist, Logseq, and Obsidian. State lives in git; the transport layer is a plain text format your tools already read.
@@ -231,7 +231,7 @@ Everything else — ADRs, ownership arrows (`← agent-1`, `← @human`), rules 
 
 ```
 cans init          scaffold workspace
-cans check         validate everything (structure, refs, style, redundancy, overflow)
+cans check         validate everything (structure, refs, style, redundancy)
 cans new adr       create a decision record
 cans new task      create a task file
 cans done          archive completed task (blocks on ← @human gates)
@@ -273,7 +273,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 
 ## Validation
 
-`cans check` runs five deterministic engines. No ML. No LLM. No embeddings.
+`cans check` runs four deterministic engines. No ML. No LLM. No embeddings.
 
 | Engine | Catches |
 |---|---|
@@ -281,14 +281,17 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 | **Style** | Sibling vs nested grouping, shared prefix detection |
 | **References** | Broken `see:`, deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are exempt — issue #44), self-refs, orphans, stale back-pointers |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
-| **Overflow** | Code fences, tables, oversized nodes that belong in separate files |
 
-Configure in `cans/_rules.yaml`. Delete a key to disable that check. No migration.
+Configure in `cans/_rules.yaml`. Delete a key to disable that check. No
+migration. `structure.node_length.max` is the single node-length budget
+(the overflow engine that offered a second one was removed — issue #56:
+a limit routable with one short `see:` pointer was not a limit).
 
-`structure.node_length.max` and `overflow.max_node_chars` both measure node
-text length: when they are set to the SAME value, each over-limit node is
-reported once (`structure.node_length.max` is the authoritative budget); set
-them to different values when you genuinely want two budgets.
+`_rules.yaml` is validated STRICTLY (issue #56): an unrecognized key — a
+typo like `node_lenght`, or a removed one like `overflow.max_node_chars` —
+or a value outside its documented domain (wrong type, out-of-range number,
+unknown enum member) is a line-numbered config error and the check does not
+run. A missing or empty file keeps all defaults.
 
 Redundancy specifics: `see:` ref targets are structural, not content — the
 redundancy layers compare label words only, so a file stem like `10-sdk.md`
@@ -299,14 +302,15 @@ without turning it off: `redundancy.fuzzy_max_distance` (default 2) and
 
 Subfolder `.md` files join the same engines: a file a spec points at
 (`see: plugins/pty.md`) is promoted to a first-class spec file for the whole
-run; unreferenced ones stay §16 leaf content (no `see:` inside).
+run; unreferenced ones are plain non-spec content (invisible to the
+engines, like any non-spec repo file).
 
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line
 cans check --json           # machine-readable: sections → {file, line, rule, detail}
 cans check --show redundancy  # expand a folded section (structure|style|refs|
-                            #   redundancy|overflow|all — comma-separated list works)
+                            #   redundancy|all — comma-separated list works)
 cans check --fix            # rebuild back-pointer comments; propose anchor repairs
                             #   (--yes applies them, --dry-run previews all changes)
 cans check --strict         # warnings flip `ok` to false
@@ -359,14 +363,15 @@ root file. Flat wins over folder; when both exist, `cans check` flags a
 duplicate home.
 
 **Subfolder content files** — any other `.md` inside a folder, like
-`cans/plugins/pty.md` — are §16 leaf content by default: they must not
-contain their own `see:` refs. The moment a spec file points at one
-(`see: plugins/pty.md`), `cans check` promotes it transitively to a
+`cans/plugins/pty.md` — are plain non-spec content by default: invisible
+to the engines, like any non-spec repo file. The moment a spec file points
+at one (`see: plugins/pty.md`), `cans check` promotes it transitively to a
 first-class spec file: counted in the summary, subject to every engine, and
 free to reference back (the mutual back-reference mesh — the sanctioned
-pattern under `max_hops: 1`). Unreferenced subfolder files stay leaf
-content; `cans status` and `cans export` list discovered files (root `.md`
-plus any-depth `index.md`) without promotion.
+pattern under `max_hops: 1`). Want a subfolder file checked? Reference it
+from a spec file — that is the promotion trigger. `cans status` and
+`cans export` list discovered files (root `.md` plus any-depth `index.md`)
+without promotion.
 
 ---
 

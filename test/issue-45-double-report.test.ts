@@ -4,22 +4,22 @@
  * structure.node_length.max === overflow.max_node_chars (the natural
  * one-char-budget-everywhere config).
  *
- * Both checks compare the SAME quantity (node.text.length) against their
- * threshold, so equal thresholds flag the identical node set twice — every
- * violation counted twice in errorCount and rendered twice:
+ * Issue #56 RESOLVED the collision STRUCTURALLY: the overflow engine (and its
+ * `overflow.max_node_chars` budget) is REMOVED, so structure.node_length is
+ * the ONE node-text-length limit and a double report is no longer possible —
+ * there is no second rule to fire. This suite pins that post-#56 contract:
  *
- *     structure | 04-decisions.md:16 | Node too long (91 > 90). Split or move to file.
- *     overflow  | 04-decisions.md:16 | node exceeds max chars (91 > 90)
+ *   1. an over-limit node is reported EXACTLY ONCE, by
+ *      structure.node_length.max (the authoritative and only char budget);
+ *   2. several over-limit nodes → one error each, none double-counted;
+ *   3. `--json` carries the finding under sections.structure with
+ *      counts.errors per node (never a second, overflow-shaped entry);
+ *   4. node_length deleted (§18) → the node-length check is OFF — and with
+ *      the overflow budget gone there is no second engine to catch it either:
+ *      no sanctioned escape hatch exists (`overflow.*` rules keys now reject
+ *      as unrecognized — pinned in test/issues/issue-56-strict-rules.test.ts).
  *
- * Fix contract (binding design, worklog 2026-10-23): when both budgets are
- * set and EQUAL, the overflow.node_chars check is skipped —
- * structure.node_length.max is the authoritative home for the same-value
- * config. DISTINCT values are genuinely different budgets and still both
- * fire (each at its own threshold). A config with node_length off (deleted,
- * §18) keeps the overflow check intact.
- *
- * Levels: engine unit (checkWorkspace — the dedup lives in its overflow
- * loop) and CLI blackbox (--json: sections + counts must not double-report).
+ * Levels: engine unit (checkWorkspace) and CLI blackbox (--json).
  */
 import { describe, test, expect, afterEach } from './testing.ts';
 import { join } from 'path';
@@ -74,10 +74,10 @@ const BASE_OPTS: CheckArgs = {
   json: false,
 };
 
-/** Curated (§18 delete-mode) rules: the two char budgets under test, every
- *  other check-key deleted (structure lists a section → template-shaped
- *  file → unlisted sections and omitted keys are OFF). */
-function rules(nodeLengthMax: number | null, maxNodeChars: number | null): string {
+/** Curated (§18 delete-mode) rules: the char budget under test, every other
+ *  check-key deleted (structure lists a section → template-shaped file →
+ *  unlisted sections and omitted keys are OFF). */
+function rules(nodeLengthMax: number | null): string {
   const lines: string[] = [];
   if (nodeLengthMax === null) {
     // structure listed WITHOUT node_length → delete-key semantics → OFF.
@@ -85,16 +85,13 @@ function rules(nodeLengthMax: number | null, maxNodeChars: number | null): strin
   } else {
     lines.push('structure:', `  node_length: { min: 3, max: ${nodeLengthMax} }`);
   }
-  if (maxNodeChars !== null) {
-    lines.push('overflow:', `  max_node_chars: ${maxNodeChars}`);
-  }
   return lines.join('\n') + '\n';
 }
 
-/** 92 chars — crosses the 90 budget, stays under the 200 budget. */
+/** 92 chars — crosses the 90 budget. */
 const NODE_92 =
   'Quarterly platform consolidation wraps up next cycle pending vendor signature and the budget';
-/** 223 chars — crosses both the 90 and the 200 budget. */
+/** 223 chars — crosses the 90 budget with room to spare. */
 const NODE_223 = `${'Quarterly platform consolidation wraps up next cycle pending vendor signature and budget confirmation from the finance group staff'} ${NODE_92}`;
 
 expect(NODE_92.length).toBe(92); // fixture pin
@@ -105,27 +102,25 @@ function specWith(...nodes: string[]): string {
   return nodes.map((n) => `- ${n}`).join('\n') + '\n';
 }
 
-describe('issue #45 — same-value budgets report each over-limit node exactly once', () => {
-  test('engine: node_length.max 90 === max_node_chars 90 → ONE error per node, structure wins', async () => {
-    const ws = makeWs('same-value');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90, 90));
+describe('issue #45 (post-#56) — one char budget, each over-limit node reported exactly once', () => {
+  test('engine: node_length.max 90 → ONE error per node, from the single budget', async () => {
+    const ws = makeWs('single-budget');
+    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
 
     const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
-    // The over-limit node is reported ONCE — by the authoritative structure
-    // rule, never also by the same-value overflow rule.
+    // The over-limit node is reported ONCE — by the one surviving rule.
     expect(r.issues).toHaveLength(1);
     expect(r.issues[0]!.rule).toBe('structure.node_length.max');
     expect(r.issues[0]!.category).toBe('structure');
     expect(r.issues[0]!.line).toBe(1);
     expect(r.issues[0]!.message).toBe('Node too long (92 > 90). Split or move to file.');
-    expect(r.issues.some((i) => i.rule === 'overflow.node_chars')).toBe(false);
     expect(r.errorCount).toBe(1);
   });
 
   test('engine: three over-limit nodes → exactly three errors, none double-counted', async () => {
-    const ws = makeWs('same-value-many');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90, 90));
+    const ws = makeWs('single-budget-many');
+    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(
       join(ws.cans, '04-decisions.md'),
       specWith(NODE_92, 'short and fine', NODE_223, 'also fine', `${NODE_92} again`),
@@ -133,16 +128,14 @@ describe('issue #45 — same-value budgets report each over-limit node exactly o
 
     const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
     const structureHits = r.issues.filter((i) => i.rule === 'structure.node_length.max');
-    const overflowHits = r.issues.filter((i) => i.rule === 'overflow.node_chars');
     expect(structureHits).toHaveLength(3); // lines 1, 3, 5
     expect(structureHits.map((i) => i.line)).toEqual([1, 3, 5]);
-    expect(overflowHits).toHaveLength(0);
     expect(r.errorCount).toBe(3);
   });
 
-  test('CLI (--json): sections.structure carries the finding, sections.overflow stays empty, counts.errors is per-node', () => {
-    const ws = makeWs('same-value-json');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90, 90));
+  test('CLI (--json): sections.structure carries the finding, counts.errors is per-node', () => {
+    const ws = makeWs('single-budget-json');
+    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
 
     const r = runCli(['check', '--json'], ws.root);
@@ -152,60 +145,22 @@ describe('issue #45 — same-value budgets report each over-limit node exactly o
     expect(j.sections.structure[0].rule).toBe('structure.node_length.max');
     expect(j.sections.structure[0].file).toBe('04-decisions.md');
     expect(j.sections.structure[0].line).toBe(1);
-    expect(j.sections.overflow).toEqual([]); // no same-value duplicate
     expect(r.exit).toBe(2);
   });
 });
 
-describe('issue #45 — distinct budgets and one-sided configs keep firing', () => {
-  test('engine: 90 vs 200 (distinct) → each threshold fires only where crossed', async () => {
-    const ws = makeWs('distinct');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90, 200));
-    writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92, NODE_223));
-
-    const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
-    const structureHits = r.issues.filter((i) => i.rule === 'structure.node_length.max');
-    const overflowHits = r.issues.filter((i) => i.rule === 'overflow.node_chars');
-    // NODE_92 (92 chars): crosses 90 only → structure alone.
-    // NODE_223 (223 chars): crosses both → a genuine pair (different budgets).
-    expect(structureHits.map((i) => i.line)).toEqual([1, 2]);
-    expect(overflowHits.map((i) => i.line)).toEqual([2]);
-    expect(r.errorCount).toBe(3);
-  });
-
-  test('engine: node_length deleted (§18) + max_node_chars 90 → overflow still fires', async () => {
-    const ws = makeWs('overflow-only');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(null, 90));
+describe('issue #45 (post-#56) — the deleted-key budget has no second engine behind it', () => {
+  test('engine: node_length deleted (§18) → no node-length error (the overflow fallback is gone)', async () => {
+    const ws = makeWs('budget-off');
+    writeFileSync(join(ws.cans, '_rules.yaml'), rules(null));
     writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
 
     const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
-    expect(r.issues).toHaveLength(1);
-    expect(r.issues[0]!.rule).toBe('overflow.node_chars');
-    expect(r.issues[0]!.message).toBe('node exceeds max chars (92 > 90)');
-    expect(r.errorCount).toBe(1);
-  });
-
-  test('engine: node_length 90 + max_node_chars deleted (§18) → structure alone, as before', async () => {
-    const ws = makeWs('structure-only');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(90, null));
-    writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
-
-    const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
-    expect(r.issues).toHaveLength(1);
-    expect(r.issues[0]!.rule).toBe('structure.node_length.max');
-    expect(r.errorCount).toBe(1);
-  });
-
-  test('engine: distinct-but-reversed (200 vs 90) is still two budgets — node over both fires both', async () => {
-    const ws = makeWs('distinct-reversed');
-    writeFileSync(join(ws.cans, '_rules.yaml'), rules(200, 90));
-    writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92, NODE_223));
-
-    const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
-    const structureHits = r.issues.filter((i) => i.rule === 'structure.node_length.max');
-    const overflowHits = r.issues.filter((i) => i.rule === 'overflow.node_chars');
-    expect(structureHits.map((i) => i.line)).toEqual([2]); // 223 > 200
-    expect(overflowHits.map((i) => i.line)).toEqual([1, 2]); // 92 and 223 > 90
-    expect(r.errorCount).toBe(3);
+    // §18 delete-key contract: the check the author turned off stays off —
+    // and with the overflow engine removed (issue #56) there is no silently
+    // configured second budget that still fires behind the author's back.
+    expect(r.issues).toHaveLength(0);
+    expect(r.errorCount).toBe(0);
+    expect(r.ok).toBe(true);
   });
 });

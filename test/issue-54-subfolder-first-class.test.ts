@@ -4,14 +4,15 @@
  * A `.md` file inside a subdirectory of `cans/` could never participate in
  * the spec graph as a first-class file (0.6.0):
  *   1. Not discovered: discovery was root `*.md` + depth-1 `<dir>/index.md`
- *      only — `cans/plugins/pty.md` was classified as an §16 overflow target
- *      (leaf content), its nodes excluded from summary/counts.
+ *      only — `cans/plugins/pty.md` was classified as leaf content, its
+ *      nodes excluded from summary/counts.
  *   2. Cannot be pointed to: a spec file that itself has an incoming ref
  *      deep-hops when it refs the subfolder leaf (§5 max_hops: 1).
  *   3. Cannot point back: any `see:` inside the subfolder file was a
- *      refs.chaining error (§16) — catch-22 with (2).
+ *      refs.chaining error (the retired §16 rule, removed with the
+ *      overflow engine in issue #56) — catch-22 with (2).
  *   4. Deeper nesting invisible: `cans/plugins/topic/index.md` (depth-2
- *      folder index) was neither spec file nor overflow target — silently
+ *      folder index) was neither spec file nor leaf content — silently
  *      ignored, files count unchanged.
  *   5. The only working pattern was an UNREFERENCED depth-1
  *      `cans/plugins/index.md` catalog holding the `see:` refs; referencing
@@ -34,7 +35,7 @@
  *
  * Documented delta from the issue's 0.6.0 figures: in case 4 the catalog's
  * own `see: plugins/pty.md` now PROMOTES pty.md, so files is 4 (0.6.0
- * reported 3 because pty.md was invisible overflow-target content). The
+ * reported 3 because pty.md was invisible non-spec content). The
  * workaround still passes (ok: true) — and the leaf it pointerizes is now
  * counted and checked. That is the fix working, not a regression.
  *
@@ -64,10 +65,12 @@
  *                  the promoted file (it is --file-filterable)
  *   fix .......... `--fix` ref-by rewrite writes INTO the promoted file
  *                  (specSources wired)
- *   overflow ..... unreferenced 04-api/request-schema.md with a see: inside
- *                  → refs.chaining §16 error (overflow class preserved)
- *   aux .......... a _tasks/ ref to pty.md does NOT promote it (still an
- *                  overflow target; §16 still applies)
+ *   leaf ......... unreferenced 04-api/request-schema.md with a see: inside
+ *                  → NOT flagged (issue #56 retired the §16 chaining rule
+ *                  with the overflow engine; unreferenced subfolder .md files
+ *                  are plain non-spec content, like any non-spec repo file)
+ *   aux .......... a _tasks/ ref to pty.md does NOT promote it (unreferenced
+ *                  subfolder .md stays non-spec content, never counted)
  */
 import { describe, test, expect, afterEach } from './testing.ts';
 import { join } from 'path';
@@ -80,7 +83,7 @@ import { makeCansWorkspace } from './helpers.ts';
 
 /** "cans/_rules.yaml sets only structure + references.max_hops: 1".
  *  §18 delete-key semantics: listing `structure:` makes this a curated file,
- *  so every unlisted section (style/content/redundancy/overflow and the
+ *  so every unlisted section (style/content/redundancy and the
  *  unlisted references switches orphan_check/back_pointers/duplicate_home)
  *  turns OFF — exactly the issue's minimal validation surface. */
 const RULES_MAX1 = [
@@ -323,7 +326,7 @@ describe('issue #54 cases 1+2: the mutual back-reference mesh is the sanctioned 
     expect(j.refs).toEqual({ total: 5, broken: 0, deepHops: 0 });
     expect(j.counts.errors).toBe(0);
     expect(j.counts.warnings).toBe(0);
-    // §16 chaining must NOT fire: pty.md is no longer an overflow target.
+    // The retired §16 chaining rule must not fire: pty.md is promoted.
     expect(j.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
   });
 });
@@ -557,10 +560,10 @@ describe('issue #54: promoted files get the full spec-file treatment', () => {
   });
 });
 
-// ── §16 overflow-target class preserved ──
+// ── unreferenced subfolder .md files (issue #56: plain non-spec content) ──
 
-describe('issue #54: unreferenced subfolder .md files stay §16 overflow targets', () => {
-  test('unreferenced 04-api/request-schema.md with a see: inside → refs.chaining error, files unchanged', () => {
+describe('issue #54 + #56: unreferenced subfolder .md files are plain non-spec content', () => {
+  test('unreferenced 04-api/request-schema.md with a see: inside → NOT flagged (chaining rule retired), files unchanged', () => {
     const ws = baseWs('overflow', {
       '04-api/request-schema.md': [
         '- Request schema',
@@ -570,20 +573,22 @@ describe('issue #54: unreferenced subfolder .md files stay §16 overflow targets
     });
     const r = runCli(['check', '--json'], ws.tmp);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(2);
-    expect(j.ok).toBe(false);
-    // Not promoted (nothing refs it) → still leaf content → §16 applies.
+    // Nothing refs request-schema.md → not promoted → not a spec file. Its
+    // internal see: is a dead pointer inside non-spec content: issue #56
+    // retired the §16 no-chaining rule with the overflow engine, so the
+    // file is invisible to every engine — like any non-spec repo file.
     expect(j.summary.files).toBe(2);
-    const chaining = j.issues.find((i: any) => i.rule === 'refs.chaining');
-    expect(chaining).toBeDefined();
-    expect(chaining.file).toBe('04-api/request-schema.md');
-    expect(chaining.level).toBe('error');
+    expect(j.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
+    expect(j.issues.some((i: any) => /request-schema/.test(i.file))).toBe(false);
+    expect(r.exit).toBe(0);
+    expect(j.ok).toBe(true);
   });
 
-  test('a _tasks/ ref to pty.md does NOT promote it — §16 still applies to the file', () => {
+  test('a _tasks/ ref to pty.md does NOT promote it — unreferenced subfolder .md stays uncounted', () => {
     // Aux files (_tasks/, _adr/) are parsed for ref extraction only; their
     // refs are transient pointers and never change spec membership. pty.md
-    // stays unreferenced-by-spec → overflow target → its own see: flags.
+    // stays unreferenced-by-spec → plain non-spec content → never counted,
+    // never flagged.
     const ws = baseWs(
       'aux',
       { 'plugins/pty.md': PTY_BACKREF },
@@ -598,13 +603,12 @@ describe('issue #54: unreferenced subfolder .md files stay §16 overflow targets
     );
     const r = runCli(['check', '--json'], ws.tmp);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(2);
-    expect(j.ok).toBe(false);
     expect(j.summary.files).toBe(2); // pty.md NOT promoted by the task ref
-    const chaining = j.issues.find((i: any) => i.rule === 'refs.chaining');
-    expect(chaining).toBeDefined();
-    expect(chaining.file).toBe('plugins/pty.md');
+    expect(j.issues.some((i: any) => i.rule === 'refs.chaining')).toBe(false);
+    expect(j.issues.some((i: any) => /pty/.test(i.file))).toBe(false);
     // The task's own ref to pty.md resolves on disk — no broken ref.
     expect(j.issues.some((i: any) => i.rule === 'refs.broken.file')).toBe(false);
+    expect(r.exit).toBe(0);
+    expect(j.ok).toBe(true);
   });
 });

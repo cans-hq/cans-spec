@@ -198,8 +198,6 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
       '  duplicate_home_check: true',
       'redundancy:',
       '  enabled: false',
-      'overflow:',
-      '  max_node_chars: 200',
       '',
     ].join('\n'));
 
@@ -226,8 +224,6 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
       '  duplicate_home_check: true',
       'redundancy:',
       '  enabled: false',
-      'overflow:',
-      '  max_node_chars: 200',
       '',
     ].join('\n'));
 

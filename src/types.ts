@@ -55,8 +55,9 @@ export type IssueLevel = 'error' | 'warning' | 'info';
  *  _rules.yaml surfaces as rule 'config.invalid' on file '_rules.yaml' —
  *  never as an engine finding. Emitted only by the invalid-rules catch in
  *  checkWorkspace (configFail); all other checkFail paths (no workspace,
- *  unknown flag, unmatched file filter) keep the legacy 'refs' shape. */
-export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'overflow' | 'config';
+ *  unknown flag, unmatched file filter) keep the legacy 'refs' shape.
+ *  ('overflow' was removed with the §16 engine — issue #56.) */
+export type IssueCategory = 'structure' | 'style' | 'refs' | 'redundancy' | 'config';
 
 export interface Issue {
   file: string;
@@ -145,13 +146,6 @@ export interface TokenBudgetRules {
   warn_threshold: number | null;
 }
 
-export interface OverflowRules {
-  /** Deleted → char-length check off (§18). */
-  max_node_chars: number | null;
-  /** Deleted → nothing is forced into files → no content-type flags (§16/§18). */
-  force_file_for: string[] | null;
-}
-
 export interface Rules {
   structure: StructureRules;
   style: StyleRules;
@@ -159,7 +153,6 @@ export interface Rules {
   references: ReferenceRules;
   redundancy: RedundancyRules;
   token_budget: TokenBudgetRules;
-  overflow: OverflowRules;
 }
 
 // ── Command Results ──
