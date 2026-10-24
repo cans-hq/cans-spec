@@ -307,7 +307,91 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - Targets never resolve outside the workspace root: absolute and `../` targets are broken refs — `file not found in workspace` (issue #10, round 6).
 - If no anchor → file-level ref, resolved.
 - If anchor → find node by exact text match, then case-insensitive fallback.
+- If anchor on a JSON/YAML/TOML target → the schematic anchor vocabulary
+  below: dot paths down to leaves, one form identical across formats (issue #58).
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
+
+### Schematic anchors — JSON / YAML / TOML (issue #58)
+
+A schematic file is exactly where a precise pointer matters — a config, a
+schema, a test vector, a manifest. Anchored refs into `.json`, `.yaml`,
+`.yml` and `.toml` targets are verified DOWN TO LEAVES: the file is parsed
+(hand-rolled recursive-descent parsers in `src/core/schematic.ts` — the
+repo's zero-runtime-dependency law holds on both runtimes; no `js-yaml`, no
+`Bun.TOML`) and its key paths become the addressable vocabulary, through the
+SAME code path for on-disk targets and `name://` external targets (no
+per-format special cases).
+
+**The anchor form** (one form, identical across formats — the same anchor
+resolves in the JSON, YAML and TOML spelling of the same schema):
+
+```text
+#database.host     dot path from the document root
+#items.0           sequence/array item by index
+#items[0]          the same index in bracket spelling — the two compose:
+                    #matrix[0][1], #items[1].tags.2, #items.0.name
+#a\.b              a key CONTAINING a dot, escaped with a backslash
+                    (\\ a literal backslash, \\[ / \\] literal brackets,
+                    any \X reads as X)
+#maintenance       a single-segment anchor keeps the issue #49 flat meaning:
+                    it must match exactly ONE key anywhere in the document
+```
+
+Path segments resolve with the same §12 normalization as node anchors
+(case-insensitive, separator-insensitive — exact spellings win first); array
+indices are exact integers.
+
+**Verdicts** (the issue's checker contract):
+
+| Anchor | Verdict |
+|---|---|
+| Existing leaf path (`#database.host`) | Resolves — in every supported format |
+| Intermediate object path (`#database`) | A VALID ADDRESS that resolves — but never presented as leaf proof |
+| Flat name matching MULTIPLE leaves (`#port` under `database` and `server`) | `refs.anchor.ambiguous` ERROR listing the full paths, suggesting the dot form |
+| Missing leaf path (`#NoSuchLeaf`) | `refs.broken.anchor` ERROR — in every supported format |
+| Flat name matching exactly one key (the #49 behavior) | Resolves — backwards compatible |
+| Flat name matching zero keys but a bullet node (YAML block sequences mint bullets) | Resolves via the bullet — the #49 additive behavior stays |
+| Malformed / beyond-subset schematic | `refs.anchor.parse-error` ERROR at the pointer site — never a silent pass, a warning, or a broken-anchor false positive |
+| Target with nothing addressable (prose `.md`, empty schematic, unknown format) | `refs.anchor.no-target` advisory downgrade (issue #49) — explicit, never silent |
+
+The two new rules count in the `refs.broken` JSON counter beside
+`refs.broken.file` / `refs.broken.anchor` (the QA-19 F40b truthfulness
+contract: an error-level refs finding never sits beside `refs.broken: 0`).
+
+**Supported subsets** (a construct beyond them is an explicit error at the
+pointer site, never a silent pass):
+
+- **JSON** — strict RFC 8259: objects, arrays, strings (full escape set incl.
+  `\uXXXX` + surrogate pairs), numbers, `true`/`false`/`null`. No comments,
+  no trailing commas, no trailing content; **duplicate keys are a parse
+  error** (decided: ambiguous documents are rejected, never silently
+  last-wins).
+- **YAML** — block mappings and sequences (any nesting, indented or flush
+  style), flow collections (single- or multi-line), scalars typed per YAML
+  1.2 core, comments, block scalars (`|`, `>` with `-`/`+` chomping), quoted
+  keys. NOT supported: YAML's own `&anchors`/`*aliases`/`!tags`, merge keys
+  (`<<:`), complex keys (`?`), explicit-indent block indicators (`|2`),
+  multi-line quoted scalars, tab indentation. **Multi-document input:** v1
+  addresses the FIRST document — a later `---` (or `...`, only at column 0)
+  ends it and the rest is out of scope.
+- **TOML** — `[tables]`, `[[arrays-of-tables]]` (subtables attach to the last
+  element), dotted keys, inline tables and arrays (multi-line arrays
+  allowed), basic and literal strings (single- and multi-line), integers
+  (underscores, `0x`/`0o`/`0b`), `inf`/`nan`, booleans; datetimes read as
+  string scalars. Duplicate keys/tables are parse errors; static (inline)
+  arrays cannot be extended by `[[…]]`.
+
+**Laziness** (contract 7): a schematic file is read and parsed ONLY when a
+pointer actually carries an anchor into it — file-level pointers to any
+target (including a malformed schematic) stay clean, and unreferenced files
+are never parsed. No corpus-wide schematic parsing.
+
+**Suggestions** follow the issue #53 rule (the ref follows the content, never
+the other way around), extended to path form: a near-miss path is proposed
+VERBATIM (`did you mean cfg.yaml#database.host?` — never slugified to
+`database-host`, which would not resolve), the unescaped spelling of a dotted
+key is taught the escape (`#a.b` → `#a\.b`), flat names are proposed only
+when they resolve uniquely, and bullet texts keep the canonical slug form.
 
 ### Broken-anchor suggestions (issue #53)
 A broken anchor keeps its `refs.broken.anchor` error — but the ADVICE follows
@@ -472,10 +556,12 @@ Verdicts, in order:
    `"."`, pointing at repo files outside `cans/`; a workspace symlink at the
    same sub-path) is one home with two spellings, never a duplicate.
 6. **Anchors** resolve against the external target's addressable vocabulary
-   — its bullet nodes and (for `.yaml`/`.yml`) mapping keys — exactly like an
-   on-disk artifact target (issue #49). A miss is `refs.broken.anchor`, a
-   target with nothing addressable downgrades to the `refs.anchor.no-target`
-   advisory.
+   through the same shared path as an on-disk target — bullet nodes plus,
+   for JSON/YAML/TOML, the full schematic dot-path vocabulary of issue #58
+   (issue #49 parity). A miss is `refs.broken.anchor`, an ambiguous flat
+   name is `refs.anchor.ambiguous`, an unparseable target is
+   `refs.anchor.parse-error`, and a target with nothing addressable
+   downgrades to the `refs.anchor.no-target` advisory.
 
 **Terminal-target semantics (binding decision):** an inter-repo pointer is an
 artifact-style TERMINAL target, one hop like `see: artifacts/final-chain.ts`
@@ -502,10 +588,14 @@ artifact-style TERMINAL target, one hop like `see: artifacts/final-chain.ts`
 | Absolute or `../` target | Broken ref error — `file not found in workspace`; resolution and create advice never leave the workspace root (issue #10, round 6) |
 | Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
 | Ref to an on-disk non-spec file (`artifacts/final-chain.ts`, `.txt`, `.yaml`) | Valid file-level ref — and NOT a deep hop: it cannot form an A→B→C spec chain (issue #44) |
+| Anchored ref into a schematic file (`artifacts/config.yaml#database.host`) | Leaf-path verification down to the key (issue #58): existing leaf/object address resolves; missing leaf is `refs.broken.anchor`; ambiguous flat name is `refs.anchor.ambiguous` |
+| Anchored ref into a malformed schematic (invalid JSON/YAML/TOML, or beyond the supported subset) | `refs.anchor.parse-error` error at the pointer site — never warning-and-pass, never a broken-anchor false positive (issue #58) |
+| Flat anchor matching several leaves (`#port` under `database` and `server`) | `refs.anchor.ambiguous` error listing the full paths, suggesting the dot form (issue #58) |
+| Anchored ref into an unsupported format (`.ini`, `.jsonc`, `.xml`) | `refs.anchor.no-target` advisory (issue #49) — explicit, never silently verified |
 | Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §5 deep-hop rules apply |
-| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's bullets/YAML keys (issue #55, #49) |
+| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's bullets and schematic key paths, the same shared vocabulary as on-disk targets (issue #55, #49, #58) |
 | External pointer, undeclared root name | Broken ref error — `undeclared external root 'name'` (issue #55) |
 | External pointer, declared root not checked out | ONE warning per referenced root; pointers into it unverified that run (issue #55) |
 | External pointer, sub-path escaping the root (`root://../..`, symlink out) | Broken ref error — containment is lexical AND realpath; never resolves outside the declared root (issue #55, extends #10) |

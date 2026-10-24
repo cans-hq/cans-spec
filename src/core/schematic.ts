@@ -88,10 +88,14 @@ export type SchematicParse =
   | { ok: true; root: SchematicValue }
   | { ok: false; line: number; message: string };
 
-/** Internal control flow for parse failures — caught at each parse entry. */
+/** Internal control flow for parse failures — caught at each parse entry.
+ *  (No TypeScript parameter properties: the node fallback runtime runs the
+ *  sources in strip-only mode, where they are unsupported syntax.) */
 class SchematicSyntaxError extends Error {
-  constructor(readonly line: number, message: string) {
+  readonly line: number;
+  constructor(line: number, message: string) {
     super(message);
+    this.line = line;
   }
 }
 
@@ -256,8 +260,11 @@ function classifyPlain(text: string): string | number | boolean | null {
 class JsonParser {
   private pos = 0;
   private line = 1;
+  private readonly src: string;
 
-  constructor(private readonly src: string) {}
+  constructor(src: string) {
+    this.src = src; // assigned, not a parameter property: node strip-only mode
+  }
 
   parseDocument(): SchematicValue {
     this.skipWs();
