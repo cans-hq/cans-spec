@@ -99,12 +99,14 @@ export function looksLikeSpecRef(target: string, hasAnchor: boolean): boolean {
 // ── Issue #55: external roots / inter-repo pointers ──
 
 /** The `name://sub/path` pointer form. The name grammar is deliberately wide
- *  (any URI-scheme shape) so an UNDECLARED root still reaches the dedicated
- *  `undeclared external root` error instead of the generic missing-file one.
- *  `http://` and `https://` are URLs, never root pointers — they keep their
- *  exact pre-#55 treatment everywhere (broken-ref classification, deep-hop
- *  mesh-exiting classification, create-advice), untouched by this feature. */
-const EXTERNAL_POINTER_RE = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.+)$/;
+ *  (any run of non-colon, non-slash characters) so root names with `_` —
+ *  legal per the §18 root-name grammar — parse, and an UNDECLARED root still
+ *  reaches the dedicated `undeclared external root` error instead of the
+ *  generic missing-file one. `http://` and `https://` are URLs, never root
+ *  pointers — they keep their exact pre-#55 treatment everywhere (broken-ref
+ *  classification, deep-hop mesh-exiting classification, create-advice),
+ *  untouched by this feature. */
+const EXTERNAL_POINTER_RE = /^([^:\s/]+):\/\/(.+)$/;
 
 /** §18 references.external_roots root-name grammar: lowercase, no slashes, no
  *  dots — a name that can never be confused with a path or a URL scheme. */
@@ -206,7 +208,11 @@ export function resolveExternalTarget(rootDir: string, rawSubPath: string): Exte
   const realRoot = realpathOrDefault(rootDir);
   const realTarget = realpathOrDefault(candidate);
   if (!isInsideDir(realRoot, realTarget)) return { kind: 'escape' };
-  return { kind: 'ok', path: realTarget, subPath };
+  // Normalized sub-path (separators unified like toRelative's keys): the
+  // duplicate-home probes compare THIS canonical form across roots, so
+  // `sub/../sub/x.rs` and `sub/x.rs` are one home, not two spellings.
+  const normalized = relative(realRoot, realTarget).split('\\').join('/');
+  return { kind: 'ok', path: realTarget, subPath: normalized };
 }
 
 /** Per-run context for the external-pointer walk inside checkRefs. */

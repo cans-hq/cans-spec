@@ -364,8 +364,9 @@ function validateRulesShape(merged: Record<string, unknown>, source: string): vo
     if (!isPlainObject(ext)) {
       const line = topLevelKeyLine(source, 'references');
       const at = line > 0 ? `line ${line}` : 'line 1';
+      const got = Array.isArray(ext) ? 'a list' : typeof ext;
       throw new Error(
-        `${at} — "references.external_roots" must be a mapping of root names to paths, got ${typeof ext}`,
+        `${at} — "references.external_roots" must be a mapping of root names to paths, got ${got}`,
       );
     }
     for (const [name, value] of Object.entries(ext)) {
