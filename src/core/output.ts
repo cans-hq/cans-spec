@@ -1,6 +1,7 @@
 import type {
   CommandResult, CheckResult, InitResult, NewResult, DoneResult, StatusResult,
   BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, SlugResult, VersionResult,
+  AliasResult,
 } from '../types.ts';
 import {
   buildReport, topGroups, checkReportJson,
@@ -208,6 +209,47 @@ export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set
         console.log(r.slug);
       } else {
         console.log(`✗ ${r.error ?? 'failed to slug'}`);
+      }
+      break;
+    }
+    case 'alias': {
+      // issue #57: the expand/collapse migration report — per-file outcome
+      // lines, savings, and §37 refusals (each refused file left untouched).
+      const r = result as AliasResult;
+      if (!r.ok && r.error !== undefined) {
+        console.log(`✗ ${r.error}`);
+        break;
+      }
+      const verb = r.direction === 'expand' ? 'Expanded' : 'Collapsed';
+      const changed = r.results.filter(x => x.changed);
+      const refused = r.results.filter(x => x.problems.length > 0);
+      const unchanged = r.results.length - changed.length - refused.length;
+      if (r.dryRun === true) {
+        console.log(`[dry-run] Would ${r.direction} ${changed.length} file${changed.length === 1 ? '' : 's'}. No files written.`);
+      } else if (changed.length > 0) {
+        console.log(`${verb} ${changed.length} file${changed.length === 1 ? '' : 's'}`);
+      } else {
+        console.log(`Nothing to ${r.direction} — ${r.results.length} file${r.results.length === 1 ? '' : 's'} already in ${r.direction === 'expand' ? 'full-pointer' : 'aliased'} form`);
+      }
+      for (const f of changed) {
+        const parts: string[] = [];
+        if (r.direction === 'expand') {
+          if (f.usesRewritten > 0) parts.push(`${f.usesRewritten} use${f.usesRewritten === 1 ? '' : 's'} → full targets`);
+          if (f.definitionsRemoved > 0) parts.push(`${f.definitionsRemoved} definition${f.definitionsRemoved === 1 ? '' : 's'} removed`);
+        } else {
+          if (f.usesRewritten > 0) parts.push(`${f.usesRewritten} target${f.usesRewritten === 1 ? '' : 's'} → aliases`);
+          if (f.definitionsAdded > 0) parts.push(`${f.definitionsAdded} definition${f.definitionsAdded === 1 ? '' : 's'} added`);
+          if (f.definitionsKept > 0) parts.push(`${f.definitionsKept} kept`);
+        }
+        if (f.charsSaved !== 0) parts.push(`${f.charsSaved > 0 ? '−' : '+'}${Math.abs(f.charsSaved)} chars`);
+        console.log(`  ${f.file}: ${parts.join(', ')}`);
+      }
+      if (unchanged > 0) console.log(`  (${unchanged} unchanged)`);
+      if (refused.length > 0) {
+        console.log(`✗ ${refused.length} file${refused.length === 1 ? '' : 's'} refused — left unchanged:`);
+        for (const f of refused) {
+          for (const p of f.problems) console.log(`  ${p}`);
+        }
       }
       break;
     }
@@ -552,6 +594,9 @@ Commands:
   import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [--json]
   export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
   slug "<node text>" | <file>:<line> [--json]
+  alias expand|collapse [file] [--dry-run] [--json]
+        expand: alias uses → full targets, definitions removed
+        collapse: repeated full targets → definitions + short uses (per _rules.yaml)
   help
   version
 

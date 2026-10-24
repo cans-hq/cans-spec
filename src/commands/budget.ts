@@ -7,6 +7,7 @@ import { resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, dirExists
 import { parseOutline } from '../core/outline.ts';
 import { loadRules } from '../core/rules.ts';
 import { buildRefGraph } from '../core/refs.ts';
+import { defaultAliasing, extractAliases, resolveFileAliases } from '../core/alias.ts';
 import { buildReadPlan, buildWritePlan } from '../core/token-budget.ts';
 
 export interface BudgetArgs {
@@ -218,9 +219,19 @@ export async function run(args: string[]): Promise<BudgetReadResult | BudgetWrit
   }
 
   const files = new Map<string, OutlineNode[]>();
+  // Issue #57: alias uses resolve here exactly like in `cans check` — a
+  // reading plan must follow the alias to its full target, and the two
+  // commands must never disagree about what a file points at. Alias-layer
+  // issues are deliberately ignored: budget is planning, not checking
+  // (`cans check` reports them).
+  const aliasCfg = rules.references.aliasing ?? defaultAliasing();
   for (const rel of discoverSpecFiles(workspace)) {
     try {
-      files.set(rel, parseOutline(await readText(join(workspace, rel)), rel));
+      const text = await readText(join(workspace, rel));
+      const table = extractAliases(text);
+      const nodes = parseOutline(text, rel);
+      resolveFileAliases(nodes, table, rel, aliasCfg);
+      files.set(rel, nodes);
     } catch {
       // unreadable spec file: excluded from the plan
     }

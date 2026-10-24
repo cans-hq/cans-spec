@@ -6,6 +6,7 @@ import {
   mkdirp, dirExists, exists,
 } from '../core/fs.ts';
 import { parseOutline } from '../core/outline.ts';
+import { extractAliases, resolveFileAliases } from '../core/alias.ts';
 import { serializeOpml } from '../converters/opml.ts';
 import { serializeLogseq } from '../converters/logseq.ts';
 import { serializeObsidian } from '../converters/obsidian.ts';
@@ -195,6 +196,22 @@ export async function run(args: string[]): Promise<ExportResult> {
         tree = parseOutline(text, rel);
       } catch {
         continue;
+      }
+      // Issue #57: an export renders refs OUT of node text (→ links,
+      // [[wikilinks]]) for consumers outside the workspace — they cannot see
+      // this workspace's alias definitions, so every resolvable alias use is
+      // swapped for its full pointer first. Config-independent by design:
+      // `see: [1]` is the workspace-internal spelling of a pointer whose
+      // target the definition already names; a permissive resolve expands
+      // every defined use regardless of the checker's opt-in switch (export
+      // is a rendering, not a check — undefined uses stay as written).
+      // Definitions themselves mint no nodes (parseOutline skips them), so
+      // they never reach the serializers.
+      const aliasTable = extractAliases(text);
+      if (aliasTable.lines.length > 0) {
+        resolveFileAliases(tree, aliasTable, rel, {
+          enabled: true, scope: 'file', style: 'both', min_uses: 1,
+        }, { rewriteText: true });
       }
       const external = tree.map(n => toExternal(n, f));
       if (external.length === 0) continue;

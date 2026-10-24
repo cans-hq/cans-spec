@@ -5,7 +5,9 @@ const CHECKBOX_RE = /^\[( |x|X)\]\s+/;
 const OWNER_RE = /←\s*(@?\S+)/;
 // §11: `see:` parsed via regex — accepts `see:TARGET` (no space), `see: TARGET`, `see TARGET`.
 // The alternation keeps the no-colon form whitespace-required so words like "seed" never match.
-const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
+// Exported for core/alias.ts (issue #57): the expand/collapse rewriters must
+// mint EXACTLY the spans the parser mints — the same regex, never a copy.
+export const REF_RE = /see(?::\s*|\s+)([^\s#]+)(?:#([^\s#]+))?/g;
 // Issue #48: trailing sentence punctuation stripped from see: tokens AFTER the
 // match. The capture groups above stay deliberately greedy — anchors keep
 // mid-token dots (`#Section-2.1` addresses a node titled "Section 2.1", and
@@ -33,8 +35,12 @@ const REF_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
  *  are restored while the token ends with an UNTERMINATED bracket run: a
  *  bare `#items[0]` and a parenthesized `(see x.yaml#items[0])` both mint
  *  `items[0]`, while prose closers (`#Audit-spine)`) keep the #48 behavior
- *  (no bracket, nothing to repair). */
-function stripRefTrailingPunct(token: string): string {
+ *  (no bracket, nothing to repair).
+ *
+ *  Exported for core/alias.ts (issue #57): the alias machinery re-derives
+ *  see: tokens from raw matches and must strip EXACTLY like the parser,
+ *  never more, never less. */
+export function stripRefTrailingPunct(token: string): string {
   const stripped = token.replace(REF_TRAILING_PUNCT_RE, '');
   let eaten = (token.match(/\]/g) ?? []).length - (stripped.match(/\]/g) ?? []).length;
   let out = stripped;
@@ -46,6 +52,55 @@ function stripRefTrailingPunct(token: string): string {
     eaten--;
   }
   return out;
+}
+
+/** Issue #48-bis (via #57): the trailing-punctuation strip is BRACKET-AWARE
+ *  for alias-use tokens. `]` sits in the strip set (it closes ordinary prose
+ *  parentheticals), so `(see: [1])` would strip BOTH the glued `)` and the
+ *  structural `]` and mint the prose token `[1` — the alias use would silently
+ *  degrade to see-like prose. When the token is bracketed (`[`-led), the
+ *  trailing `]` is structural and survives: closers strip down TO it, never
+ *  through it. Consumers: the issue #57 alias-use detector (core/alias.ts) and
+ *  the expand/collapse rewriters, which must agree with parseOutline's ref
+ *  extraction token-for-token. */
+export function stripRefTrailingPunctBracketAware(token: string): string {
+  if (token.startsWith('[')) {
+    // Same set minus `]`: strip glued closers, keep the bracket closed.
+    return token.replace(/[),.;:!?'"’”…]+$/, '');
+  }
+  return token.replace(REF_TRAILING_PUNCT_RE, '');
+}
+
+// Issue #57: one alias DEFINITION line — a bullet of the exact shape
+// `- [name]: target` / `- [name]: target#anchor`, where the whole rest after
+// `]:` is a single pointer token (plus optional anchor). Recognized as file
+// metadata, NEVER as an outline node: definition lines are excluded from
+// node_length, sibling caps, depth, style and redundancy wherever they appear
+// outside a code fence (the issue's contract 5: aliasing must not move the
+// 90-char problem to the definition site). The convention — and `cans alias
+// collapse`'s output — is a definitions block at the END of the file,
+// footnote-style; recognition itself is position-independent so a mid-file
+// definition can never silently become a stray node. NAME legality
+// (numeric `[1]` or lowercase `[a-z][a-z0-9_-]*`) is core/alias.ts's call —
+// the parser only recognizes the SHAPE, keeping this the single regex every
+// consumer (parseOutline, extractAliases, expand/collapse) shares.
+const ALIAS_DEF_RE = /^(\s*)-\s+\[([^\]\s]+)\]:[ \t]*([^\s#]+)(?:#([^\s#]+))?[ \t]*$/;
+
+/** Issue #57: match one source line against the alias-definition shape.
+ *  Returns the captured parts (name, target, anchor — trailing-punctuation
+ *  stripped from target/anchor like the §11 ref parser strips see: tokens)
+ *  or null when the line is not definition-shaped. Pure syntax: no fence
+ *  awareness (the caller tracks fences), no name/target legality (the alias
+ *  engine classifies and reports those). */
+export function matchAliasDefinition(
+  line: string,
+): { name: string; target: string; anchor: string | null } | null {
+  const m = line.match(ALIAS_DEF_RE);
+  if (m === null) return null;
+  const target = stripRefTrailingPunct(m[3]!);
+  if (target === '') return null; // `- [1]: ...` — pure punctuation, prose
+  const anchor = m[4] !== undefined ? stripRefTrailingPunct(m[4]!) : null;
+  return { name: m[2]!, target, anchor: anchor === '' ? null : anchor };
 }
 
 /** Issue #46: remove every `see:`/`see` ref span — keyword + separator +
@@ -157,6 +212,13 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     }
     if (fenceOpen) continue; // inside fence: ignore
 
+    // Issue #57: alias definition lines are file metadata, never nodes —
+    // skipped before the bullet match so they cannot join the tree (and so
+    // their targets never count against node_length/sibling caps). Shape via
+    // the shared ALIAS_DEF_RE; semantics (name grammar, targets) belong to
+    // core/alias.ts.
+    if (matchAliasDefinition(raw) !== null) continue;
+
     // Table rows: runs of consecutive `| ... |` lines
     if (raw.trim().startsWith('|')) {
       if (!tableRunOpen) {
@@ -221,6 +283,13 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
       // REF_RE itself is unchanged: its `+` quantifiers already refuse to mint
       // from nothing (`see #` and `see: #x` match no token at all), so the
       // empty-token cases can only arise from stripping, never from the regex.
+      //
+      // Issue #57 note: an alias use (`see: [1]`) keeps its bracket token
+      // verbatim here — `]` is stripped like any closer, so a PARENTHESIZED
+      // use (`(see [1])`) mints file `[1`. That is expected: resolution is
+      // core/alias.ts's job and it re-derives the token from `raw` with the
+      // bracket-aware strip (stripRefTrailingPunctBracketAware), replacing the
+      // whole RefTarget when the use resolves.
       const refFile = stripRefTrailingPunct(rm[1]!);
       if (refFile === '') continue;
       const refAnchor = rm[2] !== undefined ? stripRefTrailingPunct(rm[2]) : null;

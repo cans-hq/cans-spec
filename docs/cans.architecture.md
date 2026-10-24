@@ -283,6 +283,7 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - Indentation unit: 2 spaces. Hardcoded. Tabs rejected.
 - Non-bullet lines ignored (prose, headings, blanks exist for humans only).
 - `<!-- ref-by: ... -->` stripped from text, recorded as back-pointer metadata.
+- Alias-definition lines (`- [1]: target#Anchor`, issue #57) are file METADATA, never nodes — skipped by the same shape regex every alias consumer shares (§12); outside code fences only.
 - `see:` parsed via regex: `/see:\s*(\S+?)(?:#(\S+))?/g`
 - Owner parsed via regex: `/←\s*(@?\S+)/`
 - Stack-based parent attachment by indent level.
@@ -590,6 +591,84 @@ artifact-style TERMINAL target, one hop like `see: artifacts/final-chain.ts`
   check run; `--fix` writes nothing there (and `back_pointers` never applies
   to external targets in either direction).
 
+### Pointer aliasing (issue #57)
+
+A repeated `see:` target inside one file can be spelled ONCE and referenced
+by short footnote-style aliases: a definitions block at the end of the file
+(`- [1]: full/target.md#Anchor`, markdown link-reference shape), short
+fully-counted uses on the nodes (`see: [1]`, `see: [hyper]`). Both forms
+are legal at all times — full pointers never stop being valid; aliasing is
+OPT-IN via `references.aliasing.enabled` (§18, default `false`).
+
+**Grammar:** a definition line is a bullet of the exact shape
+`- [name]: target[#anchor]` — the whole rest after `]:` is one pointer
+token plus an optional anchor, trailing sentence punctuation stripped like
+a `see:` token (§11/issue #48). Names are `[1]`-style all-digit numbers
+(the footnote form) or lowercase `[a-z][a-z0-9_-]*` words; the markdown
+footnote form `[^1]` and any other shape is NOT an alias (an illegal-name
+definition is a line-numbered error, never a silent skip). A use is a
+`see:` whose ENTIRE file token is the bracketed alias: `(see: [1])`
+resolves (the closing `]` is structural and survives the §48 strip),
+`see: [1]x` and `see [the appendix]` are NOT uses — they keep their exact
+pre-#57 treatment (see-like-prose warning). A use may not carry its own
+anchor (`see: [1]#X` is an error — anchors live on the definition), and a
+definition target must be the FULL pointer (`- [2]: [1]` is an error — one
+level of indirection, no chains).
+
+**Definitions are file metadata, never outline nodes** (§11 skips the same
+shape): wherever a definition line appears outside a code fence it is
+excluded from node_length, sibling caps, depth, style and redundancy — the
+90-char problem is not relocated from N use sites to one definition site.
+A definition quoted inside a ``` fence is documentation, not a definition
+(same fence rule as the parser). Use sites measure their WRITTEN spelling
+(`label: see: [1]`): the structure/style/content/redundancy engines see
+what the author wrote, so a long target plus a label no longer forces the
+pointer onto a bare child node — while the REFS engine resolves the alias
+BEFORE the graph is built (the use's `RefTarget` becomes the definition's
+target, with an `alias` marker recording the spelling for `--fix`
+diagnostics), so refs.total, deep hops, SCC/mesh classification, orphans,
+back-pointers and every refs.broken verdict are IDENTICAL to the expanded
+form's. `raw` keeps the written spelling — deep-hop advice quotes what is
+on the line (`delete 01-near.md's "see: [m]" (line 1)`).
+
+**Resolution = the full pointer's, exactly:** file existence, anchor match,
+external roots (`kelir://…` definitions included, §55), traversal
+containment, duplicate-home, `orphan_check`, self-reference, transient/
+`_collab` classification — same error rules, same messages. A broken
+DEFINITION fails the run even with zero uses (each zero-use definition is
+verified through the same `checkRefs` machinery a full pointer would hit,
+with the definition line as the location — and never counted in
+`refs.total`: definitions are the spelling, uses are the refs). A
+`--fix` anchor repair behind an alias targets the DEFINITION line — one
+rewrite resolves every use.
+
+**The alias-layer verdicts** (`category: refs`, grouped like every refs
+family): undefined use → error `refs.alias.undefined` (dropped from the
+graph — never also a see-like-prose warning); unused definition → warning
+`refs.alias.unused`; aliasing disabled + any use or definition present →
+error `refs.alias.disabled` (stranded syntax never silently passes — the
+fix is `cans alias expand`); style violation (`style: numeric` + a named
+use) → error `refs.alias.style` that still RESOLVES (the error is about
+the spelling, not the target); a used alias below `min_uses` (uses + full
+spellings of the same target, per file) → error `refs.alias.min_uses` at
+the definition — indirection with no saving; anchored use → error
+`refs.alias.bad-use`; duplicate definition / illegal name / alias-shaped
+target → errors `refs.alias.duplicate` / `.bad-name` / `.bad-target` at
+the definition site.
+
+**Scope is the defining file only** (footnote-like): a use never sees
+another file's definitions, inside the spec set or in the aux ref holders
+(`_tasks/`, `_adr/` — a task file's aliases resolve against its own
+definitions and earn its targets' ref-by marks; the `done` extra-referrer
+pass resolves the archived task's aliases from its pre-archive source).
+There are no global aliases in `_rules.yaml` in v1.
+
+**Rendering:** `cans export` swaps each resolvable alias use for its full
+pointer before serializing (config-independent — an export is a view of
+the resolved graph for consumers that cannot see the workspace's
+definitions); `cans budget` follows resolved refs like `cans check`, so
+the two commands never disagree about what a file points at.
+
 ### Edge cases
 
 | Case | Behavior |
@@ -614,6 +693,12 @@ artifact-style TERMINAL target, one hop like `see: artifacts/final-chain.ts`
 | External pointer, missing file under a present root | Broken ref error under `orphan_check: true` (`file not found under external root 'name'`); verification off with `orphan_check: false` (issue #55) |
 | External `.md` target | NOT promoted — terminal target only; its own `see:` refs are invisible (issue #55 decision 3) |
 | `see: http://…` / `see: https://…` | URLs, never external-root pointers — exact pre-#55 treatment (broken ref error when unresolved) (issue #55) |
+| Alias use `see: [1]` with aliasing on and `[1]` defined | Resolves to the definition's full target — identical refs-layer verdicts to the expanded spelling (issue #57) |
+| Alias use, aliasing disabled | Error `refs.alias.disabled` — never a silent pass nor a prose downgrade; fix is `cans alias expand` (issue #57) |
+| Alias use, `[name]` not defined in THIS file | Error `refs.alias.undefined` at the use line; the ref is dropped (issue #57) |
+| Alias definition, never used | Warning `refs.alias.unused`; its target still verified (a broken definition fails the run) (issue #57) |
+| Bracketed prose `see [the appendix]`, `see: [1]x` | NOT alias uses — pre-#57 see-like-prose warning (issue #57) |
+| Anchored alias use `see: [1]#X` | Error `refs.alias.bad-use` — anchors live on the definition (issue #57) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
@@ -716,11 +801,15 @@ The post-#56 model:
 ```
 1. Parse all files → OutlineNode[][] (discovered root .md + any-depth
    index.md, plus issue #54's transitive promotion of referenced subfolder
-   .md files — iterated to a fixpoint before anything else runs)
+   .md files — iterated to a fixpoint before anything else runs; alias
+   definitions extracted as file metadata and every alias USE resolved to
+   its full target BEFORE any consumer sees the nodes — issue #57, §12)
 2. Build RefGraph
 3. checkStructure()
 4. checkStyle()
-5. checkRefs()
+5. checkRefs() (+ the issue #57 definition-level finish pass: unused-alias
+   warnings, min_uses audit, zero-use-definition verification — a broken
+   definition fails the run)
 6. checkRedundancy() (all 4 layers)
 7. Collect all Issue[]
 8. Format output (JSON or text)
@@ -765,6 +854,11 @@ references:
   orphan_check: true
   duplicate_home_check: true
   # external_roots: {}     # issue #55 — inter-repo pointer roots; default: none
+  # aliasing:               # issue #57 — per-file pointer aliasing; default: disabled
+  #   enabled: false
+  #   scope: file
+  #   style: both
+  #   min_uses: 2
 redundancy:
   enabled: true
   word_frequency_threshold: 4
@@ -800,6 +894,8 @@ output:
 - **Name grammar:** `^[a-z][a-z0-9_-]*$` — case-sensitive, no slashes, no dots.
 - **Validation:** malformed entries are line-numbered config errors like every §18 key: a non-mapping `external_roots` (`line N — "references.external_roots" must be a mapping of root names to paths, got …`), an invalid name (`line N — invalid external root name "Kelir" — must match ^[a-z][a-z0-9_-]*$`), or a non-string/empty value (`line N — external root "kelir" must be a non-empty path string, got …`). A declared root that is not checked out locally is NOT a config error — it is a runtime warning (§12).
 - Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
+
+`references.aliasing` (issue #57) configures per-file pointer aliasing (§12): `enabled` (boolean, default `false` — aliasing is OPT-IN, and disabled plus any alias use or definition present is an error, never a silent pass), `scope` (`"file"` — the only legal value in v1; anything else is a line-numbered config error), `style` (`"numeric"` | `"named"` | `"both"`, default `both`; a use of the other style is an error that still resolves), `min_uses` (integer `>= 1`, default `2` — only targets referenced at least that many times per file, alias uses plus full spellings, are alias-eligible; a hand-written alias below the threshold is an error at the definition). It is a PARAMETER, not a check switch: absent/empty = the documented defaults, and it never participates in the delete/override reconciliation. Unknown sub-keys reject under the same strict #56 discipline as unknown top-level keys — a typo'd `enabledd` must never silently mean "no such knob" while the author believes aliasing is on. Partial blocks merge over the defaults (`aliasing: { enabled: true }` keeps `style: both`).
 
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
 
@@ -846,6 +942,7 @@ cans budget write <concept> [--json]
 cans import <format> <path> [--out <path>] [--dry-run] [--merge-strategy <s>] [--json]
 cans export <format> [--from <path>] [--include-tasks] [--vault <path>] [--dry-run] [--json]
 cans slug "<node text>" | <file>:<line>
+cans alias expand|collapse [file] [--dry-run] [--json]
 cans help
 ```
 
@@ -1087,6 +1184,62 @@ is a malformed-line-number error — never silently slugged as prose.
 **JSON result:**
 ```ts
 { ok, command: 'slug', exitCode, input: string, slug: string, nodeText?: string }
+```
+
+---
+
+## 23b. `cans alias expand|collapse [file]`
+
+The programmatic switch between full-pointer form and aliased form (issue
+#57) — migrating a corpus by hand is error-prone, and turning aliasing off
+later would otherwise strand aliased files. The transforms are pure
+byte-level line surgery in `core/alias.ts` (`expandAliases` /
+`collapseAliases`); the command resolves the workspace, loads the rules,
+discovers the check file set (spec files + the aux ref holders `_tasks/`,
+`_adr/` — so disabling aliasing later has a complete expand path) and
+writes.
+
+- **`expand`** — alias uses become full targets, definitions are removed.
+Always allowed (even under a disabled config — it IS the migration path);
+unused definitions are simply removed (expand is the cleanup path for dead
+weight).
+- **`collapse`** — repeated full targets become definitions plus short
+uses, following the `_rules.yaml` aliasing config: only targets referenced
+`>= min_uses` times in the file (full spellings + existing alias uses) are
+eligible, one-offs stay full pointers; numeric style numbers NEW aliases
+after the highest existing number in first-use order (`[1]`, `[2]`, … —
+deterministic); named style derives a name from the target (the anchor, else
+the file stem with numeric prefix stripped, sanitized into the name grammar,
+`-2`/`-3` suffixed on collision). Existing definitions are KEPT in place and
+reused — no renumbering churn; only new targets get new names appended to
+the (continued or fresh, after exactly one blank separator) definitions
+block at EOF. REFUSES outright under `references.aliasing.enabled: false`
+(§19 could-not-run, exit 2): collapse would mint files the checker rejects.
+
+**Contract for both directions** (issue #57): lossless for non-pointer text
+(only `see:` tokens and alias definition lines change; prose, labels, node
+order and structure untouched; CRLF files stay CRLF); idempotent (a second
+run is a byte-identical no-op — `Nothing to expand/collapse`); and SAFE
+FAILURES — a file with an undefined or anchored alias use, a duplicate /
+illegal / alias-targeting definition, a style conflict with the config, a
+`min_uses` violation an existing alias perpetrates, or an unterminated code
+fence at EOF is REFUSED: left byte-identical, each problem named with its
+`file:line`, exit 1 (§19 user-correctable file content) while the other
+files are still processed. Graph-identity is the round-trip guarantee:
+`expand(collapse(f))` is `f` in full-pointer form and
+`collapse(expand(f))` is `f` in aliased form, and `cans check`'s refs layer
+is identical on both (§12).
+
+**Flags:** `--dry-run` (preview, no byte written), `--json`, optional
+`[file]` filter (check's UX — `cans alias collapse 07-lifecycle.md`).
+Plain runs WRITE (the import/export migration-command pattern).
+
+**JSON result:**
+```ts
+{ ok, command: 'alias', exitCode, direction: 'expand'|'collapse',
+  results: Array<{ file, changed, usesRewritten, definitionsRemoved,
+                    definitionsAdded, definitionsKept, charsSaved, problems: string[] }>,
+  dryRun?: true, error?: string }
 ```
 
 ---
