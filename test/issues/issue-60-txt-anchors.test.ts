@@ -14,12 +14,14 @@
  * prose/sentence/box guards are pinned as negatives, not assumed.
  *
  * Test map:
- *   s1-s8   underlined (setext-style): `=` and `-` forms; ≥ 3 chars required;
- *           blank-line-then-`---` is a SEPARATOR, non-blank-then-`---` is an
- *           underline (decided; holds for `=` runs too); whitespace around
- *           text and underline; pure `=`/`-` runs never heading text (borders,
- *           stacked underlines); consecutive pairs; `=-=` is not an underline;
- *           blank line between text and underline breaks the pair
+ *   s1-s8   underlined (setext-style): `=` and `-` forms; the ≥ 3-char
+ *           boundary pinned on both sides; blank-line-then-`---` is a
+ *           SEPARATOR, non-blank-then-`---` is an underline (decided; holds
+ *           for `=` runs too); whitespace around text and underline; pure
+ *           `=`/`-` runs never heading text (borders, stacked underlines);
+ *           consecutive pairs (with and without a trailing newline); `=-=`
+ *           is not an underline; blank line between text and underline
+ *           breaks the pair
  *   c1-c9   ALL-CAPS section lines: the issue's literal CREATION FLOW /
  *           DIRECTORY TREE examples; mixed-case prose; sentence punctuation
  *           (. , ; ! ? :); ASCII-art boxes (`|`, `+`, `--` runs); 8-vs-9 word
@@ -53,9 +55,14 @@ describe('issue #60: extractTextHeadings — underlined (setext-style) headings'
     expect(extractTextHeadings(src)).toEqual(['DATA FLOW', 'Overview']);
   });
 
-  test('s2: the underline needs ≥ 3 chars — `==` is not one', () => {
-    // Title One survives no rule (mixed case), so nothing is extracted.
+  test('s2: the underline needs ≥ 3 chars — `==` is not one, `===` is', () => {
+    // The boundary is inclusive: exactly 3 `=` (or `-`) underlines.
+    expect(extractTextHeadings('Title\n===\n')).toEqual(['Title']);
+    expect(extractTextHeadings('Title\n---\n')).toEqual(['Title']);
+    // Two chars do not: Title One survives no rule (mixed case), so nothing
+    // is extracted.
     expect(extractTextHeadings('Title One\n==\n')).toEqual([]);
+    expect(extractTextHeadings('Title One\n--\n')).toEqual([]);
   });
 
   test('s3: blank-line-then-`---` is a separator; non-blank-then-`---` is an underline', () => {
@@ -80,8 +87,9 @@ describe('issue #60: extractTextHeadings — underlined (setext-style) headings'
     expect(extractTextHeadings('# Title\n========\n========\n')).toEqual(['Title']);
   });
 
-  test('s6: consecutive setext pairs each mint one heading', () => {
+  test('s6: consecutive setext pairs each mint one heading (EOF without a trailing newline too)', () => {
     expect(extractTextHeadings('One\n===\nTwo\n---\n')).toEqual(['One', 'Two']);
+    expect(extractTextHeadings('One\n===\nTwo\n---')).toEqual(['One', 'Two']);
   });
 
   test('s7: a mixed `=-=` line is not an underline', () => {

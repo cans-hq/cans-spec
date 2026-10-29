@@ -76,11 +76,12 @@
 const EQ_UNDERLINE_RE = /^={3,}$/;
 const DASH_UNDERLINE_RE = /^-{3,}$/;
 
-/** A pure `=`/`-` run of ANY length (≥ 1): underline-shaped decoration.
- *  Such a line is never heading TEXT itself — rule 1's text line may be any
- *  other non-blank line (including a `#`-led one that failed ATX, which is
- *  markdown's own setext reading of `#nospace` above an `====`). */
-const PURE_RULE_RE = /^[=-]+$/;
+/** A pure `=`/`-` RUN of any length (≥ 1): underline-shaped decoration
+ *  (a typographic rule). Such a line is never heading TEXT itself — rule 1's
+ *  text line may be any other non-blank line (including a `#`-led one that
+ *  failed ATX, which is markdown's own setext reading of `#nospace` above
+ *  an `====`). */
+const PURE_RUN_RE = /^[=-]+$/;
 
 /** ATX opener with its text in a capture: 1–6 `#`, one space, remainder.
  *  `####### x` (7 hashes) and `#nospace` both fail — not headings. */
@@ -149,7 +150,7 @@ export function extractTextHeadings(source: string): string[] {
     // Rule 1: an underline immediately below claims this line as the text.
     // The text line must not itself be a pure `=`/`-` run (stacked
     // underlines / borders decorate, they do not head).
-    if (!PURE_RULE_RE.test(line) && i + 1 < lines.length && isUnderline(lines[i + 1]!)) {
+    if (!PURE_RUN_RE.test(line) && i + 1 < lines.length && isUnderline(lines[i + 1]!)) {
       headings.push(line);
       i++; // consume the underline — decoration, not a candidate line
       continue;
@@ -165,7 +166,12 @@ export function extractTextHeadings(source: string): string[] {
   return headings;
 }
 
+/** Plain-text artifact extensions: `.txt` and `.text` (case-insensitive,
+ *  `$`-anchored on the whole path — the schematicFormatFor convention, so
+ *  `notes.textile` and `dir/notes.txt/` are NOT text artifacts). */
+const TEXT_EXT_RE = /\.te?xt$/i;
+
 /** Issue #60: does this path name a plain-text artifact target? */
 export function isTextArtifact(path: string): boolean {
-  return /\.te?xt$/i.test(path);
+  return TEXT_EXT_RE.test(path);
 }
