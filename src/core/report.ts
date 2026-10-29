@@ -181,7 +181,9 @@ const RE_EXT_ABSENT = /^external root '(\S+)' is not checked out \(\S+ from the 
 const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 // Issue #49: zero-addressable-target downgrade (prose .md, empty yaml) —
 // same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
-const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets or YAML keys\); use a file-level ref$/;
+// Issue #60: the vocabulary list in the message widened to the full
+// addressable set (bullets, schematic key paths, text headings, code symbols).
+const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets, schematic key paths, text headings, code symbols\); use a file-level ref$/;
 // Issue #58: the schematic-anchor errors (JSON/YAML/TOML targets). Both are
 // error-level refs findings — grouped per pointer target like the no-target
 // advisory, so several anchors on the same broken/ambiguous file stay

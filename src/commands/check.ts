@@ -23,6 +23,8 @@ import {
   rebuildBackPointers, targetMatchesKey, anchorMatches, extractYamlKeys,
   type RefByGroup, type RefGraph, type ExternalRefsConfig,
 } from '../core/refs.ts';
+import { extractTextHeadings, isTextArtifact } from '../core/text-anchors.ts';
+import { extractCodeSymbols, isCodeArtifact } from '../core/code-anchors.ts';
 import {
   anchorSlug, charLabel, slugConfusables,
   nearSlugMatches, SLUG_SUGGEST_THRESHOLD,
@@ -930,7 +932,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // A broken anchor is repaired ONLY when the intended target is unambiguous:
   //   1. the target file exists and is parseable — the same resolution path
   //      checkRefs used (loaded key first, then resolveSpecFile + parse; YAML
-  //      mapping keys count as candidates too, issue #49),
+  //      mapping keys count as candidates too, issue #49 — and since issue
+  //      #60 the heading/symbol vocabulary of non-schematic artifacts,
+  //      mirroring the resolution vocabulary),
   //   2. EXACTLY ONE distinct node/key text fuzzy-matches the failing anchor
   //      at ≥ SLUG_SUGGEST_THRESHOLD — two lookalike siblings stay a plain
   //      error (never a coin flip), while duplicate node texts collapse to
@@ -992,9 +996,19 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         if (p !== null) {
           try {
             const text = await readText(p);
+            // The candidate vocabulary mirrors the resolution vocabulary of
+            // checkArtifactAnchor: parseOutline bullets for every target,
+            // YAML mapping keys (issue #49), and the issue #60 artifact
+            // vocabulary — .txt/.text headings, code files' top-level
+            // symbols — for non-schematic targets.
             const yamlKeys = /\.(yaml|yml)$/i.test(p) ? extractYamlKeys(text) : [];
+            const artifactVocab = isTextArtifact(p)
+              ? extractTextHeadings(text)
+              : isCodeArtifact(p)
+                ? extractCodeSymbols(p, text)
+                : [];
             const nodes = flattenNodes(parseOutline(text, p)).filter(n => n.synthetic !== true);
-            candidates = [...nodes.map(n => n.text), ...yamlKeys];
+            candidates = [...nodes.map(n => n.text), ...yamlKeys, ...artifactVocab];
           } catch {
             candidates = null; // unparseable target: nothing addressable, nothing to match
           }

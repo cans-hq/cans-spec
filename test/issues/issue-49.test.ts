@@ -252,7 +252,7 @@ describe('issue #49: checkRefs — YAML mapping keys as addressable anchors', ()
     const downgraded = issues.filter(i => i.rule === 'refs.anchor.no-target');
     expect(downgraded).toHaveLength(1);
     expect(downgraded[0]!.message).toBe(
-      'anchor on non-outline target: artifacts/empty.yaml#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref',
+      'anchor on non-outline target: artifacts/empty.yaml#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref',
     );
   });
 
@@ -296,7 +296,7 @@ describe('issue #49: checkRefs — zero-addressable-target downgrade', () => {
     expect(downgraded[0]!.level).toBe('warning');
     expect(downgraded[0]!.category).toBe('refs');
     expect(downgraded[0]!.message).toBe(
-      'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref',
+      'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref',
     );
     expect(downgraded[0]!.suggestion).toBe(
       'drop the #anything anchor (file-level refs are valid on any target), or add the anchor as a node/key in docs/notes.md',
@@ -316,7 +316,7 @@ describe('issue #49: checkRefs — zero-addressable-target downgrade', () => {
     const downgraded = issues.filter(i => i.rule === 'refs.anchor.no-target');
     expect(downgraded).toHaveLength(1);
     expect(downgraded[0]!.message).toBe(
-      'anchor on non-outline target: 02-draft.md#scope — target has no addressable nodes (bullets or YAML keys); use a file-level ref',
+      'anchor on non-outline target: 02-draft.md#scope — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref',
     );
     expect(issues.filter(i => i.rule === 'refs.broken.anchor')).toHaveLength(0);
   });
@@ -395,7 +395,7 @@ describe('issue #49: cans check end-to-end', () => {
     expect(warn).toBeDefined();
     expect(warn.level).toBe('warning');
     expect(warn.message).toBe(
-      'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref',
+      'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref',
     );
     expect(j.issues.some((i: any) => i.rule === 'refs.broken.anchor')).toBe(false);
     expect(j.counts.errors).toBe(0);

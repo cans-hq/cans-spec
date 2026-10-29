@@ -310,6 +310,10 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - If anchor → find node by exact text match, then case-insensitive fallback.
 - If anchor on a JSON/YAML/TOML target → the schematic anchor vocabulary
   below: dot paths down to leaves, one form identical across formats (issue #58).
+- If anchor on a `.txt`/`.text` or code-file target (`.ts`, `.js`, `.rs`,
+  `.py`, `.go`, …) → the target's natural addressable units: section
+  headings for text artifacts, top-level symbols for code files (issue #60),
+  resolved by the same §12 normalization and first-match rule as bullets.
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
 ### Schematic anchors — JSON / YAML / TOML (issue #58)
@@ -353,7 +357,7 @@ indices are exact integers.
 | Flat name matching exactly one key (the #49 behavior) | Resolves — backwards compatible |
 | Flat name matching zero keys but a bullet node (YAML block sequences mint bullets) | Resolves via the bullet — the #49 additive behavior stays |
 | Malformed / beyond-subset schematic | `refs.anchor.parse-error` ERROR at the pointer site — never a silent pass, a warning, or a broken-anchor false positive |
-| Target with nothing addressable (prose `.md`, empty schematic, unknown format) | `refs.anchor.no-target` advisory downgrade (issue #49) — explicit, never silent |
+| Target with nothing addressable (prose `.md`, empty schematic, empty `.txt`, unknown format like `.csv`) | `refs.anchor.no-target` advisory downgrade (issues #49, #60) — explicit, never silent |
 
 The two new rules count in the `refs.broken` JSON counter beside
 `refs.broken.file` / `refs.broken.anchor` (the QA-19 F40b truthfulness
@@ -394,12 +398,53 @@ VERBATIM (`did you mean cfg.yaml#database.host?` — never slugified to
 key is taught the escape (`#a.b` → `#a\.b`), flat names are proposed only
 when they resolve uniquely, and bullet texts keep the canonical slug form.
 
+### Text and code anchors — .txt and code files (issue #60)
+
+A `see:` ref to a non-spec file inside the workspace is a TERMINAL target —
+0 hops for deep-hop purposes (issue #44: it can never form an A→B→C spec
+chain), and its anchor resolves against the file's natural addressable
+units, exactly the way a bullet or a schematic key path does:
+
+```text
+artifacts/diagrams/data-flow.txt#creation-flow   a .txt section heading:
+                                                   `CREATION FLOW` answers it
+artifacts/diagrams/data-flow.txt#directory-tree   same file, second heading
+artifacts/rules.ts#createRule                     a code file's top-level symbol
+artifacts/registry.rs#parse_header                .rs / .py / .go likewise
+```
+
+- **Text artifacts (`.txt`, `.text`)**: section heading lines are the
+  vocabulary; §12 normalization applies, so `CREATION FLOW` answers
+  `#creation-flow`, `#Creation-Flow` and `#creation_flow` alike.
+- **Code files (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`,
+  `.rs`, `.py`, `.go`)**: top-level symbols — exported functions, types,
+  consts, modules — are the vocabulary, extracted line-based without
+  parsing (the zero-dependency law holds; over-extraction can only add
+  addressable names, never silence a miss).
+- **Resolution is the bullet model**: exact-after-normalization, first
+  match in document order, no new ambiguity error class — a name that
+  appears twice in a text file addresses the first, like a duplicated
+  bullet text would.
+- **A miss is the only failure**: an anchor that matches nothing is the
+  `refs.broken.anchor` error, never stacked under a spurious deep-hop
+  error (the target is terminal, so no hop exists to stack). Its
+  suggestion ranks the heading/symbol texts like bullet texts (issue #53).
+- **Nothing addressable** (an empty `.txt`, a `.csv`, any format outside
+  the vocabulary) keeps the `refs.anchor.no-target` advisory downgrade of
+  issue #49 — explicit, never a silent pass.
+- **The `--fix` anchor repair** proposes heading/symbol candidates for
+  these targets too, mirroring the resolution vocabulary (below).
+- **External `name://` targets** resolve through the same shared verdict
+  path, so a pointer at `ext://notes/runbook.txt#creation-flow` behaves
+  exactly like the on-disk form.
+
 ### Broken-anchor suggestions (issue #53)
 A broken anchor keeps its `refs.broken.anchor` error — but the ADVICE follows
 the node, never the other way around (the old `fix the anchor or add a
 "<anchor>" node` wording invited renaming spec nodes to satisfy a bad ref).
 On a miss, the target's addressable vocabulary — real bullet texts + YAML
-mapping keys, synthetic placeholder nodes excluded (issue #8) — is
+mapping keys +, since issue #60, text headings and code symbols — synthetic
+placeholder nodes excluded (issue #8) — is
 fuzzy-ranked against the failing anchor (`nearSlugMatches`, normalized
 similarity ≥ 0.8; resolution itself stays exact-after-normalization, the
 fuzzy layer exists only for suggestions and the gated `--fix` repair):
@@ -479,7 +524,7 @@ authoritative.
 ### Deep-hop detection
 For every file that IS referenced (has incoming refs): if it ALSO has outgoing refs → deep hop error. Report the full chain and suggest the fix.
 
-**Non-spec targets are exempt (issue #44):** the hop classification only counts refs whose target is a loaded spec file. A ref whose target exists on disk inside the workspace but is not a spec file (`see: artifacts/final-chain.ts`, an example the hub points at) is never mesh-exiting — such a target cannot form an A→B→C spec chain by construction, and the ref is valid (it resolves, so it is not a broken ref either). Before #44 a hub that every file back-referenced could never pass `cans check` while holding its artifact pointers. A target that does NOT exist on disk still counts as mesh-exiting in deep-hop terms — it is a broken ref, reported (with its fix advice) by the broken-ref check; `../` and absolute targets never earn the exemption (resolution is containment-guarded, issue #10). The exemption is keyed to the workspace root the `check` command passes to the detector; library callers that omit the root keep the legacy classification.
+**Non-spec targets are exempt (issue #44):** the hop classification only counts refs whose target is a loaded spec file. A ref whose target exists on disk inside the workspace but is not a spec file (`see: artifacts/final-chain.ts`, an example the hub points at) is never mesh-exiting — such a target cannot form an A→B→C spec chain by construction, and the ref is valid (it resolves, so it is not a broken ref either). Before #44 a hub that every file back-referenced could never pass `cans check` while holding its artifact pointers. A target that does NOT exist on disk still counts as mesh-exiting in deep-hop terms — it is a broken ref, reported (with its fix advice) by the broken-ref check; `../` and absolute targets never earn the exemption (resolution is containment-guarded, issue #10). The exemption is keyed to the workspace root the `check` command passes to the detector; library callers that omit the root keep the legacy classification. Such a target is TERMINAL — 0 hops — and since issue #60 an anchored ref into it (`artifacts/diagrams/data-flow.txt#creation-flow`) resolves against the file's natural heading/symbol vocabulary (§12), so the anchor verdict stands alone: a genuine miss is the only failure, never stacked under a deep-hop error that cannot exist for a terminal target.
 
 **Subfolder files and deep hops (issue #54):** the §5 semantics are unchanged — under `max_hops: 1` a referenced file that refs out still deep-hops, promoted or not. What issue #54 removed is the catch-22: a PROMOTED subfolder file may now point BACK at its referrer, and a mutual back-reference cluster is one strongly-connected mesh — never a hop. The sanctioned patterns: the mesh (A → B, B → A), or raising `references.max_hops`. A leaf that does not point back still errors by design, and so does referencing a catalog that refs out (catalogs stay unreferenced roots).
 
@@ -570,7 +615,8 @@ Verdicts, in order:
    same sub-path) is one home with two spellings, never a duplicate.
 6. **Anchors** resolve against the external target's addressable vocabulary
    through the same shared path as an on-disk target — bullet nodes plus,
-   for JSON/YAML/TOML, the full schematic dot-path vocabulary of issue #58
+   for JSON/YAML/TOML, the full schematic dot-path vocabulary of issue #58,
+   and, for `.txt`/code files, the heading/symbol vocabulary of issue #60
    (issue #49 parity). A miss is `refs.broken.anchor`, an ambiguous flat
    name is `refs.anchor.ambiguous`, an unparseable target is
    `refs.anchor.parse-error`, and a target with nothing addressable
@@ -678,15 +724,18 @@ the two commands never disagree about what a file points at.
 | Same-file anchor `see: #Sessions` | No ref minted — the §11 regex's file part can never start with `#` (round 6 sync) |
 | Absolute or `../` target | Broken ref error — `file not found in workspace`; resolution and create advice never leave the workspace root (issue #10, round 6) |
 | Trailing slash `see: auth/` | Resolves like `auth` / `auth/index.md` (issue #22) |
-| Ref to an on-disk non-spec file (`artifacts/final-chain.ts`, `.txt`, `.yaml`) | Valid file-level ref — and NOT a deep hop: it cannot form an A→B→C spec chain (issue #44) |
+| Ref to an on-disk non-spec file (`artifacts/final-chain.ts`, `.txt`, `.yaml`) | Valid file-level ref — and TERMINAL for deep hops: 0 hops, it can never form an A→B→C spec chain (issues #44, #60) |
+| Anchored ref into a text artifact (`artifacts/diagrams/data-flow.txt#creation-flow`) | Resolves against the file's section headings, §12 normalization — `CREATION FLOW` answers `#creation-flow` (issue #60) |
+| Anchored ref into a code file (`artifacts/rules.ts#createRule`; `.rs`/`.py`/`.go` likewise) | Resolves against top-level symbols (exported functions, types, consts, modules), first §12 match in document order (issue #60) |
+| Anchor matching nothing in a target that HAS a vocabulary | `refs.broken.anchor` error — the ONLY failure reported, never stacked under a spurious deep-hop error (issue #60) |
 | Anchored ref into a schematic file (`artifacts/config.yaml#database.host`) | Leaf-path verification down to the key (issue #58): existing leaf/object address resolves; missing leaf is `refs.broken.anchor`; ambiguous flat name is `refs.anchor.ambiguous` |
 | Anchored ref into a malformed schematic (invalid JSON/YAML/TOML, or beyond the supported subset) | `refs.anchor.parse-error` error at the pointer site — never warning-and-pass, never a broken-anchor false positive (issue #58) |
 | Flat anchor matching several leaves (`#port` under `database` and `server`) | `refs.anchor.ambiguous` error listing the full paths, suggesting the dot form (issue #58) |
-| Anchored ref into an unsupported format (`.ini`, `.jsonc`, `.xml`) | `refs.anchor.no-target` advisory (issue #49) — explicit, never silently verified |
+| Anchored ref into an unsupported format (`.ini`, `.jsonc`, `.xml`, `.csv`; an empty `.txt`) | `refs.anchor.no-target` advisory (issues #49, #60) — explicit, never silently verified |
 | Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §5 deep-hop rules apply |
-| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's bullets and schematic key paths, the same shared vocabulary as on-disk targets (issue #55, #49, #58) |
+| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's natural vocabulary (bullets, schematic key paths, text headings, code symbols), the same shared vocabulary as on-disk targets (issues #55, #49, #58, #60) |
 | External pointer, undeclared root name | Broken ref error — `undeclared external root 'name'` (issue #55) |
 | External pointer, declared root not checked out | ONE warning per referenced root; pointers into it unverified that run (issue #55) |
 | External pointer, sub-path escaping the root (`root://../..`, symlink out) | Broken ref error — containment is lexical AND realpath; never resolves outside the declared root (issue #55, extends #10) |
@@ -998,7 +1047,8 @@ Runs all validation engines. The most-used command.
 **External roots (issue #55):** with `references.external_roots` declared
 (§18), `see: name://sub/path` pointers verify against the sibling checkouts
 — `check` READS them (existence, containment, and — for anchored pointers —
-the one target file's bullets/YAML keys) and never writes anything there:
+the one target file's natural vocabulary: bullets, YAML keys, schematic key
+paths, text headings, code symbols) and never writes anything there:
 `--fix` writes spec files only, external targets earn no back-pointers, and
 the external repo's own `see:` graph is never entered (terminal targets,
 §12). A declared root that is not checked out is a warning, so CI that only
@@ -1044,7 +1094,9 @@ repaired ONLY when ALL of these hold for the failing `see: <file>#<anchor>`:
 
 1. **Target resolvable and parseable** — the same path checkRefs used
    (loaded workspace key, or the file on disk via the spec resolver; YAML
-   mapping keys count as addressable candidates, issue #49). Missing or
+   mapping keys, and since issue #60 the text headings and code symbols of
+   non-schematic artifacts, count as addressable candidates — the repair
+   vocabulary mirrors the resolution vocabulary, issue #49). Missing or
    unparseable targets are skipped cleanly — they keep their own findings.
 2. **Unambiguous intent** — EXACTLY ONE distinct node/key text in the target
    fuzzy-matches the failing anchor at ≥ the suggestion threshold (0.8,

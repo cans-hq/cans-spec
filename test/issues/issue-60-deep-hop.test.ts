@@ -111,16 +111,20 @@ afterEach(() => {
 });
 
 /** The issue's on-disk target: a plain-text diagram artifact. Prose + indented
- *  continuation lines, NO markdown bullets and no schematic structure — under
- *  today's vocabulary (bullets / schematic keys) it has nothing addressable,
- *  which is exactly why the reporter's #creation-flow anchor could not resolve. */
+ *  continuation lines, NO markdown bullets and no schematic structure. The
+ *  section headings carry the issue's exact shape — ALL-CAPS standalone lines
+ *  (`CREATION FLOW`) — which is the decided .txt heading vocabulary of issue
+ *  #60 (ATX / underlined / ALL-CAPS; mixed-case and lowercase lines stay
+ *  prose, pinned as negatives in issue-60-txt-anchors.test.ts). Pre-#60 the
+ *  file had nothing addressable (bullets / schematic keys only), which is
+ *  exactly why the reporter's #creation-flow anchor could not resolve. */
 const DATA_FLOW_TXT = [
   'Data flow (plain-text diagram artifact)',
   '',
-  'creation flow',
+  'CREATION FLOW',
   '  intake API → normalization → claims hub',
   '',
-  'retention flow',
+  'RETENTION FLOW',
   '  nightly snapshots → cold storage',
   '',
 ].join('\n');
@@ -359,25 +363,27 @@ describe('issue #60: terminal refs to non-spec files — detectDeepHops', () => 
     // failure — the target is 0-hop by construction, anchor or no anchor.
     expect(deepHops).toEqual([]);
 
-    // The anchor failure itself, phrased per the CURRENT honest behavior:
-    // the target is on disk but has no addressable nodes under today's
-    // vocabulary (bullets / schematic keys), so checkRefs reports the
-    // issue #49 advisory downgrade — and nothing else.
+    // The anchor failure itself, POST-INTEGRATION (the #60 anchor-vocabulary
+    // branches landed): the target HAS a heading vocabulary now, so the
+    // miss is the truthful refs.broken.anchor ERROR — and nothing else.
+    // (Pre-integration it was the issue #49 refs.anchor.no-target advisory
+    // downgrade — the file had nothing addressable under the bullets /
+    // schematic-keys-only vocabulary of #49/#58.)
     const refIssues = checkRefs(files, graph, root).filter(i => i.category === 'refs');
     expect(refIssues.length).toBe(1);
-    expect(refIssues[0]!.rule).toBe('refs.anchor.no-target');
-    expect(refIssues[0]!.level).toBe('warning');
+    expect(refIssues[0]!.rule).toBe('refs.broken.anchor');
+    expect(refIssues[0]!.level).toBe('error');
     expect(refIssues[0]!.file).toBe('01-topology.md');
     expect(refIssues[0]!.message).toBe(
-      `anchor on non-outline target: ${REPRO_TXT}#no-such-flow — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
+      `broken anchor: ${REPRO_TXT}#no-such-flow — no node matches`,
     );
 
     // POST-INTEGRATION CONTRACT (issue #60 anchor-vocabulary branches): once
     // #leaf anchors resolve against the natural addressable units of every
-    // file kind, this same miss becomes the truthful refs.broken.anchor
-    // error — still the ONLY failure, still with zero deep-hop issues beside
-    // it. The two invariants that must survive that change are the ones
-    // pinned above: exactly one anchor finding, and detectDeepHops === [].
+    // file kind, this same miss is the truthful refs.broken.anchor error —
+    // still the ONLY failure, still with zero deep-hop issues beside it.
+    // The two invariants that must survive that change are the ones pinned
+    // above: exactly one anchor finding, and detectDeepHops === [].
     expect([...refIssues, ...deepHops].filter(i => i.rule === 'refs.deep_hop')).toEqual([]);
   });
 });
@@ -484,9 +490,11 @@ describe('issue #60: cans check end-to-end', () => {
 
     // The full-green contract the anchor-vocabulary branches must deliver:
     // #creation-flow resolves against the natural addressable units of
-    // data-flow.txt, so the run has zero findings at all and exits 0. RED
-    // today — the run exits 1 with two refs.anchor.no-target warnings (the
-    // anchor half of issue #60, owned by the parallel branches).
+    // data-flow.txt, so the run has zero findings at all and exits 0.
+    // (Pre-integration the run exited 1 with two refs.anchor.no-target
+    // warnings — the anchor half of issue #60, owned by the parallel
+    // branches. The wiring landed: checkArtifactAnchor consults
+    // extractTextHeadings/extractCodeSymbols after the bullet miss.)
     expect(j.ok).toBe(true);
     expect(r.exit).toBe(0);
     expect(j.counts.errors).toBe(0);

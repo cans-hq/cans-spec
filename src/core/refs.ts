@@ -8,6 +8,8 @@ import {
   parseSchematic, schematicFormatFor, resolveSchematicAnchor, schematicAddresses,
 } from './schematic.ts';
 import type { SchematicParse, SchematicFormat, SchematicValue } from './schematic.ts';
+import { extractTextHeadings, isTextArtifact } from './text-anchors.ts';
+import { extractCodeSymbols, isCodeArtifact } from './code-anchors.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -468,6 +470,22 @@ export function extractYamlKeys(source: string): string[] {
 
 const SCHEMATIC_FORMAT_LABEL: Record<SchematicFormat, string> = { json: 'JSON', yaml: 'YAML', toml: 'TOML' };
 
+/** Issue #60: the natural addressable vocabulary of a NON-schematic
+ *  artifact target — .txt/.text section headings (extractTextHeadings) and
+ *  code files' top-level symbols (extractCodeSymbols). Raw texts in document
+ *  order, the extractYamlKeys convention: resolution happens through §12
+ *  anchorMatches later. A loaded spec file (source === null) is a .md
+ *  outline — bullets only, issue #53 behavior unchanged; schematic formats
+ *  (json/yaml/toml) resolve through parseSchematic instead (issue #58), so
+ *  neither vocabulary applies there. Computed only on the miss path of an
+ *  ANCHORED pointer — the laziness contract (7) holds. */
+function artifactAnchorVocabulary(path: string, source: string, isSchematic: boolean): string[] {
+  if (isSchematic) return [];
+  if (isTextArtifact(path)) return extractTextHeadings(source);
+  if (isCodeArtifact(path)) return extractCodeSymbols(path, source);
+  return [];
+}
+
 /** Issue #58: the anchor verdict for one artifact target — THE shared code
  *  path for on-disk targets and `name://` external targets alike (no
  *  per-format special cases). Callers hand in the target's source and its
@@ -494,9 +512,14 @@ const SCHEMATIC_FORMAT_LABEL: Record<SchematicFormat, string> = { json: 'JSON', 
  *   3. BULLETS (§12 anchorMatches): a hit resolves — the flat YAML-key and
  *      sequence-item anchors of #49 keep resolving (contract 6: unique flat
  *      anchors are unchanged).
- *   4. MISS: a truthful `refs.broken.anchor` error (contract 1) — or, when
+ *   4. ARTIFACT VOCABULARY (issue #60): .txt/.text section headings and code
+ *      files' top-level symbols resolve the same way — the bullet model
+ *      (exact-after-normalization, first match in document order, no new
+ *      ambiguity error class), so `CREATION FLOW` answers `#creation-flow`
+ *      and `export function createRule` answers `#createRule`.
+ *   5. MISS: a truthful `refs.broken.anchor` error (contract 1) — or, when
  *      the target has NOTHING addressable at all (prose .md, empty
- *      schematic), the issue #49 `refs.anchor.no-target` downgrade. */
+ *      schematic, .csv), the issue #49 `refs.anchor.no-target` downgrade. */
 function checkArtifactAnchor(
   fromFile: string,
   line: number,
@@ -534,14 +557,20 @@ function checkArtifactAnchor(
     schematic = { root: parsed.root, paths: schematicAddresses(parsed.root).paths };
   }
   if (nodes.some(n => anchorMatches(n.text, anchor))) return [];
+  // Issue #60: non-schematic artifacts resolve against their natural
+  // addressable units after the bullet miss — first §12 match wins (the
+  // bullet model, no new ambiguity error class).
+  const extraVocab = artifactAnchorVocabulary(path, source ?? '', format !== null);
+  if (extraVocab.some(text => anchorMatches(text, anchor))) return [];
   // Miss. The target having NOTHING addressable (no bullets, no schematic
-  // paths — prose .md, empty schematic) keeps the issue #49 advisory
-  // downgrade: no anchor could ever resolve there by construction. With
-  // anything addressable present, the miss is a truthful error.
-  if (nodes.length === 0 && (schematic === null || schematic.paths.length === 0)) {
+  // paths, no heading/symbol vocabulary — prose .md, empty schematic, .csv)
+  // keeps the issue #49 advisory downgrade: no anchor could ever resolve
+  // there by construction. With anything addressable present, the miss is
+  // a truthful error.
+  if (nodes.length === 0 && (schematic === null || schematic.paths.length === 0) && extraVocab.length === 0) {
     return [{
       file: fromFile, line, level: 'warning', category: 'refs',
-      message: `anchor on non-outline target: ${display}#${anchor} — target has no addressable nodes (bullets or YAML keys); use a file-level ref`,
+      message: `anchor on non-outline target: ${display}#${anchor} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref`,
       rule: 'refs.anchor.no-target', // issue #49
       suggestion: `drop the #${anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${display}`,
     }];
@@ -552,10 +581,11 @@ function checkArtifactAnchor(
     rule: 'refs.broken.anchor', // issue #41
     // Issue #53 Part 1.3: the ref follows the node — a near match proposes
     // the corrected ref, never a rename; only a truly missing key earns
-    // add-key advice. Schematic targets suggest PATH-form fixes (#58).
+    // add-key advice. Schematic targets suggest PATH-form fixes (#58);
+    // non-schematic artifacts rank their heading/symbol texts (#60).
     suggestion: schematic !== null
       ? schematicMissSuggestion(display, anchor, schematic.root, nodes)
-      : brokenAnchorSuggestion(display, anchor, nodes, []),
+      : brokenAnchorSuggestion(display, anchor, nodes, extraVocab),
   }];
 }
 
@@ -619,12 +649,13 @@ function schematicMissSuggestion(
  *  old advice — `fix the anchor or add a "<anchor>" node to <file>` — was
  *  INVERTED: it invited renaming (or adding) nodes to satisfy a bad anchor,
  *  when the outline is the source of truth and THE REF SHOULD FOLLOW THE
- *  NODE. Now the target's addressable vocabulary (real bullet texts + YAML
- *  mapping keys — synthetic placeholders excluded: they are parser artifacts,
- *  issue #8, not content a human could have meant) is fuzzy-ranked against
- *  the failing anchor via nearSlugMatches (≥ SLUG_SUGGEST_THRESHOLD; the
- *  fuzzy layer exists ONLY here — resolution itself stays exact-after-
- *  normalization, see anchorMatches):
+ *  NODE. Now the target's addressable vocabulary (real bullet texts plus
+ *  the issue #60 artifact vocabulary — text headings and code symbols,
+ *  handed in by checkArtifactAnchor; synthetic placeholders excluded: they
+ *  are parser artifacts, issue #8, not content a human could have meant) is
+ *  fuzzy-ranked against the failing anchor via nearSlugMatches (≥
+ *  SLUG_SUGGEST_THRESHOLD; the fuzzy layer exists ONLY here — resolution
+ *  itself stays exact-after-normalization, see anchorMatches):
  *    ONE near candidate → `did you mean <file>#<slug>?` with the CANONICAL
  *                         anchorSlug spelling (the same form `cans slug`
  *                         prints) — a pure ref-anchor fix.
@@ -644,13 +675,13 @@ function brokenAnchorSuggestion(
   target: string,
   anchor: string,
   nodes: readonly OutlineNode[],
-  yamlKeys: readonly string[],
+  extraVocab: readonly string[],
 ): string {
   const candidates: string[] = [];
   for (const n of nodes) {
     if (n.synthetic !== true) candidates.push(n.text);
   }
-  candidates.push(...yamlKeys);
+  candidates.push(...extraVocab);
   const slugs = [...new Set(nearSlugMatches(candidates, anchor).map(m => anchorSlug(m.text)))]
     .filter(slug => slug !== '');
   if (slugs.length === 1) {
