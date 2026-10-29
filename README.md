@@ -280,7 +280,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 |---|---|
 | **Structure** | Node length, depth, sibling count, single-child collapse, empty nodes |
 | **Style** | Sibling vs nested grouping, shared prefix detection |
-| **References** | Broken `see:`, broken anchors (incl. schematic leaf paths in JSON/YAML/TOML — issue #58), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are exempt — issue #44), self-refs, orphans, stale back-pointers |
+| **References** | Broken `see:`, broken anchors (schematic leaf paths in JSON/YAML/TOML — issue #58; text headings and code symbols — issue #60), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are terminal, 0-hop — issues #44/#60), self-refs, orphans, stale back-pointers |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
 
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No
@@ -317,6 +317,20 @@ error listing the full paths, and a malformed schematic is a parse error at
 the pointer site — never a silent pass. Schematic files are parsed only when
 a pointer actually anchors into them. External `name://` targets get the
 same vocabulary through the same code path.
+
+Every file kind answers anchors with its natural addressable units (issue
+#60): `.md` bullet nodes; `.json`/`.yaml`/`.yml`/`.toml` key paths as above;
+`.txt`/`.text` section headings (`CREATION FLOW` → `#creation-flow`); and
+top-level symbols in code files (`.ts`/`.js`/`.rs`/`.py`/`.go` — exported
+functions, types, consts, modules). A `see:` ref to a non-spec artifact
+file is TERMINAL for deep-hop purposes — 0 hops, it can never form an
+A→B→C spec chain — so an anchored pointer into one is verified against that
+vocabulary alone, with the same tolerant normalization everywhere; a
+case-insensitive first match resolves. An anchor that matches nothing is
+the `refs.broken.anchor` error and the ONLY failure reported — never
+stacked under a spurious deep-hop error. A target with nothing addressable
+(a `.csv`, an empty `.txt`) keeps the advisory `refs.anchor.no-target`
+downgrade suggesting a file-level ref.
 
 ### Inter-repo pointers (`external_roots`)
 
