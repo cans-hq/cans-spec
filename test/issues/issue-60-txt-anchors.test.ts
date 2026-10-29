@@ -14,19 +14,23 @@
  * prose/sentence/box guards are pinned as negatives, not assumed.
  *
  * Test map:
- *   s1-s8   underlined (setext-style): `=` and `-` forms; ≥ 3 chars required;
- *           blank-line-then-`---` is a SEPARATOR, non-blank-then-`---` is an
- *           underline (decided; holds for `=` runs too); whitespace around
- *           text and underline; pure `=`/`-` runs never heading text (borders,
- *           stacked underlines); consecutive pairs; `=-=` is not an underline;
- *           blank line between text and underline breaks the pair
- *   c1-c9   ALL-CAPS section lines: the issue's literal CREATION FLOW /
+ *   s1-s9   underlined (setext-style): `=` and `-` forms; the ≥ 3-char
+ *           boundary pinned on both sides; blank-line-then-`---` is a
+ *           SEPARATOR, non-blank-then-`---` is an underline (decided; holds
+ *           for `=` runs too); whitespace around text and underline; pure
+ *           `=`/`-` runs never heading text (borders, stacked underlines);
+ *           consecutive pairs (with and without a trailing newline); `=-=`
+ *           is not an underline; blank line between text and underline
+ *           breaks the pair; `#nospace` above an `====` IS setext text
+ *           (markdown's reading, pinned)
+ *   c1-c10  ALL-CAPS section lines: the issue's literal CREATION FLOW /
  *           DIRECTORY TREE examples; mixed-case prose; sentence punctuation
  *           (. , ; ! ? :); ASCII-art boxes (`|`, `+`, `--` runs); 8-vs-9 word
  *           boundary; 72-vs-73 char boundary; blank-line/file-start
  *           predecessor (underline and prose lines count as NON-blank
  *           predecessors); letter/case edges (digits-only, lone `-`/`=`,
- *           accented caps, lowercase); `#nospace` not a heading
+ *           accented caps, lowercase); `#nospace` not a heading; TAB word
+ *           separation + caps list items under an underline stay out
  *   a1-a5   ATX: levels 1–6; 7 `#`s / `#nospace` / bare `#` / empty text all
  *           rejected; closing `#`s kept verbatim; indented ATX + trailing
  *           whitespace; ATX beats an underline below (`# Title\n====` → Title)
@@ -53,9 +57,14 @@ describe('issue #60: extractTextHeadings — underlined (setext-style) headings'
     expect(extractTextHeadings(src)).toEqual(['DATA FLOW', 'Overview']);
   });
 
-  test('s2: the underline needs ≥ 3 chars — `==` is not one', () => {
-    // Title One survives no rule (mixed case), so nothing is extracted.
+  test('s2: the underline needs ≥ 3 chars — `==` is not one, `===` is', () => {
+    // The boundary is inclusive: exactly 3 `=` (or `-`) underlines.
+    expect(extractTextHeadings('Title\n===\n')).toEqual(['Title']);
+    expect(extractTextHeadings('Title\n---\n')).toEqual(['Title']);
+    // Two chars do not: Title One survives no rule (mixed case), so nothing
+    // is extracted.
     expect(extractTextHeadings('Title One\n==\n')).toEqual([]);
+    expect(extractTextHeadings('Title One\n--\n')).toEqual([]);
   });
 
   test('s3: blank-line-then-`---` is a separator; non-blank-then-`---` is an underline', () => {
@@ -80,8 +89,9 @@ describe('issue #60: extractTextHeadings — underlined (setext-style) headings'
     expect(extractTextHeadings('# Title\n========\n========\n')).toEqual(['Title']);
   });
 
-  test('s6: consecutive setext pairs each mint one heading', () => {
+  test('s6: consecutive setext pairs each mint one heading (EOF without a trailing newline too)', () => {
     expect(extractTextHeadings('One\n===\nTwo\n---\n')).toEqual(['One', 'Two']);
+    expect(extractTextHeadings('One\n===\nTwo\n---')).toEqual(['One', 'Two']);
   });
 
   test('s7: a mixed `=-=` line is not an underline', () => {
@@ -93,6 +103,13 @@ describe('issue #60: extractTextHeadings — underlined (setext-style) headings'
     // mixed case keeps rule 2 from claiming it; the orphan `====` is a
     // pure run, never text.
     expect(extractTextHeadings('Title One\n\n========\n')).toEqual([]);
+  });
+
+  test('s9: a `#`-led line that FAILED ATX can still be setext text (markdown\'s own reading)', () => {
+    // The docblock claims it, so it is pinned: `#nospace` above an `====`
+    // is a setext heading whose text is the raw `#nospace` line — the
+    // module follows the markdown standard it borrows the form from.
+    expect(extractTextHeadings('#nospace\n====\n')).toEqual(['#nospace']);
   });
 });
 
@@ -174,6 +191,15 @@ describe('issue #60: extractTextHeadings — ALL-CAPS section lines', () => {
 
   test('c9: `#nospace` is not a heading (rule 2\'s `#` guard)', () => {
     expect(extractTextHeadings('#nospace\n')).toEqual([]);
+  });
+
+  test('c10: any whitespace separates words; caps list items under a heading stay out', () => {
+    // "whitespace-separated" means whitespace: an internal TAB splits words
+    // just like a space (and anchorMatches folds it at resolution time).
+    expect(extractTextHeadings('CREATION\tFLOW\n')).toEqual(['CREATION\tFLOW']);
+    // A caps bullet glued under a heading's underline has a NON-blank
+    // predecessor — it is a list item, not a standalone section line.
+    expect(extractTextHeadings('PIPELINE\n======\n- ITEM ONE\n')).toEqual(['PIPELINE']);
   });
 });
 
