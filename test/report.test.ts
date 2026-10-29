@@ -170,7 +170,7 @@ function miscScenario(): Scenario {
     [issue({ file: 'b.md', line: 20, level: 'error', category: 'refs', message: 'broken anchor: interface.md#Refusals — no node matches', suggestion: 'fix the anchor or add a "Refusals" node to interface.md' }), 'refs.broken.anchor'],
     // Issue #49: zero-addressable-target downgrade — rule path and fallback
     // path must agree on the new warning family too.
-    [issue({ file: 'b.md', line: 21, category: 'refs', message: 'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets or YAML keys); use a file-level ref', suggestion: 'drop the #anything anchor (file-level refs are valid on any target), or add the anchor as a node/key in docs/notes.md' }), 'refs.anchor.no-target'],
+    [issue({ file: 'b.md', line: 21, category: 'refs', message: 'anchor on non-outline target: docs/notes.md#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref', suggestion: 'drop the #anything anchor (file-level refs are valid on any target), or add the anchor as a node/key in docs/notes.md' }), 'refs.anchor.no-target'],
     [issue({ file: 'b.md', line: 4, level: 'error', category: 'refs', message: 'self-reference: b.md → b.md', suggestion: 'remove the self-reference; point at the canonical file instead' }), 'refs.self'],
     [issue({ file: 'c.md', line: 0, category: 'refs', message: 'orphan: c.md has no incoming or outgoing refs', suggestion: 'link it from a related spec file, or fold it into one' }), 'refs.orphan'],
     [issue({ file: 'd.md', line: 7, level: 'error', category: 'refs', message: 'DEEP HOP: a.md → b.md → c.md', suggestion: 'add "see: c.md" directly to a.md' }), 'refs.deep_hop'],
