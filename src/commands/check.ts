@@ -1,5 +1,8 @@
 import { join } from 'path';
-import type { BackPointer, CheckResult, Issue, OutlineNode } from '../types.ts';
+import type {
+  BackPointer, CheckResult, Issue, OutlineNode, Rules,
+  MultilineRules, NodeLengthRules,
+} from '../types.ts';
 import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
@@ -63,6 +66,19 @@ export interface CheckArgs {
    *  warning counts, findings) are identical either way. Optional: internal
    *  callers (done.ts's ZERO_CHECK_ARGS) never set it. */
   hints?: boolean;
+  /** issue #61: the `--structure` execution gate — the exact mirror of
+   *  refsOnly. `true` (bare `--structure`): run ONLY the structural lint
+   *  cluster — checkStructure (incl. the structure.multiline policy) and
+   *  checkTbdPolicy (content rules are category 'structure') — and suppress
+   *  style/refs/redundancy findings plus every --fix rewrite; the ref graph
+   *  is still built so files/nodes/refs.total stay populated, but no refs
+   *  findings are emitted. `'strict'` (`--structure=strict`): the same gate
+   *  PLUS every remaining category:'structure' warning promoted to
+   *  level:'error' IN the issues array before the counts — exit code,
+   *  errorCount and --json levels stay mutually consistent. Optional:
+   *  internal callers (done.ts's ZERO_CHECK_ARGS) never set it — undefined
+   *  reads as off (plain orchestration, zero behavior change). */
+  structure?: boolean | 'strict';
   /** §24 (done): the archiving task's parsed nodes, injected under their
    *  former `_tasks/<name>.md` identity so refs held by the archived task
    *  still count for the back-pointer rebuild. Never set by `check` itself.
@@ -81,6 +97,12 @@ const CHECK_FLAGS: FlagSpec[] = [
   { name: 'dry-run', boolean: true },
   { name: 'strict', boolean: true },
   { name: 'refs-only', boolean: true },
+  // issue #61: the structure-only execution gate. Boolean with the opt-in
+  // equals spelling (args.ts): bare `--structure` gates on,
+  // `--structure=strict` gates on AND promotes structure warnings to fatal
+  // errors. The only legal value is `strict` — parseCheckArgs rejects every
+  // other spelling as a §20 usage error listing it.
+  { name: 'structure', boolean: true, equals: true },
   { name: 'no-redundancy', boolean: true },
   { name: 'show', boolean: false },
   { name: 'json', boolean: true },
@@ -167,6 +189,7 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
   const fix = parsed.flags.has('fix');
   const yes = parsed.flags.has('yes');
   const dryRun = parsed.flags.has('dry-run');
+  const refsOnly = parsed.flags.has('refs-only');
   if (yes && !fix) {
     errors.push('"--yes" requires --fix — it applies the anchor repairs --fix proposes');
   }
@@ -176,16 +199,49 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
   if (yes && dryRun) {
     errors.push('"--yes" and "--dry-run" are mutually exclusive — preview with --dry-run or apply with --yes, not both');
   }
+  // issue #61: --structure (bare → gate on) / --structure=strict (gate +
+  // promotion). The equals spelling is the ONLY legal value form — §20 keeps
+  // `--structure strict` out (a bare --structure followed by a positional
+  // reads as the [file] filter), and anything but `strict` is a user error
+  // naming the legal value, never a silently-ignored typo (QA-10 M3).
+  let structure: CheckArgs['structure'];
+  const rawStructure = parsed.flags.get('structure');
+  if (rawStructure === true) {
+    structure = true;
+  } else if (typeof rawStructure === 'string') {
+    if (rawStructure === 'strict') {
+      structure = 'strict';
+    } else {
+      errors.push(`unknown --structure value "${rawStructure}" — use strict`);
+      structure = true; // the gate was requested; the error above fails the run
+    }
+  }
+  if (structure !== undefined) {
+    // issue #61: the two engine gates are separate execution modes — picking
+    // both is a contradiction, not a union (same arbitration as --yes vs
+    // --dry-run above: reject instead of picking a winner).
+    if (refsOnly) {
+      errors.push('"--structure" and "--refs-only" are mutually exclusive — separate engine gates, pick one');
+    }
+    // issue #61: the structure gate has no auto-fix (nothing it lints is
+    // machine-fixable — node/depth/sibling shapes are author decisions), so
+    // --fix alongside it can only be a typo hiding in plain sight.
+    if (fix) {
+      errors.push('"--structure" and "--fix" are mutually exclusive — the structure gate has no auto-fix');
+    }
+  }
   return {
     fix,
     yes,
     dryRun,
     strict: parsed.flags.has('strict'),
-    refsOnly: parsed.flags.has('refs-only'),
+    refsOnly,
     noRedundancy: parsed.flags.has('no-redundancy'),
     json: parsed.flags.has('json'),
     // issue #59: --hints opts the run into the slug-hint info band.
     hints: parsed.flags.has('hints'),
+    // issue #61: the structure gate (undefined = plain orchestration).
+    structure,
     show,
     file,
     errors,
@@ -678,6 +734,26 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
 
   const issues: Issue[] = [];
 
+  // issue #61: the --structure execution gate (mirror of --refs-only). The
+  // whole run below keeps its plain shape; every refs-layer finding and every
+  // --fix write funnels through one of the structureOnly guards so the gate
+  // is the true inverse of refsOnly: refs-only keeps the refs half and drops
+  // structure/style/content; the structure gate keeps the structural lint
+  // cluster (checkStructure incl. structure.multiline + checkTbdPolicy —
+  // content rules are category 'structure') and drops style, refs
+  // (broken/deep-hop/orphan/alias/back-pointer stale) and redundancy. The
+  // load phase still parses and resolves everything: files/nodes counts,
+  // refs.total and the promotion loop describe the same workspace a plain
+  // check would see — only the findings are scoped.
+  const structureOnly = opts.structure !== undefined;
+  /** issue #61: refs-layer findings never emit under the gate — but the
+   *  passes that PRODUCE them still run (alias resolution rewrites
+   *  RefTargets, finishAliasChecks walks the loaded set), so the ref graph
+   *  is identical to a plain run's. Call-always, emit-conditionally. */
+  const refFindings = (iss: Issue[]): void => {
+    if (!structureOnly) issues.push(...iss);
+  };
+
   // Issue #57: the aliasing config (references.aliasing) + the external-root
   // config (§18/issue #55), hoisted once — both the alias passes and
   // checkRefs consume the SAME bundle so an alias use and its full-pointer
@@ -773,8 +849,11 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // alias use never trips node_length where the full target would.
     const table = extractAliases(text);
     aliasTables.set(rel, table);
-    issues.push(...aliasDefinitionIssues(table, rel, aliasCfg));
-    issues.push(...resolveFileAliases(specFiles.get(rel)!, table, rel, aliasCfg));
+    // issue #61: alias findings are refs-layer — suppressed under the
+    // structure gate (refFindings); the RESOLUTION still runs so the
+    // ref graph and refs.total see the resolved targets.
+    refFindings(aliasDefinitionIssues(table, rel, aliasCfg));
+    refFindings(resolveFileAliases(specFiles.get(rel)!, table, rel, aliasCfg));
     return true;
   };
   for (const rel of specRel) {
@@ -839,9 +918,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       // the AUX file's own definitions (scope: file), never leak.
       const table = extractAliases(text);
       aliasTables.set(rel, table);
-      issues.push(...aliasDefinitionIssues(table, rel, aliasCfg));
+      refFindings(aliasDefinitionIssues(table, rel, aliasCfg));
       const nodes = parseOutline(text, rel);
-      issues.push(...resolveFileAliases(nodes, table, rel, aliasCfg));
+      refFindings(resolveFileAliases(nodes, table, rel, aliasCfg));
       auxFiles.set(rel, nodes);
     } catch {
       // unreadable/unparseable aux file: its refs are simply not counted
@@ -865,8 +944,8 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     if (source !== undefined) {
       const table = extractAliases(source);
       aliasTables.set(key, table);
-      issues.push(...aliasDefinitionIssues(table, key, aliasCfg));
-      issues.push(...resolveFileAliases(nodes, table, key, aliasCfg));
+      refFindings(aliasDefinitionIssues(table, key, aliasCfg));
+      refFindings(resolveFileAliases(nodes, table, key, aliasCfg));
     }
     allFiles.set(key, nodes);
   }
@@ -877,8 +956,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // verification of zero-use definitions — a broken alias definition fails
   // the run, not just the uses. Never counted in refs.total (definitions are
   // the spelling, uses are the refs — graph-identity between the two forms
-  // of a file).
-  issues.push(...finishAliasChecks(allFiles, aliasTables, root, externalCfg, aliasCfg));
+  // of a file). Issue #61: refs-layer findings — suppressed under the
+  // structure gate.
+  refFindings(finishAliasChecks(allFiles, aliasTables, root, externalCfg, aliasCfg));
 
   // File filter: restrict structure/style/redundancy to one file (refs stay global).
   const checkable = opts.file !== null
@@ -895,14 +975,24 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     checkable.map(k => [k, specFiles.get(k)!]),
   );
 
-  const deepHops = detectDeepHops(graph, rules.references.max_hops, root);
+  // issue #61: deep hops are refs-layer findings — under the structure gate
+  // they are neither emitted nor counted (refs.deepHops stays 0, coherent
+  // with the suppressed findings), so the detection pass itself is skipped.
+  const deepHops = structureOnly ? [] : detectDeepHops(graph, rules.references.max_hops, root);
 
   if (!opts.refsOnly) {
+    // issue #61: checkStructure (incl. the structure.multiline policy) and
+    // checkTbdPolicy are the --structure gate's cluster — they run in every
+    // mode except refs-only (content rules are category 'structure').
     for (const key of checkable) {
       issues.push(...checkStructure(specFiles.get(key)!, key, rules.structure));
     }
-    for (const key of checkable) {
-      issues.push(...checkStyle(specFiles.get(key)!, key, rules.style));
+    // issue #61: style is OUTSIDE the gate's cluster — a structure-only run
+    // suppresses it, the mirror of --refs-only skipping checkStructure.
+    if (!structureOnly) {
+      for (const key of checkable) {
+        issues.push(...checkStyle(specFiles.get(key)!, key, rules.style));
+      }
     }
     // §18 content policy: TBD nodes per file (QA-13 F4 — the knobs were inert).
     for (const key of checkable) {
@@ -913,19 +1003,29 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // since issue #59: the `--hints` flag or the `output.slug_hints` config
     // key (either enables) must ask for the band; a plain run gets only the
     // count. Scoped by the [file] filter like every other per-file check
-    // (issue #11).
-    const hintsOn = opts.hints === true || rules.output.slug_hints === true;
-    for (const key of checkable) {
-      const hints = slugSafetyHints(specFiles.get(key)!, key);
-      hintCount += hints.length;
-      if (hintsOn) issues.push(...hints);
+    // (issue #11). Issue #61: slug hints are refs-cluster items — the
+    // structure gate skips the band AND the count, exactly as --refs-only
+    // does (a gate's report carries no cross-cluster display items).
+    if (!structureOnly) {
+      const hintsOn = opts.hints === true || rules.output.slug_hints === true;
+      for (const key of checkable) {
+        const hints = slugSafetyHints(specFiles.get(key)!, key);
+        hintCount += hints.length;
+        if (hintsOn) issues.push(...hints);
+      }
     }
   }
 
-  issues.push(...checkRefs(allFiles, graph, root, externalCfg));
-  issues.push(...deepHops);
-  if (rules.references.orphan_check) {
-    issues.push(...detectOrphans(specFiles, graph));
+  // issue #61: the refs engine cluster — broken/deep-hop/orphan findings
+  // never emit under the structure gate (the graph is still built above, so
+  // refs.total stays populated; the finding-derived counters — broken,
+  // deepHops — stay 0, coherent with what the report shows).
+  if (!structureOnly) {
+    issues.push(...checkRefs(allFiles, graph, root, externalCfg));
+    issues.push(...deepHops);
+    if (rules.references.orphan_check) {
+      issues.push(...detectOrphans(specFiles, graph));
+    }
   }
 
   // ── issue #53 (Part 2.4): the --fix anchor-repair transaction ──
@@ -951,11 +1051,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // filtered run never mutates a file the user did not name).
   // parseCheckArgs already rejects --yes/--dry-run without --fix and the two
   // together; the modes are re-derived defensively for direct callers (cans
-  // done) whose CheckArgs never set them.
-  const fixDryRun = opts.fix === true && opts.dryRun === true;
-  const applyAnchors = opts.fix === true && opts.yes === true && !fixDryRun;
+  // done) whose CheckArgs never set them. Issue #61: --structure also rejects
+  // --fix at the parse layer (the gate has no auto-fix) — fixActive folds that
+  // same contract in for programmatic callers: a combined CheckArgs gets the
+  // gate's no-rewrite semantics, never a silent fix run.
+  const fixActive = opts.fix === true && !structureOnly;
+  const fixDryRun = fixActive && opts.dryRun === true;
+  const applyAnchors = fixActive && opts.yes === true && !fixDryRun;
   const anchorFixes: NonNullable<CheckResult['anchorFixes']> = [];
-  if (opts.fix) {
+  if (fixActive) {
     // Which referrers may be rewritten at all: exactly the ref-by fixable set
     // (spec sources; the [file] filter narrows it). Refs held by _tasks/ or
     // _adr/ files are reported but never rewritten — --fix writes spec files
@@ -1141,11 +1245,15 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // Back-pointers: ref-by comments in spec sources vs actual incoming refs.
   // §18: `references.back_pointers` false (explicit or deleted key) turns the
   // back-pointer check OFF — no stale warnings, and --fix writes nothing.
+  // Issue #61: the sweep is refs-layer — under the structure gate it is
+  // skipped entirely (no stale warnings; backPointers counts stay 0, coherent
+  // with the suppressed findings — a counter must never name a finding the
+  // report refuses to show).
   const backPointersOn = rules.references.back_pointers;
   let bpTotal = 0;
   let bpCurrent = 0;
   let bpStale = 0;
-  if (backPointersOn) {
+  if (backPointersOn && !structureOnly) {
     for (const [rel, source] of specSources) {
       for (const bp of extractBackPointers(source, rel)) {
         bpTotal++;
@@ -1164,7 +1272,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
-  if (!opts.refsOnly) {
+  // issue #61: redundancy is outside the structure gate's cluster — a
+  // structure-only run suppresses it, mirroring --refs-only.
+  if (!opts.refsOnly && !structureOnly) {
     if (!opts.noRedundancy && rules.redundancy.enabled) {
       issues.push(...checkRedundancy(checkableMap, rules.redundancy, rules.references.duplicate_home_check));
     }
@@ -1193,7 +1303,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // refs earn their marks in the same run.
   let backPointersUpdated = 0;
   const backPointersUpdatedFiles: string[] = [];
-  if (opts.fix && backPointersOn) {
+  if (fixActive && backPointersOn) {
     const desired = rebuildBackPointers(allFiles, graph);
     // Issue #11: filtered run → only the checkable (filter-matched) spec
     // files; unfiltered run (and `cans done`, which fixes with file: null) →
@@ -1292,6 +1402,23 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
         || i.rule === 'refs.anchor.ambiguous' || i.rule === 'refs.anchor.parse-error'),
   ).length;
 
+  // issue #61 (--structure=strict): promote every remaining structure-
+  // category warning to error IN the issues array — BEFORE errorCount /
+  // warningCount are derived — so the exit code, the counters and the --json
+  // levels can never disagree (the wire shape reads the same array). In-place
+  // rewrite of the level field only: file/line/rule/message are the finding's
+  // identity, not its severity. Under the gate no non-structure warning can
+  // remain (style/refs/redundancy are suppressed above), so the category
+  // filter is the whole promotion set by construction — kept explicit anyway:
+  // the pinned contract names category:'structure' + level:'warning', and a
+  // future in-gate warning outside the category must NOT silently become
+  // fatal. Info never promotes (hints are advice, not findings).
+  if (opts.structure === 'strict') {
+    for (const issue of issues) {
+      if (issue.category === 'structure' && issue.level === 'warning') issue.level = 'error';
+    }
+  }
+
   const errorCount = issues.filter(i => i.level === 'error').length;
   const warningCount = issues.filter(i => i.level === 'warning').length;
   // Issue #53 Part 1.5: info is its own band — counted and reported, but
@@ -1334,8 +1461,10 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // issue #53 (Part 2.4): the anchor-repair transaction report — present
     // only on --fix runs. Proposals (plain --fix, --dry-run) carry
     // applied:false; a --yes run's landed rewrites carry applied:true.
-    // Absent on plain checks (additive-only JSON, §35).
-    ...(opts.fix ? { anchorFixes } : {}),
+    // Absent on plain checks (additive-only JSON, §35). Issue #61: fixActive,
+    // not opts.fix — the structure gate implies no-fix even for a
+    // programmatic caller that set both.
+    ...(fixActive ? { anchorFixes } : {}),
     // issue #53 (Part 2.4): --dry-run preview marker. When true,
     // backPointersUpdated* and anchorFixes describe WOULD-BE writes and no
     // byte changed on disk.
@@ -1344,11 +1473,56 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     elapsedMs: Math.max(0, Math.round(performance.now() - t0)),
     // §22: fixed report order ends with a Rules section before the summary (QA-02 F17).
     // §18 delete-key semantics: a deleted range key shows as "off", never a raw null.
-    rulesSummary:
-      `node_length: ${fmtRange(rules.structure.node_length)}` +
-      ` | siblings: ${fmtRange(rules.structure.siblings)}` +
-      ` | depth: ${fmtRange(rules.structure.depth)}`,
+    // issue #61: granular knobs ride in brackets on the key —
+    // `node_length[words·title·strip·error]: 3–60` — and the multiline policy
+    // joins as a final bare segment when configured AND non-default
+    // (`multiline[forbid·max4·aligned·error]`). Every knob appears ONLY when
+    // it departs from its documented default (types.ts: a bare {min,max} is
+    // the v0.10 form), so a default-config summary is byte-identical to
+    // v0.10 — the §22/§35 fixtures stay pinned.
+    rulesSummary: rulesSummaryLine(rules),
   };
+}
+
+/** issue #61: the non-default node_length knobs as `·`-joined tokens
+ *  (`words·title·strip·error`). Undefined members read as their defaults
+ *  (loadRules normalizes absent members; engines also default defensively),
+ *  and each knob token names the DEPARTURE, never the default — `words` for
+ *  unit, `body`/`total` for scope, `strip` for strip_references, `error`/
+ *  `off` for severity. */
+function nodeLengthKnobTokens(nl: NodeLengthRules): string[] {
+  const parts: string[] = [];
+  if (nl.unit !== undefined && nl.unit !== 'chars') parts.push(nl.unit);
+  if (nl.scope !== undefined && nl.scope !== 'title') parts.push(nl.scope);
+  if (nl.strip_references === true) parts.push('strip');
+  if (nl.severity !== undefined && nl.severity !== 'warn') parts.push(nl.severity);
+  return parts;
+}
+
+/** issue #61: the non-default multiline-policy knobs (`forbid·max4·aligned·
+ *  error`). Same departure-only rule as nodeLengthKnobTokens; an absent/null
+ *  block (§18) yields no tokens at all — the summary then omits the whole
+ *  `multiline` segment, exactly the pre-#61 line. */
+function multilineKnobTokens(ml: MultilineRules): string[] {
+  const parts: string[] = [];
+  if (ml.mode !== undefined && ml.mode !== 'allow') parts.push(ml.mode);
+  if (ml.max_lines !== null && ml.max_lines !== undefined) parts.push(`max${ml.max_lines}`);
+  if (ml.indent_aligned === true) parts.push('aligned');
+  if (ml.severity !== undefined && ml.severity !== 'warn') parts.push(ml.severity);
+  return parts;
+}
+
+/** §22/§36 one-liner, v0.10 shape with issue #61's optional knob brackets. */
+function rulesSummaryLine(rules: Rules): string {
+  const nlKnobs = nodeLengthKnobTokens(rules.structure.node_length);
+  const ml = rules.structure.multiline;
+  const mlKnobs = ml === null || ml === undefined ? [] : multilineKnobTokens(ml);
+  return (
+    `node_length${nlKnobs.length > 0 ? `[${nlKnobs.join('\u00b7')}]` : ''}: ${fmtRange(rules.structure.node_length)}` +
+    ` | siblings: ${fmtRange(rules.structure.siblings)}` +
+    ` | depth: ${fmtRange(rules.structure.depth)}` +
+    (mlKnobs.length > 0 ? ` | multiline[${mlKnobs.join('\u00b7')}]` : '')
+  );
 }
 
 /** "3–120" for an active range; "off" when §18 delete-key semantics nulled it. */

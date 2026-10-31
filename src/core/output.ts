@@ -564,9 +564,15 @@ function wrapText(text: string, cols: number, indent: number): string[] {
   return lines;
 }
 
-/** `node_length: 3–120 | siblings: 3–12 | depth: 5–7` → `len 3–120 · sib 3–12 · depth 5–7`. */
+/** `node_length: 3–120 | siblings: 3–12 | depth: 5–7` → `len 3–120 · sib 3–12 · depth 5–7`.
+ *  Issue #61: knob brackets stay attached to the key they qualify —
+ *  `node_length[words·title]: 3–120` compacts to `len[words·title] 3–120`; a
+ *  trailing `multiline[forbid·max4]` segment rides along verbatim (it only
+ *  exists when the author configured it, and its tokens are already the
+ *  compact spelling). */
 function compactRules(s: string): string {
   return s
+    .replace('node_length[', 'len[') // issue #61: knob form first — plain form below
     .replace('node_length: ', 'len ')
     .replaceAll('siblings: ', 'sib ')
     .replace('depth: ', 'depth ')
@@ -580,9 +586,12 @@ Usage: cans <command> [args]
 
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
-  check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [--hints] [file] [--json]
+  check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--structure[=strict]] [--no-redundancy] [--show <section>] [--hints] [file] [--json]
         --fix + [file] rewrites ref-by comments in matching files only
         --fix proposes broken-anchor repairs; --yes applies, --dry-run previews
+        --structure lints structure only — the mirror of --refs-only (style,
+        refs and redundancy findings are suppressed; the ref graph still counts)
+        --structure=strict promotes every structure warning to a fatal error
         --hints shows slug-hint info notes (opt-in; off by default — also
         enabled per-workspace by output.slug_hints in cans/_rules.yaml)
   new adr <title>
