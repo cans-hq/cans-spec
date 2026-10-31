@@ -1484,44 +1484,58 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   };
 }
 
-/** issue #61: the non-default node_length knobs as `·`-joined tokens
- *  (`words·title·strip·error`). Undefined members read as their defaults
- *  (loadRules normalizes absent members; engines also default defensively),
- *  and each knob token names the DEPARTURE, never the default — `words` for
- *  unit, `body`/`total` for scope, `strip` for strip_references, `error`/
- *  `off` for severity. */
-function nodeLengthKnobTokens(nl: NodeLengthRules): string[] {
-  const parts: string[] = [];
-  if (nl.unit !== undefined && nl.unit !== 'chars') parts.push(nl.unit);
-  if (nl.scope !== undefined && nl.scope !== 'title') parts.push(nl.scope);
-  if (nl.strip_references === true) parts.push('strip');
-  if (nl.severity !== undefined && nl.severity !== 'warn') parts.push(nl.severity);
+/** issue #61: the node_length knob bracket — `words·title·strip·error` —
+ *  or null when the rule is exactly the bare v0.10 {min,max} form (unit
+ *  chars, scope title, no strip, severity warn), in which case the §22 line
+ *  stays byte-identical to v0.10. When the bracket exists it always spells
+ *  the MEASUREMENT BASIS (unit, scope — they name what "3–60" counts, per the
+ *  issue's own `node_length[words·title·strip·error]` example, where `title`
+ *  is the default and still shown); the two optional departures appear only
+ *  when active (`strip` for strip_references, the severity value when it is
+ *  not the default warn — error or off). */
+function nodeLengthKnobs(nl: NodeLengthRules): string[] | null {
+  const unit = nl.unit ?? 'chars';
+  const scope = nl.scope ?? 'title';
+  const strip = nl.strip_references === true;
+  const severity = nl.severity ?? 'warn';
+  if (unit === 'chars' && scope === 'title' && !strip && severity === 'warn') return null;
+  const parts: string[] = [unit, scope];
+  if (strip) parts.push('strip');
+  if (severity !== 'warn') parts.push(severity);
   return parts;
 }
 
-/** issue #61: the non-default multiline-policy knobs (`forbid·max4·aligned·
- *  error`). Same departure-only rule as nodeLengthKnobTokens; an absent/null
- *  block (§18) yields no tokens at all — the summary then omits the whole
- *  `multiline` segment, exactly the pre-#61 line. */
-function multilineKnobTokens(ml: MultilineRules): string[] {
-  const parts: string[] = [];
-  if (ml.mode !== undefined && ml.mode !== 'allow') parts.push(ml.mode);
-  if (ml.max_lines !== null && ml.max_lines !== undefined) parts.push(`max${ml.max_lines}`);
-  if (ml.indent_aligned === true) parts.push('aligned');
-  if (ml.severity !== undefined && ml.severity !== 'warn') parts.push(ml.severity);
+/** issue #61: the multiline-policy knob bracket — `forbid·max4·aligned·
+ *  error` — or null when the block is absent/null (§18: no policy at all)
+ *  or configured exactly at defaults (allow, no cap, no alignment, warn —
+ *  nothing to report). Same spelling rule as nodeLengthKnobs: the policy's
+ *  WHAT (mode) is always named inside an existing bracket; the departures
+ *  ride along (`max<N>` for a continuation cap, `aligned`, severity). */
+function multilineKnobs(ml: MultilineRules): string[] | null {
+  const mode = ml.mode ?? 'allow';
+  const max = ml.max_lines ?? null;
+  const aligned = ml.indent_aligned === true;
+  const severity = ml.severity ?? 'warn';
+  if (mode === 'allow' && max === null && !aligned && severity === 'warn') return null;
+  const parts: string[] = [mode];
+  if (max !== null) parts.push(`max${max}`);
+  if (aligned) parts.push('aligned');
+  if (severity !== 'warn') parts.push(severity);
   return parts;
 }
 
-/** §22/§36 one-liner, v0.10 shape with issue #61's optional knob brackets. */
+/** §22/§36 one-liner, v0.10 shape with issue #61's optional knob brackets:
+ *  `node_length[words·title·strip·error]: 3–60 | siblings: 1–12 | depth: 1–5
+ *  | multiline[forbid·max4·aligned·error]`. */
 function rulesSummaryLine(rules: Rules): string {
-  const nlKnobs = nodeLengthKnobTokens(rules.structure.node_length);
-  const ml = rules.structure.multiline;
-  const mlKnobs = ml === null || ml === undefined ? [] : multilineKnobTokens(ml);
+  const nl = nodeLengthKnobs(rules.structure.node_length);
+  const mlBlock = rules.structure.multiline;
+  const ml = mlBlock === null || mlBlock === undefined ? null : multilineKnobs(mlBlock);
   return (
-    `node_length${nlKnobs.length > 0 ? `[${nlKnobs.join('\u00b7')}]` : ''}: ${fmtRange(rules.structure.node_length)}` +
+    `node_length${nl !== null ? `[${nl.join('\u00b7')}]` : ''}: ${fmtRange(rules.structure.node_length)}` +
     ` | siblings: ${fmtRange(rules.structure.siblings)}` +
     ` | depth: ${fmtRange(rules.structure.depth)}` +
-    (mlKnobs.length > 0 ? ` | multiline[${mlKnobs.join('\u00b7')}]` : '')
+    (ml !== null ? ` | multiline[${ml.join('\u00b7')}]` : '')
   );
 }
 
