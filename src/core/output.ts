@@ -572,8 +572,14 @@ function wrapText(text: string, cols: number, indent: number): string[] {
  *  compact spelling). */
 function compactRules(s: string): string {
   return s
-    .replace('node_length[', 'len[') // issue #61: knob form first — plain form below
-    .replace('node_length: ', 'len ')
+    // issue #61: both node_length spellings in ONE step — the bracket stays
+    // glued to the compact key AND the `: ` after it collapses to the plain
+    // form's single space, so `node_length[words·title]: 3–60` and
+    // `node_length: 3–120` compact to `len[words·title] 3–60` / `len 3–120`
+    // (the knob and bare forms keep one shape; a leftover `]: ` would print
+    // `len[knobs]: 3–60` and split the two spellings).
+    .replace(/node_length(\[[^\]]*\])?: /, (_m: string, knobs?: string) =>
+      knobs !== undefined ? `len${knobs} ` : 'len ')
     .replaceAll('siblings: ', 'sib ')
     .replace('depth: ', 'depth ')
     .replaceAll(' | ', ' · ');
