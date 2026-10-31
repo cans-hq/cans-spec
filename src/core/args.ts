@@ -1,6 +1,11 @@
 /** Centralized arg parser enforcing §20 contract:
- *  `--flag value` only. No `--flag=value`, no short flags, no combined flags.
- *  Unknown flags are errors, not silently ignored. */
+ *  `--flag value` only. No short flags, no combined flags.
+ *  Unknown flags are errors, not silently ignored.
+ *  Issue #61 relaxes exactly one §20 clause, opt-in per flag: a FlagSpec with
+ *  `equals: true` also accepts the `--flag=value` spelling (`--structure=strict`).
+ *  Every flag without it keeps the historic behavior — the equals form stays
+ *  an error (QA-06 F4 / QA-14 F3 pin those rejections for --limit=10 and
+ *  --merge-strategy=ask), so §20's language is unchanged for pre-#61 flags. */
 
 export interface ParsedArgs {
   positional: string[];
@@ -13,12 +18,22 @@ export interface FlagSpec {
   name: string;
   /** true = boolean flag (no value), false = requires value */
   boolean: boolean;
+  /** Issue #61: this flag accepts the `--flag=value` spelling IN ADDITION to
+   *  its §20 forms. For a value flag it is an alias of `--flag value`; for a
+   *  boolean flag the bare form stays `true` and the `=value` rides along
+   *  verbatim in `flags` — the parser stores, never judges: the VALUE's
+   *  legality belongs to the command's parse layer (check: only `strict`).
+   *  The value is everything after the FIRST `=` (`--f=a=b` → `a=b`), and an
+   *  empty value (`--f=`) is stored as `''` for that layer to reject — a
+   *  typo must never silently read as the bare boolean form. */
+  equals?: boolean;
 }
 
 /**
  * Parse args against a known flag set.
- * Returns errors for: unknown flags, `--flag=value` form, short flags,
- * missing values, combined flags.
+ * Returns errors for: unknown flags, `--flag=value` form (unless the flag
+ * opted in via `equals`, issue #61), short flags, missing values,
+ * combined flags.
  */
 export function parseArgs(args: string[], spec: FlagSpec[]): ParsedArgs {
   const known = new Map<string, FlagSpec>();
@@ -31,9 +46,20 @@ export function parseArgs(args: string[], spec: FlagSpec[]): ParsedArgs {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
 
-    // Reject --flag=value form
+    // `--flag=value` — rejected per §20 UNLESS the flag opted into the
+    // equals spelling (issue #61: --structure=strict). The opt-in keeps
+    // every other flag's contract byte-identical: --limit=10 and
+    // --merge-strategy=ask keep erroring exactly as before.
     if (a.startsWith('--') && a.includes('=')) {
-      errors.push(`invalid flag form "${a}" — use "--${a.slice(2).split('=')[0]} <value>"`);
+      const eq = a.indexOf('=');
+      const name = a.slice(2, eq);
+      const value = a.slice(eq + 1);
+      const flagSpec = known.get(name);
+      if (flagSpec !== undefined && flagSpec.equals === true) {
+        flags.set(name, value);
+      } else {
+        errors.push(`invalid flag form "${a}" — use "--${name} <value>"`);
+      }
       continue;
     }
 
