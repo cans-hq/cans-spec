@@ -278,7 +278,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 
 | Engine | Catches |
 |---|---|
-| **Structure** | Node length, depth, sibling count, single-child collapse, empty nodes |
+| **Structure** | Node length (unit/scope/severity, issue #61), wrapped-prose multiline policy (issue #61), depth, sibling count, single-child collapse, empty nodes |
 | **Style** | Sibling vs nested grouping, shared prefix detection |
 | **References** | Broken `see:`, broken anchors (schematic leaf paths in JSON/YAML/TOML — issue #58; text headings and code symbols — issue #60), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are terminal, 0-hop — issues #44/#60), self-refs, orphans, stale back-pointers |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
@@ -286,7 +286,10 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No
 migration. `structure.node_length.max` is the single node-length budget
 (the overflow engine that offered a second one was removed — issue #56:
-a limit routable with one short `see:` pointer was not a limit).
+a limit routable with one short `see:` pointer was not a limit) — and since
+issue #61 it is granular: unit, scope, reference stripping and severity
+knobs, plus a `structure.multiline` policy over wrapped prose (next
+section). Every pre-#61 config stays legal — the knobs are optional.
 
 `_rules.yaml` is validated STRICTLY (issue #56): an unrecognized key — a
 typo like `node_lenght`, or a removed one like `overflow.max_node_chars` —
@@ -425,6 +428,67 @@ keeps its see-like-prose warning). `--dry-run` previews. `cans export`
 renders alias uses as their full targets — consumers outside the workspace
 cannot see its definitions.
 
+### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
+
+The old `node_length: { min: 3, max: 90 }` was all-or-nothing: one chars
+range lumping node titles, wrapped prose and `see:` syntax into one
+ambiguous check. Since issue #61 every knob is optional and composable —
+a bare `{ min, max }` (the only form v0.10 accepted) still parses and
+works:
+
+```yaml
+structure:
+  node_length:
+    min: 3
+    max: 90
+    unit: words              # chars | words | tokens (default: chars)
+    scope: title             # title | body | total (default: title)
+    strip_references: true   # exclude `see: ...` spans from the measurement
+    severity: error          # error | warn | off (default: warn)
+  multiline:
+    mode: allow              # allow | forbid | fold (default: allow)
+    max_lines: 4             # ceiling on wrapped continuation lines
+    indent_aligned: true     # continuations must align with the bullet text
+    severity: error          # error | warn | off (default: warn)
+```
+
+- **scope** — `title` measures the bullet line; `body` measures only the
+  indented continuation lines (a node without continuations is not
+  evaluated); `total` measures title + continuations folded with single
+  spaces. `multiline.mode: fold` switches node_length to the folded text
+  regardless of scope: the wrapped node is one logical unit.
+- **unit** — `chars` (string length), `words` (whitespace-split count), or
+  `tokens` = `ceil(chars / 3.5)` — the canonical estimate, so a "90-token"
+  node means the same thing in every workspace (a per-workspace
+  `token_budget.estimate_chars_per_token` override does not re-calibrate
+  it).
+- **strip_references** — strips `see: <target>` spans before measuring
+  (issue #48 trailing-punctuation aware): a long pointer is transport, not
+  prose. Default false.
+- **severity** — the band for BOTH min and max findings.
+  **Migration note (v0.11):** v0.10 hardcoded max→error / min→warning;
+  both sides are warnings under the default `warn` — restore fatal with
+  `severity: error` or `cans check --structure=strict`.
+- **multiline** — wrapped prose continuations (non-bullet lines indented
+  deeper than the owning bullet) get their own policy. They are never
+  outline nodes — node counts, depth and sibling caps are unchanged.
+  `forbid` flags any continuation; `fold` measures the node as one unit;
+  `max_lines` caps the continuation count (null = no cap);
+  `indent_aligned` requires the text-column alignment. Section absent →
+  policy off.
+
+```text
+# cans/06-operations.md — the wrapped node
+- Token budget: every reading plan respects the
+  workspace default_limit and warns
+  at the configured threshold
+```
+
+`multiline: { mode: forbid }` flags it; `{ max_lines: 1 }` flags it
+(2 > 1); `node_length: { max: 70 }` + `{ mode: fold }` measures the folded
+106-char string and trips the max — with `scope: title` alone the 45-char
+title passes and the continuation is invisible to node_length.
+
 ```bash
 cans check                  # human-readable: one line per pattern, count prefixes,
                             # root-cause grouping, timing on the summary line
@@ -435,8 +499,17 @@ cans check --hints          # opt in to the slug-hint info notes (off by default
 cans check --fix            # rebuild back-pointer comments; propose anchor repairs
                             #   (--yes applies them, --dry-run previews all changes)
 cans check --strict         # warnings flip `ok` to false
+cans check --structure      # structure-only gate: structure + content findings,
+                            #   style/refs/redundancy suppressed
+cans check --structure=strict  # gate + structure warnings promoted to errors
+                            #   (exit 2, ok:false — the CI spelling of severity: error)
 cans check 04-api.md        # single file
 ```
+
+`--structure` with `--refs-only` or with `--fix`, or `--structure=<any
+other value>`, is a usage error (exit 2); `--refs-only` stays the clean
+0-hop graph-only gate, and the exit contract is unchanged everywhere:
+`0` clean · `1` warnings · `2` errors.
 
 The default report groups repeated findings: `61× <min children (2/3)` instead
 of 61 identical lines, `91× missing file` with per-target counts instead of 91
