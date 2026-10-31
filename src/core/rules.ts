@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Rules } from '../types.ts';
+import type { MultilineRules, Rules } from '../types.ts';
 import { defaultAliasing } from './alias.ts';
 
 interface YLine {
@@ -243,11 +243,22 @@ export function parseMinimalYaml(source: string): Record<string, unknown> {
 export function defaultRules(): Rules {
   return {
     structure: {
-      node_length: { min: 3, max: 120 },
+      // Issue #61: node_length grew four granular members (unit / scope /
+      // strip_references / severity) — PARAMETERS in the issue #47
+      // convention: an omitted or deleted member keeps the default shown,
+      // and never flips the check off. A bare { min, max } — the only form
+      // v0.10 and earlier accepted — means exactly these values, so the
+      // engine-visible config for every pre-#61 workspace is unchanged.
+      node_length: { min: 3, max: 120, unit: 'chars', scope: 'title', strip_references: false, severity: 'warn' },
       siblings: { min: 1, max: 12 },
       depth: { min: 1, max: 5 },
       single_child_collapse: true,
       empty_nodes: false,
+      // Issue #61: the wrapped-prose continuation policy. null IS the
+      // documented OFF state (§18): an absent, deleted or explicitly empty
+      // multiline section all leave it null — the policy never silently
+      // turns on for a config that does not spell it out.
+      multiline: null,
     },
     style: {
       prefer: 'sibling',
@@ -343,6 +354,8 @@ interface KeySpec {
     | 'number'
     | 'enum'
     | 'range'
+    | 'nodeLength'
+    | 'multiline'
     | 'wordList'
     | 'synonymGroups'
     | 'docString'
@@ -368,11 +381,30 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
   structure: {
     // node_length: chars of node text; siblings: children per parent — both
     // 0-based counts. depth is 1-based (a root bullet is depth 1).
-    node_length: { kind: 'range', min: 0 },
+    //
+    // Issue #61: node_length is the GRANULAR block — the v0.10 min/max
+    // range (identical member discipline: integers at `min`, null member
+    // = that side OFF) plus four PARAMETER members (unit / scope /
+    // strip_references / severity, the issue #47 convention: omitted →
+    // documented default, an explicit empty value is a typo, never a
+    // documented state). A bare { min, max } stays the canonical example
+    // shape — the only form v0.10 accepted.
+    node_length: { kind: 'nodeLength', min: 0 },
     siblings: { kind: 'range', min: 0 },
     depth: { kind: 'range', min: 1 },
     single_child_collapse: { kind: 'boolean' },
     empty_nodes: { kind: 'boolean' },
+    // Issue #61: the multiline policy over wrapped prose continuation
+    // lines — mode / max_lines / indent_aligned / severity. A CHECK
+    // switch (§18), which is why the key is nullOk: an explicit empty
+    // `multiline:` is the documented OFF (same as absent/deleted), NOT a
+    // defaults-filled block (contrast references.aliasing, a parameter
+    // block whose empty value keeps defaults). It counts as a structure
+    // check key in SECTION_KEYS like every other structure key — a
+    // pre-#61 config cannot list it, and the majority threshold is
+    // unchanged (5→6 keys: covered ≥ 3 both ways), so the reconciliation
+    // of every existing file is byte-identical.
+    multiline: { kind: 'multiline', nullOk: true },
   },
   style: {
     prefer: { kind: 'enum', members: ['sibling', 'nested'], nullOk: true },
@@ -531,6 +563,18 @@ const SYNONYM_GROUPS_EXPECTATION =
 const UNRECOGNIZED_SUFFIX =
   '(issue #56: _rules.yaml is validated strictly — §18 documents the legal keys)';
 
+/** Issue #61: the severity member shared by BOTH structure lint blocks
+ *  (node_length.severity, multiline.severity) — 'error' | 'warn' | 'off'
+ *  (StructureSeverity, src/types.ts). Same fail()-shaped line-numbered error
+ *  as every other enum member (the issue #2 got-value convention). */
+function validateSeverityMember(at: string, mv: unknown, keyLines: Map<string, number>): void {
+  if (mv !== 'error' && mv !== 'warn' && mv !== 'off') {
+    throw new Error(
+      `line ${lineOf(keyLines, at)} — "${at}" must be "error" or "warn" or "off", got ${gotText(mv)}`,
+    );
+  }
+}
+
 /** Expectation text for a spec, used when the value is null (out-of-domain
  *  empty) or otherwise needs the kind’s full shape description. */
 function numericOrOtherExpectation(spec: KeySpec): string {
@@ -538,6 +582,13 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   if (spec.kind === 'integer' || spec.kind === 'number') return numericExpectation(spec);
   if (spec.kind === 'enum') return (spec.members ?? []).map(m => `"${m}"`).join(' or ');
   if (spec.kind === 'range') return 'a mapping like { min: 3, max: 120 }';
+  // Issue #61: the v0.10 example shape stays the node_length pin — the
+  // granular members are optional, so the bare form is still THE canonical
+  // spelling; the multiline example spells its own four members.
+  if (spec.kind === 'nodeLength') return 'a mapping like { min: 3, max: 120 }';
+  if (spec.kind === 'multiline') {
+    return 'a mapping like { mode: allow, max_lines: 4, indent_aligned: true, severity: warn }';
+  }
   if (spec.kind === 'wordList') return 'a list of words';
   if (spec.kind === 'synonymGroups') return SYNONYM_GROUPS_EXPECTATION;
   if (spec.kind === 'rootMap') return 'a mapping of root names to paths';
@@ -599,6 +650,75 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
             `line ${lineOf(keyLines, memberPath)} — "${memberPath}" must be ` +
             `an integer >= ${spec.min ?? 0}, got ${gotText(mv)}`,
           );
+        }
+      }
+      return;
+    }
+    case 'nodeLength': {
+      // Issue #61: the granular node_length block — the v0.10 min/max range
+      // (member discipline IDENTICAL to 'range': integers at spec.min, a
+      // null member = that side OFF, §18) plus the four PARAMETER members.
+      // Unknown members reject under the same strict §18 discipline as
+      // unknown top-level keys: a typo'd `unitss` must never silently mean
+      // "default unit" while the author believes words are being measured.
+      // Block-form members carry their own tracked line; inline-object
+      // members share the key's line (parseYamlTracked).
+      if (!isPlainObject(v)) fail('a mapping like { min: 3, max: 120 }');
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'min' || member === 'max') {
+          if (mv === null) continue; // null member = that side of the range is OFF (§18)
+          if (typeof mv !== 'number' || !Number.isFinite(mv) || !Number.isInteger(mv) || mv < (spec.min ?? 0)) {
+            throw new Error(
+              `line ${lineOf(keyLines, at)} — "${at}" must be an integer >= ${spec.min ?? 0}, got ${gotText(mv)}`,
+            );
+          }
+        } else if (member === 'unit') {
+          if (mv !== 'chars' && mv !== 'words' && mv !== 'tokens') {
+            fail('"chars" or "words" or "tokens"', at, mv);
+          }
+        } else if (member === 'scope') {
+          if (mv !== 'title' && mv !== 'body' && mv !== 'total') {
+            fail('"title" or "body" or "total"', at, mv);
+          }
+        } else if (member === 'strip_references') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (member === 'severity') {
+          validateSeverityMember(at, mv, keyLines);
+        } else {
+          throw new Error(`line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`);
+        }
+      }
+      return;
+    }
+    case 'multiline': {
+      // Issue #61: the structure.multiline policy block — mode (allow |
+      // forbid | fold), max_lines (integer >= 1; nullOk MEMBER: an explicit
+      // empty/null means no cap), indent_aligned (boolean), severity. A
+      // null VALUE never reaches this case (the key is nullOk — the
+      // documented §18 OFF state, handled by the early return above).
+      // Unknown members reject like every §18 key (typo'd `max_line`
+      // must not read as "no cap").
+      if (!isPlainObject(v)) {
+        fail('a mapping like { mode: allow, max_lines: 4, indent_aligned: true, severity: warn }');
+      }
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'mode') {
+          if (mv !== 'allow' && mv !== 'forbid' && mv !== 'fold') {
+            fail('"allow" or "forbid" or "fold"', at, mv);
+          }
+        } else if (member === 'max_lines') {
+          if (mv === null) continue; // nullOk member: deleted/empty → no cap (§18)
+          if (typeof mv !== 'number' || !Number.isFinite(mv) || !Number.isInteger(mv) || mv < 1) {
+            fail('an integer >= 1 (or null for no cap)', at, mv);
+          }
+        } else if (member === 'indent_aligned') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (member === 'severity') {
+          validateSeverityMember(at, mv, keyLines);
+        } else {
+          throw new Error(`line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`);
         }
       }
       return;
@@ -800,6 +920,11 @@ function validateRulesStrict(parsed: Record<string, unknown>, keyLines: Map<stri
  *    deleted only when that section spells out at least half of its default
  *    keys (otherwise the key defaults). Listed keys always apply; parameters
  *    always keep their defaults when omitted.
+ *  Issue #61 adds the granular completion pass below: a non-null
+ *  node_length always carries unit/scope/strip_references/severity
+ *  (defaults filled — parameters, issue #47 convention), and
+ *  structure.multiline is normalized to null (policy OFF) or a complete
+ *  four-member mapping.
  *  Invalid YAML, an unrecognized key, or a value outside its documented §18
  *  domain → Error carrying the line number (validateRulesStrict, issue #56). */
 export function loadRules(root: string): Rules {
@@ -884,11 +1009,17 @@ export function loadRules(root: string): Rules {
   //                               cross_file_threshold, warn_threshold, prefer)
   //   parameters (NOT checks — keep defaults when omitted): mode, stopwords,
   //   synonyms, fuzzy_max_distance, fuzzy_min_word_length (issue #47),
-  //   estimate_chars_per_token, default_limit; token_budget.enabled
+  //   estimate_chars_per_token, default_limit, and the issue #61 granular
+  //   node_length members (unit/scope/strip_references/severity — they tune
+  //   the check, never turn it off); token_budget.enabled
   //   is a planning switch, not a check switch. A file mirroring the full
   //   default shape lists every key and is returned identical to the defaults.
+  //   Issue #61: structure.multiline encodes OFF as null DIRECTLY — its
+  //   default is null, so absent, deleted and explicitly-empty all leave it
+  //   null with no delete-pass branch of its own (engines skip on null, §18).
 
-  // structure: node_length / siblings / depth / single_child_collapse / empty_nodes
+  // structure: node_length / siblings / depth / single_child_collapse /
+  // empty_nodes (+ multiline, issue #61 — null default, see above)
   if (!listed('structure')) {
     if (deleteMode) {
       rules.structure = {
@@ -897,6 +1028,7 @@ export function loadRules(root: string): Rules {
         depth: offRange(),
         single_child_collapse: false,
         empty_nodes: false,
+        multiline: null,
       };
     }
   } else {
@@ -917,6 +1049,39 @@ export function loadRules(root: string): Rules {
     }
   }
 
+  // Issue #61 granular completion — runs AFTER the §18 delete pass so the
+  // OFF states are completed too. deepMerge already fills node_length's
+  // four parameter members from defaultRules() whenever the mapping is
+  // present; the one path that bypasses the merge is the OFF encoding
+  // (offRange()), completed here so a non-null node_length ALWAYS carries
+  // all granular members — inert while min/max are null (engines skip,
+  // §18), but the normalized Rules surface stays complete for the
+  // structure engine's defensive reads (severity/scope/unit consumers).
+  // structure.multiline: null (absent/deleted/empty) → policy OFF; a
+  // present mapping carries all four members with defaults filled.
+  if (isPlainObject(rules.structure.node_length)) {
+    const nl = rules.structure.node_length;
+    rules.structure.node_length = {
+      ...nl,
+      unit: nl.unit ?? 'chars',
+      scope: nl.scope ?? 'title',
+      strip_references: nl.strip_references ?? false,
+      severity: nl.severity ?? 'warn',
+    };
+  }
+  if (isPlainObject(rules.structure.multiline)) {
+    // (typing: re-assert the block type — the Record<string, unknown>
+    // narrowing of an OPTIONAL property path washes the member unions out)
+    const mlv = rules.structure.multiline as MultilineRules;
+    rules.structure.multiline = {
+      mode: mlv.mode ?? 'allow',
+      max_lines: mlv.max_lines ?? null,
+      indent_aligned: mlv.indent_aligned ?? false,
+      severity: mlv.severity ?? 'warn',
+    };
+  } else {
+    rules.structure.multiline = null;
+  }
   // style: prefer / force_nested_above / force_sibling_below / shared_prefix_detection
   if (!listed('style')) {
     if (deleteMode) {

@@ -488,13 +488,16 @@ describe('issue #54: promoted files get the full spec-file treatment', () => {
     );
     const r = runCli(['check', '--json'], ws.tmp);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(2);
-    // Mesh shape (pty points back) → the ONLY error is the structure one.
-    expect(j.counts.errors).toBe(1);
+    // Issue #61: node_length defaults to severity 'warn' — the over-long
+    // node is a warning now, so the mesh-clean workspace exits 1, not 2.
+    expect(r.exit).toBe(1);
+    // Mesh shape (pty points back) → the ONLY finding is the structure one.
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(1);
     const long = j.issues.find((i: any) => i.rule === 'structure.node_length.max');
     expect(long).toBeDefined();
     expect(long.file).toBe('plugins/pty.md');
-    expect(long.level).toBe('error');
+    expect(long.level).toBe('warning');
   });
 
   test('--file plugins/pty.md scopes the per-file checks to the promoted file', () => {
@@ -521,14 +524,17 @@ describe('issue #54: promoted files get the full spec-file treatment', () => {
         '',
       ].join('\n'),
     );
-    // Unfiltered: both over-long nodes flag.
+    // Unfiltered: both over-long nodes flag (warnings since issue #61 —
+    // node_length defaults to severity 'warn').
     const all = parseJsonOut(runCli(['check', '--json'], ws.tmp).out);
-    expect(all.counts.errors).toBe(2);
+    expect(all.counts.errors).toBe(0);
+    expect(all.counts.warnings).toBe(2);
     // Filtered to the promoted file: only pty's own node flags.
     const r = runCli(['check', '--json', 'plugins/pty.md'], ws.tmp);
     const j = parseJsonOut(r.out);
-    expect(j.ok).toBe(false);
-    expect(j.counts.errors).toBe(1);
+    expect(j.ok).toBe(true);
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(1);
     const long = j.issues.find((i: any) => i.rule === 'structure.node_length.max');
     expect(long.file).toBe('plugins/pty.md');
     expect(j.issues.some((i: any) => i.file === '01-core.md')).toBe(false);

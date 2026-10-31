@@ -12,7 +12,9 @@ describe('structure checks', () => {
     const issues = checkStructure(nodes, 'test.md', rules);
     const lenIssue = issues.find(i => i.message.includes('too long'));
     expect(lenIssue).toBeDefined();
-    expect(lenIssue!.level).toBe('error');
+    // Issue #61: node_length severity decoupled — default 'warn' makes BOTH
+    // sides warnings (was max:'error'/min:'warning' hardcoded).
+    expect(lenIssue!.level).toBe('warning');
   });
 
   test('flags single child', () => {

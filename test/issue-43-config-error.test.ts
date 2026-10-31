@@ -204,19 +204,22 @@ describe('issue #43 — invalid _rules.yaml is a config error, not a refs findin
 
     // Byte-level stability vs the pre-#43 baseline (captured on main @
     // 0414cd2 for this exact workspace): everything except the timing field.
+    // Issue #61 deliberate delta: node_length.max carries the default
+    // severity 'warn' now (level 'warning'), so the workspace is
+    // warnings-only — exitCode 1, ok true, counts 0/4.
     delete j.summary.elapsedMs;
     expect(j).toEqual({
-      ok: false,
+      ok: true,
       command: 'check',
-      exitCode: 2,
+      exitCode: 1,
       summary: { files: 2, nodes: 8, maxDepth: 2 },
       refs: { total: 0, broken: 0, deepHops: 0 },
       backPointers: { total: 0, current: 0, stale: 0 },
-      counts: { errors: 1, warnings: 3 },
+      counts: { errors: 0, warnings: 4 },
       sections: {
         structure: [
           { file: '01-alpha.md', line: 4, level: 'warning', rule: 'structure.single_child', detail: '"Decisions" has exactly 1 child. Collapse.' },
-          { file: '01-alpha.md', line: 5, level: 'error', rule: 'structure.node_length.max', detail: 'Node too long (130 > 120). Split or move to file.' },
+          { file: '01-alpha.md', line: 5, level: 'warning', rule: 'structure.node_length.max', detail: 'Node too long (130 > 120). Split or move to file.' },
         ],
         style: [],
         refs: [

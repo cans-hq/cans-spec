@@ -229,10 +229,12 @@ describe('issue #56 part 2 — overflow.* keys reject; the configured limit bind
     expect(nulled.error!.message).toContain('unrecognized key "overflow"');
   });
 
-  test('the limit the author configured BINDS: a 12,017-char node under node_length.max 30 is flagged exactly once, exit 2', () => {
+  test('the limit the author configured BINDS: a 12,017-char node under node_length.max 30 is flagged exactly once, exit 1', () => {
     // With the overflow engine gone there is no second budget to route the
     // content into — structure.node_length is the single node-text-length
-    // limit, and it fires on the spec node itself.
+    // limit, and it fires on the spec node itself. Issue #61: the finding
+    // carries the default node_length severity 'warn' (warning level, exit 1
+    // — no longer the pre-#61 hardcoded error/exit 2).
     const ws = makeWs('long-node-binds');
     // trimEnd: the outline parser trims node text, so the fixture is built
     // pre-trimmed to keep the pin exact.
@@ -244,9 +246,12 @@ describe('issue #56 part 2 — overflow.* keys reject; the configured limit bind
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(2);
+    expect(r.exit).toBe(1); // issue #61: warnings-only (node_length severity 'warn')
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(1);
     const hits = j.sections.structure.filter((i: any) => i.rule === 'structure.node_length.max');
     expect(hits).toHaveLength(1);
+    expect(hits[0].level).toBe('warning');
     expect(hits[0].detail).toBe(`Node too long (${longNode.length} > 30). Split or move to file.`);
     // §35 additive wire: the five pinned section keys — the 'overflow' section
     // left the fixed set with the §16 engine, and no overflow.* rule leaks into
