@@ -11,9 +11,10 @@
  *
  *   1. an over-limit node is reported EXACTLY ONCE, by
  *      structure.node_length.max (the authoritative and only char budget);
- *   2. several over-limit nodes → one error each, none double-counted;
+ *   2. several over-limit nodes → one finding each, none double-counted;
  *   3. `--json` carries the finding under sections.structure with
- *      counts.errors per node (never a second, overflow-shaped entry);
+ *      counts.warnings per node (never a second, overflow-shaped entry;
+ *      issue #61: default node_length severity 'warn' — warning level);
  *   4. node_length deleted (§18) → the node-length check is OFF — and with
  *      the overflow budget gone there is no second engine to catch it either:
  *      no sanctioned escape hatch exists (`overflow.*` rules keys now reject
@@ -103,22 +104,26 @@ function specWith(...nodes: string[]): string {
 }
 
 describe('issue #45 (post-#56) — one char budget, each over-limit node reported exactly once', () => {
-  test('engine: node_length.max 90 → ONE error per node, from the single budget', async () => {
+  test('engine: node_length.max 90 → ONE finding per node, from the single budget', async () => {
     const ws = makeWs('single-budget');
     writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
 
     const r = await checkWorkspace(join(ws.root, 'cans'), BASE_OPTS);
     // The over-limit node is reported ONCE — by the one surviving rule.
+    // Issue #61: default node_length severity is 'warn', so the single
+    // finding is a warning (exit 1 band), not the pre-#61 hardcoded error.
     expect(r.issues).toHaveLength(1);
     expect(r.issues[0]!.rule).toBe('structure.node_length.max');
     expect(r.issues[0]!.category).toBe('structure');
     expect(r.issues[0]!.line).toBe(1);
+    expect(r.issues[0]!.level).toBe('warning');
     expect(r.issues[0]!.message).toBe('Node too long (92 > 90). Split or move to file.');
-    expect(r.errorCount).toBe(1);
+    expect(r.errorCount).toBe(0);
+    expect(r.warningCount).toBe(1);
   });
 
-  test('engine: three over-limit nodes → exactly three errors, none double-counted', async () => {
+  test('engine: three over-limit nodes → exactly three findings, none double-counted', async () => {
     const ws = makeWs('single-budget-many');
     writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(
@@ -130,22 +135,26 @@ describe('issue #45 (post-#56) — one char budget, each over-limit node reporte
     const structureHits = r.issues.filter((i) => i.rule === 'structure.node_length.max');
     expect(structureHits).toHaveLength(3); // lines 1, 3, 5
     expect(structureHits.map((i) => i.line)).toEqual([1, 3, 5]);
-    expect(r.errorCount).toBe(3);
+    expect(r.errorCount).toBe(0);
+    expect(r.warningCount).toBe(3);
   });
 
-  test('CLI (--json): sections.structure carries the finding, counts.errors is per-node', () => {
+  test('CLI (--json): sections.structure carries the finding, counts.warnings is per-node', () => {
     const ws = makeWs('single-budget-json');
     writeFileSync(join(ws.cans, '_rules.yaml'), rules(90));
     writeFileSync(join(ws.cans, '04-decisions.md'), specWith(NODE_92));
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(j.counts.errors).toBe(1); // the bug double-counted: 2
+    // Issue #61: node_length defaults to 'warn' — warnings-only, exit 1
+    // (the bug double-counted: 2).
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(1);
     expect(j.sections.structure).toHaveLength(1);
     expect(j.sections.structure[0].rule).toBe('structure.node_length.max');
     expect(j.sections.structure[0].file).toBe('04-decisions.md');
     expect(j.sections.structure[0].line).toBe(1);
-    expect(r.exit).toBe(2);
+    expect(r.exit).toBe(1);
   });
 });
 

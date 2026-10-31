@@ -78,8 +78,9 @@ describe('QA-06 CLI surface (red verification)', () => {
     expect(r.out).toContain('Usage: cans <command> [args]');
     // issue #41: check's flag surface grew --show <section>; issue #53
     // (Part 2.4) added the --yes / --dry-run anchor-repair transaction flags;
-    // issue #59 added the opt-in --hints slug-hint switch.
-    expect(r.out).toContain('check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [--hints] [file] [--json]');
+    // issue #59 added the opt-in --hints slug-hint switch; issue #61 added
+    // the --structure[=strict] execution gate.
+    expect(r.out).toContain('check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--structure[=strict]] [--no-redundancy] [--show <section>] [--hints] [file] [--json]');
     // Updated: help now mirrors §20:488 verbatim — the budget read line
     // documents the (working) --change flag (QA-10 A5).
     expect(r.out).toContain('budget read <concept> [--limit <tokens>] [--change <name>] [--json]');

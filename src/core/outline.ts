@@ -157,6 +157,13 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
   const roots: OutlineNode[] = [];
   const stack: OutlineNode[] = []; // stack[i] = most recent node at indent i
   let lastNode: OutlineNode | null = null;
+  // Issue #61: raw column (leading-space count) of the most recent BULLET
+  // line — the attachment gate for wrapped-prose continuations. Kept local:
+  // the node stores the 2-space-unit indent level, but "strictly deeper than
+  // the owning bullet" compares the actual columns the author wrote (an
+  // odd-indented bullet owns prose only past its odd column). Starts at 0,
+  // matching a synthetic placeholder's level until the first real bullet.
+  let lastBulletCol = 0;
   let fenceOpen = false;
   let fenceStartLine = 0;
   let fencePending = false; // saw a fence; mark next close
@@ -240,7 +247,33 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
     tableRunOpen = false;
 
     const m = raw.match(BULLET_RE);
-    if (!m) continue; // prose / heading / blank — humans only
+    if (!m) {
+      // Issue #61: non-bullet lines stay humans-only for the TREE, but a
+      // non-blank prose line indented STRICTLY deeper than the most recent
+      // bullet is that node's wrapped continuation — recorded on
+      // node.continuations (trimmed text, 1-based line, leading-space column)
+      // for the multiline policy and node_length scope. It NEVER joins the
+      // tree: node counts, depth, sibling caps, refs and parse warnings are
+      // byte-identical with and without this block (files and converters
+      // without continuations leave the array absent). Attachment follows
+      // lastNode exactly — including a deeper bullet: the most recent bullet
+      // owns the wrap. Blank lines neither record nor break attachment (the
+      // next deeper prose line still attaches); prose at or above the last
+      // bullet's column stays humans-only. Fence markers and fence content,
+      // table rows, alias definitions were consumed above; a ref-by comment
+      // (REF_BY_RE, standalone or trailing) is metadata, never prose.
+      if (
+        lastNode !== null && raw.trim() !== '' && !REF_BY_RE.test(raw) &&
+        raw.length - raw.trimStart().length > lastBulletCol
+      ) {
+        (lastNode.continuations ??= []).push({
+          text: raw.trim(),
+          line: lineNo,
+          indent: raw.length - raw.trimStart().length,
+        });
+      }
+      continue; // prose / heading / blank — humans only (tree-wise)
+    }
 
     const leading = m[1];
     // Warn on non-2-space-aligned indentation — it silently re-parents nodes.
@@ -348,6 +381,7 @@ export function parseOutline(source: string, file: string, warnings?: ParseWarni
       }
     }
     lastNode = node;
+    lastBulletCol = leading.length; // issue #61: the wrap-ownership column
   }
   void fencePending;
   return roots;

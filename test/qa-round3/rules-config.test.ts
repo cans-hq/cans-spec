@@ -164,12 +164,15 @@ afterEach(() => {
 });
 
 describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () => {
-  test('control (green at HEAD): with NO _rules.yaml the defaults fire — structure error present, "cache" ×3 silent at threshold 4', () => {
+  test('control (green at HEAD): with NO _rules.yaml the defaults fire — structure finding present, "cache" ×3 silent at threshold 4', () => {
     const ws = mixedWs('ctl-defaults', null);
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error)
-    expect(parsed.counts.errors).toBeGreaterThanOrEqual(1); // issue #41: counts.errors
+    // Issue #61: node_length defaults to severity 'warn' — the 130-char
+    // node is a warning now (exit 1), not the pre-#61 hardcoded error.
+    expect(r.exit).toBe(1);
+    expect(parsed.counts.errors).toBe(0); // issue #41/#61: warnings-only
+    expect(parsed.counts.warnings).toBeGreaterThanOrEqual(1);
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // word-frequency layer only: "cache" × 3 nodes stays silent at default threshold 4
     // (the fuzzy layer's unrelated cycle↔cache typo warning is NOT a frequency flag)
@@ -191,8 +194,11 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     ].join('\n'));
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (unlisted structure engine still ran)
-    expect(parsed.counts.errors).toBeGreaterThanOrEqual(1); // issue #41: counts.errors
+    // Issue #61: node_length severity defaults to 'warn' — the unlisted
+    // structure engine still ran (structure finding present, exit 1).
+    expect(r.exit).toBe(1);
+    expect(parsed.counts.errors).toBe(0);
+    expect(parsed.counts.warnings).toBeGreaterThanOrEqual(1);
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
     // the listed override must take effect: cache ×3 ≥ 2 (word-frequency layer)
     expect(parsed.issues.some((i: any) => i.category === 'redundancy' && /"cache" × \d+ nodes/.test(i.message))).toBe(true);
@@ -202,7 +208,8 @@ describe('QA round-3 red verification: §18 rules system (QA-13 F1/F2/F4)', () =
     const ws = mixedWs('r3-r1b-empty', '');
     const r = runCli(['check', '--json'], ws.root);
     const parsed = parseJsonOut(r.out);
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (structure error present)
+    // Issue #61: the structure finding is a warning now (severity 'warn').
+    expect(r.exit).toBe(1);
     expect(parsed.issues.some((i: any) => i.category === 'structure' && i.file === '01-spec.md')).toBe(true);
   });
 
