@@ -283,10 +283,12 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
     expect(after['02-authentication.md']).not.toContain('ref-by');
   });
 
-  test('CONTROL (§18 / QA-09 E7): an explicit `node_length: { min: 3, max: 60 }` override still applies — 130-char node flagged, exit 2', () => {
+  test('CONTROL (§18 / QA-09 E7): an explicit `node_length: { min: 3, max: 60 }` override still applies — 130-char node flagged, exit 1', () => {
     // CONTROL, marked as such: partial override is the WORKING half of the same §18
     // loading contract (QA-09 E7 recorded PASS). It also proves the node-length
     // engine itself fires on this fixture, so R1a/R1b cannot pass vacuously.
+    // Issue #61: default node_length severity 'warn' — the finding is a
+    // warning (exit 1), no longer the pre-#61 hardcoded error (exit 2).
     expect(LONG_NODE.length).toBe(130); // fixture pin
     const ws = lengthWs('control-e7-partial-override', [
       'structure:',
@@ -296,9 +298,10 @@ describe('QA round-2 red verification: §18 rules engine & redundancy config', (
 
     const r = runCli(['check', '--json'], ws.root);
     const j = parseJsonOut(r.out);
-    expect(r.exit).toBe(2); // issue #41: exit 2 = error class (was 1)
+    expect(r.exit).toBe(1); // issue #61: warnings-only (node_length severity 'warn')
     const flagged = j.issues.filter((i: any) => i.message.includes('Node too long (130 > 60)'));
     expect(flagged.length).toBe(1);
+    expect(flagged[0].level).toBe('warning');
   });
 
   test('CONTROL (§13 L1/L3, §18 / QA-03 #13 + QA-07 NEW-3 NOT-REPRODUCIBLE): user-configured synonyms via the §18 template syntax merge word-frequency and suppress the fuzzy typo warning', () => {

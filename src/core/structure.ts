@@ -1,13 +1,36 @@
+import { STRUCTURE_CHARS_PER_TOKEN } from '../types.ts';
 import type { OutlineNode, Issue, StructureRules, ContentRules } from '../types.ts';
-import { flattenNodes, isSyntheticNode } from './outline.ts';
+import { flattenNodes, isSyntheticNode, stripRefSyntax } from './outline.ts';
+
+/** Issue #61: the folded node string — title + continuation texts joined
+ *  with single spaces (node_length scope 'total', and the
+ *  multiline.mode 'fold' override). Degenerates to the title itself for a
+ *  node with no continuations. */
+function foldNodeText(node: OutlineNode): string {
+  return [node.text, ...(node.continuations ?? []).map(c => c.text)].join(' ');
+}
+
+/** Issue #61: measure an evaluation string in the configured unit — 'chars'
+ *  (string length, the pre-#61 semantics), 'words' (whitespace-split token
+ *  count) or 'tokens' (ceil(chars / STRUCTURE_CHARS_PER_TOKEN), the
+ *  CANONICAL estimate: a per-workspace token_budget.estimate_chars_per_token
+ *  override does not re-calibrate this estimator — types.ts pins the const). */
+function measureNodeLength(text: string, unit: 'chars' | 'words' | 'tokens'): number {
+  if (unit === 'words') return text.split(/\s+/).filter(w => w.length > 0).length;
+  if (unit === 'tokens') return Math.ceil(text.length / STRUCTURE_CHARS_PER_TOKEN);
+  return text.length;
+}
 
 /** Structure checks: node length, depth, sibling count, single-child collapse, empty nodes.
  *  Both sides of every range are enforced (issue #1 — siblings.min and depth.min
  *  were banner-checked but never enforced): node_length, siblings and depth each
- *  check their `min` (warning) as well as their `max`.
+ *  check their `min` as well as their `max`.
  *  §18 delete-key semantics: a check whose rules key is null/false is OFF — the
  *  check is skipped entirely (never compared against null, which would coerce
- *  to 0 and flag everything). */
+ *  to 0 and flag everything). Issue #61 additionally gives node_length a
+ *  severity band (default 'warn' — both sides warning; 'error' fatal; 'off'
+ *  skipped) and adds the multiline policy (structure.multiline, §18: absent
+ *  or null section = no policy at all). */
 export function checkStructure(
   nodes: OutlineNode[],
   file: string,
@@ -21,26 +44,128 @@ export function checkStructure(
       // structure — never flagged themselves (their children, if any, still
       // are: the walk recurses below regardless).
       if (!isSyntheticNode(node)) {
-        const len = node.text.length;
         const nl = rules.node_length;
-        if (nl !== null && nl.max !== null && len > nl.max) {
-          issues.push({
-            file,
-            line: node.line,
-            level: 'error',
-            category: 'structure',
-            message: `Node too long (${len} > ${nl.max}). Split or move to file.`,
-          rule: 'structure.node_length.max', // issue #41: machine-readable rule key
-          });
-        } else if (nl !== null && nl.min !== null && len < nl.min) {
-          issues.push({
-            file,
-            line: node.line,
-            level: 'warning',
-            category: 'structure',
-            message: `Node too short (${len} < ${nl.min}).`,
-          rule: 'structure.node_length.min', // issue #41: machine-readable rule key
-          });
+        const conts = node.continuations ?? [];
+        // Issue #61: node_length is granular — unit (chars/words/tokens),
+        // scope (title/body/total), strip_references and severity — with a
+        // bare {min,max} (the only pre-#61 form) still meaning
+        // chars/title/false/'warn'. The severity band deliberately REPLACES
+        // the hardcoded max:'error'/min:'warning' pair: BOTH sides follow
+        // node_length.severity now, default 'warn' (structured diagnostics,
+        // exit 0 band) — severity:'error' restores fatal, 'off' (§18) skips
+        // the check entirely. loadRules normalizes absent members; these
+        // reads default defensively for raw-node callers.
+        if (nl !== null && (nl.severity ?? 'warn') !== 'off') {
+          const unit = nl.unit ?? 'chars';
+          const scope = nl.scope ?? 'title';
+          // multiline.mode 'fold' is a PARAMETER, not a finding: it overrides
+          // the evaluation string to the folded title+continuation text for
+          // every node WITH continuations regardless of scope — and a
+          // multiline severity 'off' mutes the findings, never the fold.
+          // rules.multiline null/absent (§18) means no policy at all, so no
+          // fold either.
+          const foldOn =
+            rules.multiline != null && (rules.multiline.mode ?? 'allow') === 'fold' && conts.length > 0;
+          // Scope 'body': the continuation text only, folded with single
+          // spaces — a node with NO continuations is not evaluated at all
+          // (null skips both sides of the range, min included).
+          let text: string | null;
+          if (foldOn) {
+            text = foldNodeText(node);
+          } else if (scope === 'title') {
+            text = node.text;
+          } else if (scope === 'body') {
+            text = conts.length > 0 ? conts.map(c => c.text).join(' ') : null;
+          } else {
+            text = foldNodeText(node); // 'total' — the title itself when unwrapped
+          }
+          if (text !== null) {
+            // strip_references (issue #61): strip `see: <target>` pointer
+            // spans BEFORE measuring, in every scope — reusing THE ref
+            // stripper (stripRefSyntax, issue #46/#48 semantics: trailing
+            // prose punctuation rides with the span, a pure-punctuation
+            // match is prose and stays). Reference syntax is structural, not
+            // content — the same §8/§13 argument redundancy tokenizes under.
+            if (nl.strip_references === true) text = stripRefSyntax(text);
+            const len = measureNodeLength(text, unit);
+            const level = nl.severity === 'error' ? 'error' : 'warning';
+            const unitLabel = unit === 'chars' ? '' : ` ${unit}`;
+            if (nl.max !== null && len > nl.max) {
+              issues.push({
+                file,
+                line: node.line,
+                level,
+                category: 'structure',
+                message: `Node too long (${len} > ${nl.max}${unitLabel}). Split or move to file.`,
+                rule: 'structure.node_length.max', // issue #41: machine-readable rule key
+              });
+            } else if (nl.min !== null && len < nl.min) {
+              issues.push({
+                file,
+                line: node.line,
+                level,
+                category: 'structure',
+                message: `Node too short (${len} < ${nl.min}${unitLabel}).`,
+                rule: 'structure.node_length.min', // issue #41: machine-readable rule key
+              });
+            }
+          }
+        }
+
+        // Issue #61: the multiline policy over the node's recorded wrapped
+        // prose — runs only when rules.multiline exists (§18: an absent/null
+        // section is no policy at all; mode 'fold' alone never mints a
+        // finding). One finding per node per rule; every finding sits on the
+        // node's title line except indent_aligned, which names the FIRST
+        // offending continuation's own line. Synthetic placeholders never
+        // reach here (the isSyntheticNode guard above).
+        const ml = rules.multiline;
+        if (ml != null && (ml.severity ?? 'warn') !== 'off') {
+          const level = ml.severity === 'error' ? 'error' : 'warning';
+          if ((ml.mode ?? 'allow') === 'forbid' && conts.length > 0) {
+            issues.push({
+              file,
+              line: node.line,
+              level,
+              category: 'structure',
+              message: `Wrapped prose used but structure.multiline.mode is forbid (${conts.length} continuation line${conts.length === 1 ? '' : 's'}).`,
+              suggestion: 'fold the text into the bullet line, or split it into child nodes',
+              rule: 'structure.multiline.forbid',
+            });
+          }
+          const maxLines = ml.max_lines ?? null;
+          if (maxLines !== null && conts.length > maxLines) {
+            issues.push({
+              file,
+              line: node.line,
+              level,
+              category: 'structure',
+              message: `${conts.length} continuation lines exceed structure.multiline.max_lines (${maxLines})`,
+              suggestion: 'wrap shorter, or split the prose into child nodes',
+              rule: 'structure.multiline.max_lines',
+            });
+          }
+          if (ml.indent_aligned === true) {
+            // The bullet's text column: indent level (2-space units) + the
+            // `- ` list-marker width. The CANONICAL column — the node records
+            // the indent level, not the raw marker spelling, so a widened
+            // marker (`-   text`) or odd indentation aligns to the canonical
+            // column like every other 2-space-unit consumer (both are already
+            // outside the documented 2-space house style).
+            const textCol = node.indent * 2 + 2;
+            const offender = conts.find(c => c.indent !== textCol);
+            if (offender !== undefined) {
+              issues.push({
+                file,
+                line: offender.line,
+                level,
+                category: 'structure',
+                message: `Continuation indent ${offender.indent} does not match the node text column ${textCol}.`,
+                suggestion: `indent continuation lines to column ${textCol} (aligned with the text after "- ")`,
+                rule: 'structure.multiline.indent_aligned',
+              });
+            }
+          }
         }
 
         const depth = node.indent + 1;
