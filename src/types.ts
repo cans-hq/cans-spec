@@ -37,6 +37,14 @@ export interface OutlineNode {
    *  as content must exclude them (isSyntheticNode). Never set on nodes
    *  parsed from real bullets. */
   synthetic?: boolean;
+  /** Issue #61: wrapped prose continuation lines recorded for the multiline
+   *  policy and node_length scope — non-bullet, non-blank, non-fence,
+   *  non-table, non-alias-definition, non-ref-by lines indented DEEPER than
+   *  this node's bullet, appearing after it before the next bullet. They
+   *  NEVER join the tree: node counts, depth, sibling caps and every
+   *  pre-#61 consumer are unchanged; files without continuations (and
+   *  converters that do not record them) simply leave this absent. */
+  continuations?: Array<{ text: string; line: number; indent: number }>;
 }
 
 export interface BackPointer {
@@ -93,8 +101,67 @@ export interface LengthRange {
   max: number | null;
 }
 
+/** Issue #61: severity band for the structure lint cluster (node_length and
+ *  multiline). 'error' → level:'error' Issue (exit 2, ok:false); 'warn' →
+ *  level:'warning' Issue (structured diagnostics, exit 1 band, ok untouched);
+ *  'off' → the check is skipped entirely (§18). */
+export type StructureSeverity = 'error' | 'warn' | 'off';
+
+/** Issue #61: the canonical chars-per-token estimate used by
+ *  node_length.unit:'tokens' (ceil(chars / STRUCTURE_CHARS_PER_TOKEN)).
+ *  Matches the token_budget.estimate_chars_per_token DEFAULT (core/rules.ts) —
+ *  a per-workspace override THERE does not re-calibrate THIS estimator:
+ *  node_length tokens are always measured with the canonical estimate. */
+export const STRUCTURE_CHARS_PER_TOKEN = 3.5;
+
+/** Issue #61: granular node_length evaluation. Every new member is OPTIONAL:
+ *  a bare { min, max } — the only form v0.10 and earlier accepted — stays
+ *  legal and means unit:'chars', scope:'title', strip_references:false,
+ *  severity:'warn'. loadRules (core/rules.ts) normalizes absent members to
+ *  those defaults; engines also default defensively when reading raw nodes. */
+export interface NodeLengthRules extends LengthRange {
+  /** Measurement unit: 'chars' (default) | 'words' (whitespace-split count)
+   *  | 'tokens' (ceil(chars / STRUCTURE_CHARS_PER_TOKEN)). */
+  unit?: 'chars' | 'words' | 'tokens';
+  /** Which text the rule measures: 'title' (default — the bullet line only)
+   *  | 'body' (the node's continuation lines only; a node with NO
+   *  continuations is not evaluated at all) | 'total' (title + continuations
+   *  folded with single spaces). multiline.mode:'fold' overrides the
+   *  evaluation string to the folded text regardless of scope. */
+  scope?: 'title' | 'body' | 'total';
+  /** Strip `see: <target>` pointer tokens (core/outline.ts stripRefSyntax)
+   *  from the evaluation string before measuring. Default false. */
+  strip_references?: boolean;
+  /** Issue level for BOTH node_length findings (min and max). Default 'warn'
+   *  — replaces the v0.10 hardcoded max:'error'/min:'warning' pair;
+   *  severity:'error' or `cans check --structure=strict` restores fatal. */
+  severity?: StructureSeverity;
+}
+
+/** Issue #61: the `structure.multiline` policy over wrapped prose
+ *  continuation lines — the non-bullet lines the parser records per node
+ *  (OutlineNode.continuations) but never joins into the tree. Section
+ *  absent/null (§18) → no multiline policy at all. */
+export interface MultilineRules {
+  /** 'allow' (default): continuations permitted, no mode finding.
+   *  'forbid': any continuation on a node is a policy violation.
+   *  'fold': continuations permitted, but node_length evaluates the FOLDED
+   *  title+continuation text regardless of node_length.scope. */
+  mode?: 'allow' | 'forbid' | 'fold';
+  /** Ceiling on continuation lines per node. null/absent → no cap. */
+  max_lines?: number | null;
+  /** Continuation lines must start at the bullet's text column (the column
+   *  where the title text begins, after the list marker). Default false. */
+  indent_aligned?: boolean;
+  /** Issue level for multiline findings. Default 'warn'. */
+  severity?: StructureSeverity;
+}
+
 export interface StructureRules {
-  node_length: LengthRange;
+  node_length: NodeLengthRules;
+  /** §18: absent (or deleted/null) section → null → the multiline policy is
+   *  OFF — no mode/max_lines/indent_aligned checks run. */
+  multiline?: MultilineRules | null;
   siblings: LengthRange;
   depth: LengthRange;
   single_child_collapse: boolean;
