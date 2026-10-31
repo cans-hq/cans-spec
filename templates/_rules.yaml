@@ -17,6 +17,37 @@ slug:
 
 structure:
   node_length: { min: 3, max: 120 }
+  # Issue #61 — granular node_length. Every member below is OPTIONAL: the
+  # bare { min, max } line above already means unit chars / scope title /
+  # strip_references false / severity warn (the v0.10 measurement), and any
+  # pre-#61 config stays legal. Opt in per knob:
+  #   unit: chars | words | tokens — what "length" counts. words =
+  #     whitespace-split count; tokens = ceil(chars / 3.5), the CANONICAL
+  #     estimate — token_budget.estimate_chars_per_token does not
+  #     re-calibrate it.
+  #   scope: title | body | total — title = the bullet line; body = the
+  #     indented continuation lines only (a node WITHOUT continuations is
+  #     not evaluated); total = title + continuations folded with single
+  #     spaces.
+  #   strip_references: true strips `see: <target>` spans before measuring —
+  #     a long pointer is transport, not prose (default false).
+  #   severity: error | warn | off — the band for BOTH min and max findings
+  #     (default warn, replacing v0.10's hardcoded max: error / min:
+  #     warning pair — set severity: error to restore fatal, or run
+  #     `cans check --structure=strict`).
+  # multiline:             # Issue #61 — the wrapped-prose policy. The
+  #   mode: allow           # section is absent by default = policy OFF.
+  #   max_lines: 4          # Continuation lines are the non-bullet lines
+  #   indent_aligned: true  # indented deeper than the owning bullet —
+  #   severity: warn        # never outline nodes (node counts, depth and
+  #                         # sibling caps are unchanged). mode: allow |
+  #                         # forbid | fold — forbid flags ANY continuation;
+  #                         # fold measures the node as its folded
+  #                         # title+continuation text regardless of scope.
+  #                         # max_lines: ceiling per node (null = no cap).
+  #                         # indent_aligned: continuations must start at
+  #                         # the bullet's text column. severity: the band
+  #                         # for ALL multiline findings.
   siblings: { min: 1, max: 12 }
   depth: { min: 1, max: 5 }
   single_child_collapse: true

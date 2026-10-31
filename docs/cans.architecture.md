@@ -799,7 +799,7 @@ Four layers. All deterministic. No ML.
 
 ## 15. Structure Engine
 
-Checks: node length (min/max chars), sibling count per parent, depth (min/max), single-child collapse, empty nodes.
+Checks: node length (min/max over a configurable unit and scope, issue #61), the multiline policy over wrapped prose continuation lines (issue #61), sibling count per parent, depth (min/max), single-child collapse, empty nodes.
 
 **Example output:**
 ```
@@ -808,6 +808,144 @@ Checks: node length (min/max chars), sibling count per parent, depth (min/max), 
 ⚠ 02-authentication.md:3 — "Sessions" has 14 children (max 12).
 ✗ 06-operations.md:20 — Depth 6 exceeds max 5. Flatten.
 ```
+
+### Node length — granular, composable knobs (issue #61)
+
+`structure.node_length: { min: 3, max: 90 }` alone was an all-or-nothing,
+uncalibrated rule: one chars range lumping single-line node titles, wrapped
+prose continuations and `see: ...` reference syntax into one ambiguous check.
+The fix is granular knobs, additive and non-breaking — every member below is
+OPTIONAL, a bare `{ min, max }` (the only form v0.10 and earlier accepted)
+stays legal, and the defaults reproduce the v0.10 measurement (chars, title
+scope, refs kept):
+
+```yaml
+structure:
+  node_length:
+    min: 3
+    max: 90
+    unit: words              # chars | words | tokens (default: chars)
+    scope: title             # title | body | total (default: title)
+    strip_references: true   # strip `see: ...` spans before measuring
+    severity: error          # error | warn | off (default: warn)
+  multiline:
+    mode: allow              # allow | forbid | fold (default: allow)
+    max_lines: 4             # ceiling on continuation lines (null = no cap)
+    indent_aligned: true     # continuations must align with the bullet text
+    severity: error          # error | warn | off (default: warn)
+```
+
+**Scope — what gets measured:** `title` (default) is the bullet's line,
+exactly the node text every pre-#61 consumer saw. `body` is the node's
+continuation lines only (§15 multiline, below); a node WITHOUT continuations
+is not evaluated at all — no body, no verdict, never a zero-length phantom.
+`total` is title + continuations folded with single spaces into one string.
+`multiline.mode: fold` overrides the evaluation string to the folded text
+REGARDLESS of `node_length.scope`: fold is the statement that the wrapped node
+is one logical unit, so its length is the folded length.
+
+**Units:** `chars` = string length. `words` = whitespace-split count.
+`tokens` = `ceil(chars / 3.5)` — the canonical estimate
+(`STRUCTURE_CHARS_PER_TOKEN`, matching `token_budget.estimate_chars_per_token`'s
+default). A per-workspace `token_budget.estimate_chars_per_token` override
+does NOT re-calibrate this estimator: node_length tokens always use the
+canonical 3.5, so a "90-token" node means the same thing in every workspace.
+
+**strip_references** strips `see: <target>` pointer spans from the evaluation
+string before measuring — the same `stripRefSyntax` the redundancy engine
+uses (§13), trailing-punctuation aware (issue #48), so
+`(see effect.md#Audit-spine)` contributes nothing. Why: a node's length budget
+should police the author's WORDS, not the filesystem's paths — a long target
+plus a short label is a thin pointer, not a bloated node. Default false (the
+v0.10 behavior measured the written spelling).
+
+**severity — the band is decoupled from the finding (migration note):** v0.10
+hardcoded node_length.max → error and node_length.min → warning. `severity`
+replaces that pair and applies to BOTH findings. `warn` (default): min and
+max findings are warnings — structured diagnostics, the exit-1 band, `ok`
+untouched. `error`: both are errors — exit 2, `ok: false`. `off`: the whole
+check is skipped (§18). A CI run that relied on over-max nodes failing the
+build must set `severity: error` or run `cans check --structure=strict` (§20)
+to restore fatal.
+
+Rule keys stay the stable vocabulary: `structure.node_length.max` /
+`structure.node_length.min` (issue #41, unchanged).
+
+**Worked example — words + strip_references:**
+
+```markdown
+- Session rules: see 02-authentication.md#Sessions
+```
+
+Under `{ min: 3, unit: words, strip_references: true }` the evaluation string
+strips to `Session rules:` → 2 words → `structure.node_length.min` fires.
+With `strip_references: false` (the default) the same node measures 4 words
+and passes — the knob, not the author, decided.
+
+**Worked example — tokens:** a 350-char node under `{ max: 90, unit: tokens }`
+measures `ceil(350 / 3.5)` = 100 tokens > 90 → `structure.node_length.max`.
+
+### The multiline policy (`structure.multiline`, issue #61)
+
+Wrapped prose continuation lines — non-bullet, non-blank lines indented
+deeper than the owning node's bullet — were invisible to every engine: the
+parser skipped them (§11), so nothing capped them and nothing measured them.
+The parser now RECORDS them per node (`OutlineNode.continuations`), but they
+still never join the outline tree: node counts, depth, sibling caps and every
+pre-#61 consumer are unchanged. A continuation line is: non-bullet,
+non-blank, non-fence, non-table, non-alias-definition, non-ref-by-comment,
+indented strictly deeper than the most recent node's bullet — attached to
+that node.
+
+The policy block (§18: section absent or deleted → the whole multiline
+policy is OFF — `mode: allow` with no cap and no alignment check is the
+v0.10 non-policy):
+
+- **mode `allow`** (default): continuations permitted, no mode finding. The
+  `max_lines` ceiling and `indent_aligned` check still apply if configured.
+- **mode `forbid`**: ANY continuation on a node is a policy violation →
+  `structure.multiline.forbid`. The fix is folding the text into the bullet
+  or moving it to prose outside the outline.
+- **mode `fold`**: continuations permitted, and node_length evaluates the
+  FOLDED title+continuation text regardless of `node_length.scope`.
+
+- **max_lines**: ceiling on continuation lines per node →
+  `structure.multiline.max_lines` when a node's continuation count exceeds
+  it. null/absent → no cap.
+- **indent_aligned**: continuation lines must start at the bullet's text
+  column — the column where the title text begins, after the list marker —
+  → `structure.multiline.indent_aligned` when a continuation starts
+  elsewhere. Default false.
+- **severity**: the issue band for ALL multiline findings, the same mapping
+  as node_length's — `warn` (default) → warning, `error` → exit 2 / `ok:
+  false`, `off` → the multiline checks are skipped (§18).
+
+**Worked example — the wrapped node:**
+
+```markdown
+- Token budget: every reading plan respects the
+  workspace default_limit and warns
+  at the configured threshold
+```
+
+Under `{ mode: forbid }` → `structure.multiline.forbid`. Under
+`{ max_lines: 2 }` no finding (2 ≤ 2); under `{ max_lines: 1 }` →
+`structure.multiline.max_lines` (2 > 1). Under `node_length: { max: 70 }`
+with `{ mode: fold }` the folded 106-char string trips
+`structure.node_length.max` regardless of `scope` — with `scope: title`
+alone the 45-char title passes and the continuation is invisible to
+node_length.
+
+**Worked example — indent alignment:**
+
+```markdown
+- Token budget: plans respect default_limit
+  and warn at the threshold      ← aligned: starts at the text column (2)
+     and stay under budget       ← misaligned: starts elsewhere
+```
+
+`indent_aligned: true` flags the deeper line;
+`indent_aligned: false` (default) accepts both.
 
 ---
 
@@ -852,9 +990,12 @@ The post-#56 model:
    index.md, plus issue #54's transitive promotion of referenced subfolder
    .md files — iterated to a fixpoint before anything else runs; alias
    definitions extracted as file metadata and every alias USE resolved to
-   its full target BEFORE any consumer sees the nodes — issue #57, §12)
+   its full target BEFORE any consumer sees the nodes — issue #57, §12;
+   wrapped prose continuation lines recorded per node — issue #61, §15 —
+   never tree members)
 2. Build RefGraph
-3. checkStructure()
+3. checkStructure() (node_length granular knobs + the multiline policy,
+   issue #61 — §15)
 4. checkStyle()
 5. checkRefs() (+ the issue #57 definition-level finish pass: unused-alias
    warnings, min_uses audit, zero-use-definition verification — a broken
@@ -884,6 +1025,27 @@ The explicit empty value (`key:` with nothing under it, or the YAML null literal
 ```yaml
 structure:
   node_length: { min: 3, max: 120 }
+  # issue #61 — granular node_length (§15). Every member optional; a bare
+  # { min, max } — the only form v0.10 and earlier accepted — means
+  # unit: chars / scope: title / strip_references: false / severity: warn.
+  #   unit: chars | words | tokens — tokens = ceil(chars / 3.5), the
+  #     canonical estimate; token_budget.estimate_chars_per_token does not
+  #     re-calibrate it
+  #   scope: title | body | total — title = the bullet line; body = the
+  #     continuation lines only (nodes without continuations are not
+  #     evaluated); total = title + continuations folded with single spaces
+  #   strip_references: strip `see: <target>` spans before measuring (§13's
+  #     stripRefSyntax, issue #48 trailing-punctuation aware)
+  #   severity: error | warn | off — the band for BOTH min and max findings
+  #     (default warn, replacing v0.10's hardcoded max: error / min:
+  #     warning pair — severity: error or `cans check --structure=strict`
+  #     restore fatal)
+  # multiline:              # issue #61 — the wrapped-prose policy (§15).
+  #   mode: allow           # Absent/deleted section → policy OFF.
+  #   max_lines: 4          # ceiling on continuation lines (null = no cap)
+  #   indent_aligned: true  # continuations must start at the bullet's text
+  #   severity: warn        # column; severity: band for ALL multiline
+  #                         # findings (error | warn | off, default warn)
   siblings: { min: 1, max: 12 }
   depth: { min: 1, max: 5 }
   single_child_collapse: true
@@ -946,6 +1108,8 @@ output:
 
 `references.aliasing` (issue #57) configures per-file pointer aliasing (§12): `enabled` (boolean, default `false` — aliasing is OPT-IN, and disabled plus any alias use or definition present is an error, never a silent pass), `scope` (`"file"` — the only legal value in v1; anything else is a line-numbered config error), `style` (`"numeric"` | `"named"` | `"both"`, default `both`; a use of the other style is an error that still resolves), `min_uses` (integer `>= 1`, default `2` — only targets referenced at least that many times per file, alias uses plus full spellings, are alias-eligible; a hand-written alias below the threshold is an error at the definition). It is a PARAMETER, not a check switch: absent/empty = the documented defaults, and it never participates in the delete/override reconciliation. Unknown sub-keys reject under the same strict #56 discipline as unknown top-level keys — a typo'd `enabledd` must never silently mean "no such knob" while the author believes aliasing is on. Partial blocks merge over the defaults (`aliasing: { enabled: true }` keeps `style: both`).
 
+`structure.node_length` (issue #61) grows four optional members, measured, scoped and banded per §15: `unit` (`"chars"` | `"words"` | `"tokens"`, default `chars`), `scope` (`"title"` | `"body"` | `"total"`, default `title`), `strip_references` (boolean, default `false`), and `severity` (`"error"` | `"warn"` | `"off"`, default `warn`). A bare `{ min, max }` — the only form v0.10 and earlier accepted — is exactly the defaults, so every pre-#61 config stays legal; the one deliberate behavior change is the severity migration (over-max findings were hardcoded errors in v0.10 and are warnings under the default `warn` — restore fatal with `severity: error` or `cans check --structure=strict`, §20). `structure.multiline` (issue #61, new) is the wrapped-prose policy block of §15: absent, deleted or null (§18) → the whole policy is OFF; present, its members are `mode` (`"allow"` | `"forbid"` | `"fold"`, default `allow`), `max_lines` (a count — the §18 count domain, integers `>= 0`; null/absent → no cap), `indent_aligned` (boolean, default `false`) and `severity` (the same enum and meaning as node_length's, default `warn`). All of it is strictly validated like every §18 key — an unknown sub-key (a typo'd `severety`), a wrong type, or an unknown enum member is the line-numbered config error, and the `min > max` contradiction check covers the node_length range members unchanged.
+
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
 
 `output` (issue #59) is the output-preference section — display switches,
@@ -981,7 +1145,7 @@ Every command builds a typed `CommandResult` subtype. `emit()` in `cli.ts` handl
 
 ```
 cans init [--flat|--folders] [--bare] [--force] [--tool <name>]
-cans check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--no-redundancy] [--show <section>] [--hints] [file] [--json]
+cans check [--fix] [--yes] [--dry-run] [--strict] [--refs-only] [--structure[=strict]] [--no-redundancy] [--show <section>] [--hints] [file] [--json]
 cans new adr <title>
 cans new task <name>
 cans done <name> [--allow-incomplete] [--skip-check] [--json]
@@ -1007,6 +1171,22 @@ default; the per-workspace spelling is `output.slug_hints: true` in
 `_rules.yaml` (§18), and either path enables. `--hints` never changes a
 verdict: ok, exit codes, `--strict` and the error/warning counts are
 identical with the band on or off.
+
+`check --structure` / `check --structure=strict` (issue #61) is the
+structure-only gate — the inverse of `--refs-only`: the run reports
+structure and content findings only, with style, refs and redundancy
+suppressed (a workspace with broken refs and style noise still gets its
+structure verdict). `--structure` enforces the DECLARED structure
+severities (§15/§18); `--structure=strict` additionally promotes
+structure-category warnings to errors IN PLACE before counting, so a
+warn-severity node_length or multiline finding fails the run (exit 2,
+`ok: false`) without touching the workspace's `_rules.yaml` — the CI
+spelling of `severity: error`. `--structure` is the one flag that takes an
+`=value` modifier; any value other than `strict` is a usage error, as are
+`--structure` together with `--refs-only` (opposite gates) or with `--fix`
+(a gate run never mutates files). The exit contract is unchanged:
+`0` clean · `1` warnings · `2` errors, and plain `cans check` orchestration
+is untouched.
 
 ### Command contract
 - Each command is a single exported async function returning a `CommandResult` subtype.
@@ -1043,6 +1223,15 @@ Runs all validation engines. The most-used command.
 **Reads:** `_rules.yaml`, spec files, `_tasks/*.md` (light ref check only), `_adr/*.md` (ref check).
 **Writes:** Nothing by default. `--fix` updates back-pointer comments; `--fix --yes` additionally repairs broken ref anchors (issue #53 Part 2.4, below). `--fix --dry-run` writes nothing at all.
 **Excludes:** `_collab/`, `AGENTS.md`, `_rules.yaml` from structural checks.
+
+**Structure gate (`--structure` / `--structure=strict`, issue #61):** the
+inverse of `--refs-only` — structure and content findings only, style, refs
+and redundancy suppressed, so a workspace with refs/style noise still gets
+its structure verdict (§15/§20 for the full flag contract: `--structure`
+enforces the declared structure severities; `=strict` promotes
+structure-category warnings to errors in place before counting — exit 2,
+`ok: false` — and the two usage errors, `--structure --refs-only` and
+`--structure --fix`, reject before any workspace is read).
 
 **External roots (issue #55):** with `references.external_roots` declared
 (§18), `see: name://sub/path` pointers verify against the sibling checkouts
@@ -2089,7 +2278,7 @@ Usage: cans <command> [args]
 
 Commands:
   init [--flat|--folders] [--bare] [--force] [--tool <name>]
-  check [--fix] [--strict] [--refs-only] [--no-redundancy] [file] [--json]
+  check [--fix] [--strict] [--refs-only] [--structure[=strict]] [--no-redundancy] [file] [--json]
   new adr <title>
   new task <name>
   done <name> [--allow-incomplete] [--skip-check] [--json]
