@@ -183,6 +183,40 @@ export interface ContentRules {
   max_tbd_per_file: number | null;
 }
 
+/** Issue #62: one `references.forbidden_targets` rule entry — a per-source
+ *  ban on pointer targets (the layering / abstraction-leak guard, §12/§18).
+ *  The list lives under `references.forbidden_targets` in `_rules.yaml`. */
+export interface ForbiddenTargetRule {
+  /** Glob selecting the SOURCE files the rule applies to, matched against
+   *  the workspace-relative path (`/` separators, e.g. `00-overview.md`,
+   *  `plugins/leaf.md`). A single leading `cans/` segment is a
+   *  workspace-qualified spelling and is stripped from BOTH the glob and
+   *  the matched path — `cans/[0-9]*.md` and `[0-9]*.md` name the same
+   *  selector (contract 2). Glob grammar (core/glob.ts): `*` stays inside
+   *  one path segment, `**` crosses segments, `?` is one non-`/`
+   *  character, `[...]` a character class. Case-sensitive, full-path. */
+  source: string;
+  /** A JavaScript regex (SEARCH semantics — anchor with `^`/`$` yourself),
+   *  tested against the target's candidate strings (§12): the written
+   *  target after alias expansion, anchor stripped, path normalized
+   *  (leading `cans/` and `./` stripped, `//` collapsed, trailing `/`
+   *  trimmed); an external `name://sub/path` target ALSO offers its bare
+   *  `sub/path` root-relative form. Case-sensitive. */
+  pattern: string;
+  /** Issue level for a match: 'error' (the default) fails the run (exit 2);
+   *  'warning' does not — the severity convention of node_length /
+   *  multiline, with the issue #62 spelling (`warning`, not `warn`). */
+  severity?: 'error' | 'warning';
+  /** Reported VERBATIM when present; the default message names the source
+   *  file:line, the target, and the matched rule (§12). */
+  message?: string;
+  /** Globs exempting source files from THIS rule (same base semantics as
+   *  `source`) — the catalog/index scoping need of the issue's kelir
+   *  motivation: ban `[0-9]*.md → plugins/` but exempt the catalog and the
+   *  overview index without writing subtract-globs. */
+  except?: string[];
+}
+
 export interface ReferenceRules {
   /** Parameter (not a check): keeps its default when deleted (§18). */
   mode: 'pointer';
@@ -208,6 +242,12 @@ export interface ReferenceRules {
    *  documented defaults (disabled), and it never participates in the §18
    *  delete/override reconciliation. See AliasingRules. */
   aliasing?: AliasingRules | null;
+  /** Issue #62: per-source bans on pointer targets — the layering /
+   *  abstraction-leak guard (§12). A PARAMETER list, not a check switch:
+   *  absent/empty/null = the feature is OFF, and it never participates in
+   *  the §18 delete/override reconciliation (pre-#62 configs reconcile
+   *  byte-identically). See ForbiddenTargetRule. */
+  forbidden_targets?: ForbiddenTargetRule[] | null;
 }
 
 /** Issue #57: the `references.aliasing` block. One verified definition per
