@@ -101,6 +101,23 @@ references:
   #   scope: file
   #   style: both
   #   min_uses: 2
+  # Issue #62 — per-source bans on pointer targets (the layering guard):
+  # write the abstraction rule down and `cans check` enforces it. Absent,
+  # empty or null = the feature is OFF. Each entry bans a class of TARGET
+  # for a class of SOURCE file:
+  #   - source: "cans/[0-9]*.md"    # REQUIRED glob over the referrer's path
+  #     pattern: "^(cans/)?plugins/.*"  # REQUIRED regex over the target
+  #     severity: error             # error (default) | warning
+  #     message: "…"                # optional — reported verbatim
+  #     except: ["cans/02-plugin-model.md"]  # optional exempt globs
+  # `source`/`except` globs match the workspace-relative path (a leading
+  # cans/ is optional and stripped on both sides); `pattern` is a
+  # JavaScript regex (SEARCH semantics — anchor with ^ yourself) over the
+  # normalized file part of the target, AFTER alias expansion (aliasing
+  # cannot dodge a ban); an external name:// target is tested in both its
+  # written and root-relative forms. `except` is the scoping answer: ban
+  # the numbered core specs → plugins/, exempt the catalog and the index.
+  # forbidden_targets: []
 
 redundancy:
   enabled: true
