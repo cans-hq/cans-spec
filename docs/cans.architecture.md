@@ -1117,7 +1117,7 @@ Each engine is pure. No side effects. Only `--fix` triggers writes (back-pointer
 
 ## 18. Rules System (`_rules.yaml`)
 
-Minimal YAML parser (~60 lines, no dependency). Supports nested objects, inline arrays `[a,b,c]`, inline objects `{min: 3, max: 120}`, arrays via `- item`.
+Minimal YAML parser (~60 lines, no dependency). Supports nested objects, inline arrays `[a,b,c]`, inline objects `{min: 3, max: 120}`, arrays via `- item`, and block-form lists of objects (`- key: value` with deeper-indented continuation members, issue #62 — previously that shape threw `malformed value (unexpected ':')`).
 
 **Loading:** Missing file = all defaults. Partial file = only listed keys override. Delete a key = check turns off. Invalid YAML = line-numbered error, exit 2 (the check could not run — error class, issue #41), reported as a **config error** (issue #43): rule `config.invalid` on file `_rules.yaml`, never as an engine finding — `--json` buckets it under `sections.config` (an additive section; every normal run keeps the six fixed section keys), and the human output prints the standalone `✗ invalid _rules.yaml: …` diagnosis with no report body.
 
@@ -1175,6 +1175,13 @@ references:
   #   scope: file
   #   style: both
   #   min_uses: 2
+  # forbidden_targets: []  # issue #62 — per-source bans on pointer targets
+  #                          (§12): absent/empty = off. Each entry:
+  #   - source: "cans/[0-9]*.md"   # REQUIRED glob over the referrer path
+  #     pattern: "^(cans/)?plugins/.*"  # REQUIRED regex over the target
+  #     severity: error             # error (default) | warning
+  #     message: "…"                # optional, reported verbatim
+  #     except: ["cans/02-plugin-model.md"]  # optional exempt globs
 redundancy:
   enabled: true
   word_frequency_threshold: 4
@@ -1212,6 +1219,8 @@ output:
 - Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
 
 `references.aliasing` (issue #57) configures per-file pointer aliasing (§12): `enabled` (boolean, default `false` — aliasing is OPT-IN, and disabled plus any alias use or definition present is an error, never a silent pass), `scope` (`"file"` — the only legal value in v1; anything else is a line-numbered config error), `style` (`"numeric"` | `"named"` | `"both"`, default `both`; a use of the other style is an error that still resolves), `min_uses` (integer `>= 1`, default `2` — only targets referenced at least that many times per file, alias uses plus full spellings, are alias-eligible; a hand-written alias below the threshold is an error at the definition). It is a PARAMETER, not a check switch: absent/empty = the documented defaults, and it never participates in the delete/override reconciliation. Unknown sub-keys reject under the same strict #56 discipline as unknown top-level keys — a typo'd `enabledd` must never silently mean "no such knob" while the author believes aliasing is on. Partial blocks merge over the defaults (`aliasing: { enabled: true }` keeps `style: both`).
+
+`references.forbidden_targets` (issue #62) is the layering / abstraction-leak guard: a list of per-source bans on pointer targets (§12). It is a PARAMETER list, not a check switch: absent/empty/null = the feature is OFF, it never participates in the delete/override reconciliation (a pre-#62 config reconciles byte-identically), and it never flips any engine off — listing it can only ADD findings. Member domains per entry: `source` (REQUIRED — a glob over the referrer's workspace-relative path, the `src/core/glob.ts` grammar with the leading-`cans/` stripping rule, §12), `pattern` (REQUIRED — a JavaScript regex over the target's candidate strings), `severity` (`"error"` | `"warning"`, default `error` — the same band idea as node_length's, with the #62 spelling), `message` (a string, reported verbatim), `except` (a list of globs, same base semantics as `source`, exempting source files from THIS rule). Strictly validated like every §18 key: an unknown member inside an entry, a missing `source`/`pattern`, an invalid regex, an invalid glob (an unclosed `[`), an invalid severity (`must be "error" or "warning"`), a non-mapping entry or a non-list `forbidden_targets` value is the same line-numbered config error (exit 2, `config.invalid`) — a ban can never be silently inert because its selector never compiled. The matching semantics (candidate strings, alias expansion, the external dual form, the checker contract) are §12.
 
 `structure.node_length` (issue #61) grows four optional members, measured, scoped and banded per §15: `unit` (`"chars"` | `"words"` | `"tokens"`, default `chars`), `scope` (`"title"` | `"body"` | `"total"`, default `title`), `strip_references` (boolean, default `false`), and `severity` (`"error"` | `"warn"` | `"off"`, default `warn`). A bare `{ min, max }` — the only form v0.10 and earlier accepted — is exactly the defaults, so every pre-#61 config stays legal; the one deliberate behavior change is the severity migration (over-max findings were hardcoded errors in v0.10 and are warnings under the default `warn` — restore fatal with `severity: error` or `cans check --structure=strict`, §20). `structure.multiline` (issue #61, new) is the wrapped-prose policy block of §15: absent, deleted or null (§18) → the whole policy is OFF; present, its members are `mode` (`"allow"` | `"forbid"` | `"fold"`, default `allow`), `max_lines` (a count — the §18 count domain, integers `>= 0`; null/absent → no cap), `indent_aligned` (boolean, default `false`) and `severity` (the same enum and meaning as node_length's, default `warn`). All of it is strictly validated like every §18 key — an unknown sub-key (a typo'd `severety`), a wrong type, or an unknown enum member is the line-numbered config error, and the `min > max` contradiction check covers the node_length range members unchanged.
 
