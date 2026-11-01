@@ -715,6 +715,110 @@ the resolved graph for consumers that cannot see the workspace's
 definitions); `cans budget` follows resolved refs like `cans check`, so
 the two commands never disagree about what a file points at.
 
+### Forbidden targets — references.forbidden_targets (issue #62)
+
+Everything before #62 could verify that a pointer EXISTS — resolution,
+anchors, hops — but not that it is architecturally RIGHT: nothing stopped
+a core spec from pointing down into an individual plugin leaf. The
+layering rule lived in review comments; `forbidden_targets` moves it into
+`_rules.yaml`:
+
+```yaml
+# cans/_rules.yaml
+references:
+  mode: pointer
+  back_pointers: false
+  max_hops: 1
+  orphan_check: true
+  duplicate_home_check: true
+  forbidden_targets:
+    # Core spec must never point down into plugin leaves
+    - source: "cans/[0-9]*.md"
+      pattern: "^(cans/)?plugins/.*"
+      severity: error
+      message: "Abstraction leak: Core plane specs cannot reference individual plugin files."
+```
+
+`forbidden_targets` is a PARAMETER list, not a check switch (§18):
+absent/empty/null = the feature is OFF, and listing it never changes the
+delete/override reconciliation — pre-#62 configs behave identically. Each
+entry bans a class of TARGET for a class of SOURCE file:
+
+- **`source` (required):** a GLOB matched against the referrer's
+  workspace-relative path (`00-overview.md`, `plugins/leaf.md`, `/`
+  separators). Grammar (`src/core/glob.ts`): `*` any run except `/`
+  (stays inside one segment), `**` any run including `/`, `?` exactly one
+  non-`/` character, `[abc]`/`[0-9]`/`[!abc]` a character class, `\X` the
+  literal X; case-sensitive, anchored to the whole path. ONE leading
+  `cans/` segment is a workspace-qualified spelling, stripped from BOTH
+  the glob and the matched path — `cans/[0-9]*.md` and `[0-9]*.md` select
+  the same files (the issue's example works as written).
+- **`pattern` (required):** a JavaScript regex, SEARCH semantics (anchor
+  with `^`/`$` yourself), case-sensitive, matched against the target's
+  candidate strings AFTER alias expansion (#57 — aliasing cannot dodge a
+  ban): the FILE part (anchor stripped), path-normalized (leading `cans/`
+  and `./` stripped, `//` collapsed, trailing `/` trimmed — so
+  `plugins/x.md` and `cans/plugins/x.md` are the same target, and the
+  issue's `^(cans/)?plugins/.*` and `^plugins/.*` ban the same workspace
+  targets). An external `name://sub/path` pointer (#55) offers BOTH
+  candidate forms — the written `name://subPath` AND the bare
+  root-relative `subPath`.
+- **`severity` (optional):** `error` (the DEFAULT — the ban fails the run,
+  exit 2, `ok: false`) or `warning` (reported, does not fail). Exactly
+  this spelling — `warning`, not `warn` (that is node_length's enum, a
+  different key, §18).
+- **`message` (optional):** reported VERBATIM when present. The default
+  message names the source file:line, the target and the matched rule —
+  EXACT shape `forbidden target: <file>:<line> → <target> —
+  references.forbidden_targets[<i>] (source "<source>", pattern
+  "<pattern>")`, with `, via alias "[<name>]"` appended after the closing
+  paren when the ref was an alias use. The suggestion is EXACTLY `remove
+  the see: pointer — or, if this target is legitimate, rescope
+  references.forbidden_targets[<i>] (source/except)`.
+- **`except` (optional):** a list of globs (same base semantics as
+  `source`) exempting source files from THIS rule — the issue's kelir
+  scoping need: ban `[0-9]*.md → plugins/` but exempt the
+  `02-plugin-model.md` catalog and the `00-overview.md` index.
+
+**Example (human output):**
+```
+✗ forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
+  Fix: remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
+```
+
+**Checker contract** (the issue's non-negotiables, binding):
+
+1. Independent of target validity — a forbidden target is reported even
+   when it is ALSO broken, and fixing the anchor must not hide the leak.
+2. A ref matching ANY rule is reported once per matching rule.
+3. Findings are category `refs`, rule key `refs.forbidden_target`, sorted
+   by (file, line, rule).
+4. `--refs-only` INCLUDES them; the `--structure` gate suppresses them.
+5. Forbidden refs still count for `refs.total`, hops, orphan and
+   duplicate-home checks — banning must not hide consequences.
+6. NOT counted in the `refs.broken` counter — a forbidden target is not a
+   broken pointer (the same treatment as self-refs and deep hops), and no
+   new counter is minted.
+7. The check covers every author-written `see:` pointer in the loaded
+   graph — spec files, `_tasks/`/`_adr/` aux files, the `done`
+   extra-referrer pass. Generated `<!-- ref-by -->` back-pointer comments
+   are not refs, so they are excluded by construction.
+
+Open questions from the issue, decided: **source** is a glob over the
+workspace-relative path (with the `cans/` stripping rule above), not a
+regex; **external targets** are tested in both the written `name://` form
+and the bare root-relative form; **exceptions** are the `except` member,
+per rule (not subtract-globs); **anchor-scoped bans** (`pattern` matching
+`file#anchor`) are deliberately NOT in v1 — `pattern` matches the file
+part only; **generated back-pointers** are not refs (contract 7).
+
+What this is NOT (from the issue): not an allowlist (the absence of a ban
+means nothing); not prose policing — only `see:` pointer targets are
+matched, so mentioning a plugin name in prose is untouched; not a
+substitute for the orphan/duplicate-home/hop checks (contract 5); not
+file-level access control (nothing blocks reading or writing — the
+pointer is reported, the file is not locked).
+
 ### Edge cases
 
 | Case | Behavior |
@@ -748,6 +852,7 @@ the two commands never disagree about what a file points at.
 | Alias definition, never used | Warning `refs.alias.unused`; its target still verified (a broken definition fails the run) (issue #57) |
 | Bracketed prose `see [the appendix]`, `see: [1]x` | NOT alias uses — pre-#57 see-like-prose warning (issue #57) |
 | Anchored alias use `see: [1]#X` | Error `refs.alias.bad-use` — anchors live on the definition (issue #57) |
+| Ref whose target matches a `references.forbidden_targets` rule | `refs.forbidden_target` finding, reported per matching rule independently of the ref's validity — the ref is still a full graph citizen (`refs.total`, hops, orphan, duplicate-home unchanged) and never counted in `refs.broken` (issue #62) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
