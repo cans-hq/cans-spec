@@ -1386,8 +1386,12 @@ export function checkForbiddenTargets(
       }
     }
   }
-  findings.sort((a, b) =>
-    (a.issue.file < b.issue.file ? -1 : a.issue.file > b.issue.file ? 1 : a.issue.file !== b.issue.file ? 0 : a.issue.line - b.issue.line)
-    || a.i - b.i);
+  // (file asc, line asc, rule index asc) — deterministic regardless of the
+  // Map iteration order the walk above inherited.
+  findings.sort((a, b) => {
+    if (a.issue.file !== b.issue.file) return a.issue.file < b.issue.file ? -1 : 1;
+    if (a.issue.line !== b.issue.line) return a.issue.line - b.issue.line;
+    return a.i - b.i; // same ref, several matching rules — config order
+  });
   return findings.map(f => f.issue);
 }
