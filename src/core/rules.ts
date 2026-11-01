@@ -116,6 +116,16 @@ function isItem(text: string): boolean {
   return text === '-' || text.startsWith('- ');
 }
 
+/** Issue #62: a `- key: value` array item — a bare key (the same
+ *  `^([^:\s]+):` grammar parseMap applies) on an item that is NOT itself an
+ *  inline value (`{`/`[`) or a quoted scalar (a quoted string may legally
+ *  wrap a `:` — `- "see: the runbook"` has always been one word-list word,
+ *  and must keep parsing as one). A matching item opens a BLOCK MAPPING one
+ *  level deeper: YAML's list-of-objects form, `references.forbidden_targets`
+ *  being its first in-tree consumer. Everything else keeps the inline parse,
+ *  so every previously parseable input parses to the identical value tree. */
+const BLOCK_MAP_ITEM_RE = /^[^\{\["'][^:\s]*:/;
+
 /** Normalize CRLF (Windows) and lone-CR (classic Mac) line terminators to \n.
  *  Same read/split-boundary normalization as outline.ts — user-authored config
  *  must parse identically on every platform (§45). */
@@ -214,6 +224,22 @@ function parseYamlTracked(source: string): TrackedYaml {
         } else {
           out.push(null);
         }
+      } else if (BLOCK_MAP_ITEM_RE.test(item)) {
+        // Issue #62: block mapping one level deeper (see BLOCK_MAP_ITEM_RE).
+        // The item line is rewritten as the mapping's first entry at
+        // indent + 1 (same lineNo), the entry path is recorded at the item's
+        // line, and parseMap consumes the first entry plus the
+        // deeper-indented continuation keys (`pattern:`, `severity:`, ... at
+        // indent + 1), stopping at the next sibling item — so the entry
+        // path and its first member both track the `- key:` line while every
+        // continuation member keeps its own line (the issue #62 pins).
+        // Pre-#62 this shape threw `malformed value (unexpected ':')`; a
+        // mapping where the key demands scalars (e.g. `- see: the runbook`
+        // under stopwords) now rejects in VALIDATION with the key's own
+        // line-numbered domain error — a better error, still line-numbered.
+        lines[pos] = { lineNo: ln.lineNo, indent: indent + 1, text: item };
+        keyLines.set(itemPath, ln.lineNo);
+        out.push(parseMap(indent + 1, itemPath));
       } else {
         out.push(parseInlineValue(item, ln.lineNo));
         track(itemPath, out[out.length - 1], ln.lineNo);
@@ -233,9 +259,11 @@ function parseYamlTracked(source: string): TrackedYaml {
 }
 
 /** Minimal YAML subset parser: 2-space nested objects, inline objects/arrays,
- *  block arrays (`- item`, items may be inline arrays), scalars, comments.
- *  (Issue #56 keeps this public surface; the strict validator uses the
- *  line-tracking variant above.) */
+ *  block arrays (`- item`, items may be inline arrays), block lists of
+ *  objects (`- key: value` with deeper-indented continuation keys — issue
+ *  #62's references.forbidden_targets form), scalars, comments. (Issue #56
+ *  keeps this public surface; the strict validator uses the line-tracking
+ *  variant above.) */
 export function parseMinimalYaml(source: string): Record<string, unknown> {
   return parseYamlTracked(source).value;
 }
