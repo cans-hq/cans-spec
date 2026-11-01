@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MultilineRules, Rules } from '../types.ts';
 import { defaultAliasing } from './alias.ts';
+import { globToRegExp } from './glob.ts';
 
 interface YLine {
   lineNo: number;
@@ -388,7 +389,8 @@ interface KeySpec {
     | 'synonymGroups'
     | 'docString'
     | 'rootMap'
-    | 'aliasBlock';
+    | 'aliasBlock'
+    | 'forbiddenTargets';
   /** integer/number: inclusive lower bound. range: bound for BOTH members. */
   min?: number;
   /** number: inclusive upper bound. */
@@ -465,6 +467,18 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
     // section" means for the delete/override reconciliation. Sub-key
     // validation keeps the issue-#56 line-numbered message shapes.
     aliasing: { kind: 'aliasBlock', nullOk: true, reconcile: false },
+    // Issue #62: per-source bans on pointer targets — the layering /
+    // abstraction-leak guard (§12). A PARAMETER list, not a check switch:
+    // absent/empty/null = the feature is OFF (no rules), the same convention
+    // as external_roots (#55); reconcile: false keeps it out of SECTION_KEYS
+    // so listing it never changes what a "complete references section"
+    // means for the delete/override reconciliation (pre-#62 configs
+    // reconcile byte-identically). Each entry is a mapping — source
+    // (REQUIRED glob) / pattern (REQUIRED regex) / severity ('error' |
+    // 'warning', the issue's spelling — default 'error', filled by the
+    // loadRules completion pass) / message / except (exemption globs) —
+    // validated by the forbiddenTargets case in validateValue.
+    forbidden_targets: { kind: 'forbiddenTargets', nullOk: true, reconcile: false },
   },
   redundancy: {
     enabled: { kind: 'boolean' },
@@ -621,6 +635,11 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   if (spec.kind === 'synonymGroups') return SYNONYM_GROUPS_EXPECTATION;
   if (spec.kind === 'rootMap') return 'a mapping of root names to paths';
   if (spec.kind === 'aliasBlock') return 'a mapping like { enabled: true, scope: file, style: both, min_uses: 2 }';
+  // Issue #62: the expectation shared by the null-rejection branch and the
+  // non-list shape error — spells the full member surface once.
+  if (spec.kind === 'forbiddenTargets') {
+    return 'a list of forbidden-target rules (each a mapping: source, pattern, severity?, message?, except?)';
+  }
   return 'a string';
 }
 
@@ -870,6 +889,95 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
       }
       return;
     }
+    case 'forbiddenTargets': {
+      // Issue #62: the layering guard's rule list — each entry a mapping of
+      // source (REQUIRED glob, the core/glob.ts grammar: * stays inside one
+      // segment, ** crosses, ? one char, [class] a class) / pattern
+      // (REQUIRED JavaScript regex, SEARCH semantics) / severity ('error' |
+      // 'warning' — the issue's spelling, NOT 'warn'; default 'error', filled
+      // by the loadRules completion pass) / message (reported verbatim) /
+      // except (exemption globs, the same grammar as source). Members are
+      // validated IN ENTRY ORDER and unknown members reject under the issue
+      // #56 typo discipline (a typo'd `severety` must never silently read as
+      // the default while the author believes a severity is set); the
+      // missing-required checks run AFTER the member loop, so a present
+      // member's error reports first. Every member error carries the
+      // member's OWN tracked line — for a block-form entry the `- source:`
+      // line for both the entry and its first member, each continuation
+      // member its own line (parseYamlTracked, issue #62).
+      if (!Array.isArray(v)) {
+        fail('a list of forbidden-target rules (each a mapping: source, pattern, severity?, message?, except?)');
+      }
+      v.forEach((entry, i) => {
+        const at = `${path}[${i}]`;
+        if (!isPlainObject(entry)) {
+          fail('a mapping like { source: "cans/[0-9]*.md", pattern: "^plugins/.*" }', at, entry);
+        }
+        for (const [member, mv] of Object.entries(entry)) {
+          const memberPath = `${at}.${member}`;
+          // The glob member check shared by `source` (scalar) and every
+          // `except` entry — one grammar (core/glob.ts), one message pair:
+          // type/empty failures keep the issue #2 got-value convention, a
+          // non-empty string that fails to compile names the two legal
+          // malformations (unclosed class, dangling escape).
+          const checkGlob = (gAt: string, g: unknown): void => {
+            if (typeof g !== 'string' || g === '') {
+              fail('a non-empty glob (* ? [class] **)', gAt, g);
+            }
+            if (globToRegExp(g) === null) {
+              throw new Error(
+                `line ${lineOf(keyLines, gAt)} — "${gAt}" is not a valid glob (unclosed "[" or dangling "\\")`,
+              );
+            }
+          };
+          if (member === 'source') {
+            checkGlob(memberPath, mv);
+          } else if (member === 'except') {
+            if (!Array.isArray(mv)) {
+              fail('a list of globs', memberPath, mv);
+            }
+            mv.forEach((g, j) => checkGlob(`${memberPath}[${j}]`, g));
+          } else if (member === 'pattern') {
+            if (typeof mv !== 'string' || mv === '') {
+              fail('a valid JavaScript regular expression', memberPath, mv);
+            }
+            try {
+              new RegExp(mv);
+            } catch (e) {
+              // The RegExp engine's own diagnosis rides parenthetically —
+              // the author sees WHY it did not compile (e.g. an
+              // unterminated group), not just that it did not.
+              const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+              throw new Error(
+                `line ${lineOf(keyLines, memberPath)} — "${memberPath}" must be a valid JavaScript ` +
+                  `regular expression, got ${gotText(mv)} (${why})`,
+              );
+            }
+          } else if (member === 'severity') {
+            if (mv !== 'error' && mv !== 'warning') {
+              fail('"error" or "warning"', memberPath, mv);
+            }
+          } else if (member === 'message') {
+            if (typeof mv !== 'string' || mv === '') {
+              fail('a non-empty string', memberPath, mv);
+            }
+          } else {
+            throw new Error(
+              `line ${lineOf(keyLines, memberPath)} — unrecognized key "${memberPath}" ${UNRECOGNIZED_SUFFIX}`,
+            );
+          }
+        }
+        // AFTER the member loop (present-member errors report first): the
+        // two REQUIRED members, named at the entry's own tracked line.
+        if (!('source' in entry)) {
+          throw new Error(`line ${lineOf(keyLines, at)} — "${at}" is missing the required "source" glob`);
+        }
+        if (!('pattern' in entry)) {
+          throw new Error(`line ${lineOf(keyLines, at)} — "${at}" is missing the required "pattern" regex`);
+        }
+      });
+      return;
+    }
   }
 }
 
@@ -952,7 +1060,9 @@ function validateRulesStrict(parsed: Record<string, unknown>, keyLines: Map<stri
  *  node_length always carries unit/scope/strip_references/severity
  *  (defaults filled — parameters, issue #47 convention), and
  *  structure.multiline is normalized to null (policy OFF) or a complete
- *  four-member mapping.
+ *  four-member mapping. Issue #62 adds the same convention for
+ *  references.forbidden_targets (a PARAMETER list: absent/empty/null = the
+ *  layering guard is OFF; present, each entry's severity is defaulted).
  *  Invalid YAML, an unrecognized key, or a value outside its documented §18
  *  domain → Error carrying the line number (validateRulesStrict, issue #56). */
 export function loadRules(root: string): Rules {
@@ -1181,6 +1291,18 @@ export function loadRules(root: string): Rules {
     if (deleted('references', 'duplicate_home_check')) {
       rules.references = { ...rules.references, duplicate_home_check: false };
     }
+  }
+
+  // Issue #62 completion — after the §18 delete pass (the issue #47
+  // parameter convention, mirroring the #61 granular pass above): a present
+  // forbidden_targets list always carries each entry's severity, omitted →
+  // the documented default 'error' (the refs engine also defaults
+  // defensively). Absent (undefined), empty-list and null stay untouched —
+  // the layering guard is OFF, and pre-#62 configs load byte-identically.
+  if (Array.isArray(rules.references.forbidden_targets)) {
+    rules.references.forbidden_targets = rules.references.forbidden_targets.map(
+      entry => ({ ...entry, severity: entry.severity ?? 'error' }),
+    );
   }
 
   // redundancy: enabled / word_frequency_threshold / phrase_overlap_threshold /
