@@ -1213,23 +1213,36 @@ export function rebuildBackPointers(
 
 /** Issue #62: the layering guard's shared path normalization — the ONE
  *  spelling both sides of a ban agree on. `//` runs collapse to `/`
- *  (`plugins//leaf.md` is a typo, not a different target), ONE leading `./`
- *  and ONE leading `cans/` segment strip (`cans/plugins/x.md` and
- *  `plugins/x.md` are the same workspace-relative target, and rule globs may
- *  be written workspace-qualified — `cans/[0-9]*.md` and `[0-9]*.md` select
- *  identically), then trailing slashes trim (the §11/#22 folder form: `see:
- *  plugins/` and `see: plugins` name the same folder target, so neither
- *  spelling can dodge a ban written for the other). Exactly ONE strip each,
- *  in this order — `./cans/x` loses both prefixes, `cans/./x` only the
- *  `cans/`. Graph keys are already clean workspace-relative paths, so they
- *  normalize to themselves; the function exists for rule globs and raw ref
- *  targets. Anchors never reach it: they live in RefTarget.anchor, a
+ *  (`plugins//leaf.md` is a typo, not a different target), then `.`/`..`
+ *  segments resolve LEXICALLY — the mirror of resolveSpecFile's own
+ *  join-then-contain resolution (issue #22 u5 pins `sub/../02-b.md` as a
+ *  VALID ref to `02-b.md`), so a spelling that resolves to the banned file
+ *  cannot dodge the ban written for its canonical form (`cans/../plugins/x.md`
+ *  and `plugins/./x.md` are `plugins/x.md`; the ref engines have always
+ *  resolved them that way). A LEADING `..`-run escapes the workspace
+ *  lexically and is kept as written — the one re-entry spelling that still
+ *  resolves on disk (`../cans/x.md`, popping the workspace's own canonical
+ *  `cans/` name) is folded separately, on the target side only (banCandidates).
+ *  Finally ONE leading `cans/` segment strips (rule globs may be written
+ *  workspace-qualified — `cans/[0-9]*.md` and `[0-9]*.md` select
+ *  identically). Graph keys are already clean workspace-relative paths, so
+ *  they normalize to themselves; the function exists for rule globs and raw
+ *  ref targets. Anchors never reach it: they live in RefTarget.anchor, a
  *  separate field by construction (parseOutline splits `file#anchor`). */
 function normalizeBanPath(p: string): string {
   let s = p.replace(/\/{2,}/g, '/');
-  if (s.startsWith('./')) s = s.slice(2);
+  const parts: string[] = [];
+  for (const seg of s.split('/')) {
+    // empty segments are the trailing-slash folder form (`plugins/`) — the
+    // join below re-trims it; `.` is a no-op segment; `..` pops the segment
+    // before it unless it is itself an unpoppable leading `..` (an escape).
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
+    else parts.push(seg);
+  }
+  s = parts.join('/');
   if (s.startsWith('cans/')) s = s.slice('cans/'.length);
-  return s.replace(/\/+$/, '');
+  return s;
 }
 
 /** Issue #62: the candidate strings one ref TARGET offers a ban's `pattern`
@@ -1242,14 +1255,23 @@ function normalizeBanPath(p: string): string {
  *  `//` collapse). http(s) URLs are not pointers (externalPointerParts
  *  returns null for them): a URL rides the ordinary single-candidate path
  *  through the shared normalization — no special casing in either
- *  direction. */
+ *  direction. The workspace re-entry spelling gets the same both-forms
+ *  answer: §3's discovery names the workspace dir `cans/`, so
+ *  `../cans/plugins/x.md` RESOLVES to `plugins/x.md` on disk (join pops the
+ *  workspace's own name and re-enters) while staying a leading-`..` path
+ *  lexically — the folded spelling rides beside the lexical one so the
+ *  re-entry cannot dodge an anchored ban either. Anything else starting
+ *  `../` genuinely escapes (issue #10/#22: a broken ref) and keeps only the
+ *  lexical candidate. */
 function banCandidates(refFile: string): string[] {
   const ext = externalPointerParts(refFile);
   if (ext !== null) {
     const sub = normalizeBanPath(ext.subPath);
     return [`${ext.root}://${sub}`, sub];
   }
-  return [normalizeBanPath(refFile)];
+  const lex = normalizeBanPath(refFile);
+  const reentry = lex.replace(/^\.\.\/cans\//, '');
+  return reentry !== lex ? [lex, reentry] : [lex];
 }
 
 /** Issue #62: `references.forbidden_targets` — per-source bans on pointer

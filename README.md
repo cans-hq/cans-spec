@@ -451,18 +451,22 @@ references:
 
 Semantics: `source` is a glob over the referrer's path (a leading `cans/`
 is optional on both sides), `pattern` a JavaScript regex over the target
-— anchor stripped, `cans/` prefix stripped, so `plugins/x.md` and
-`cans/plugins/x.md` are the same target. Alias uses are expanded before
-matching (aliasing cannot dodge a ban) and an external `name://` target is
-tested in both its written and root-relative forms. `severity: error`
+— anchor stripped, path-normalized the way the ref engines resolve it
+(`cans/` prefix stripped, `//` collapsed, `.`/`..` segments folded — so
+`plugins/x.md`, `cans/plugins/x.md` and `cans/../plugins/x.md` are the
+same target). Alias uses are expanded before matching (aliasing cannot
+dodge a ban) and an external `name://` target is tested in both its
+written and root-relative forms. `severity: error`
 (the default) fails the run — exit 2; `severity: warning` is reported
 without failing. `except` exempts source files from the rule — the
 scoping answer when a catalog or an index legitimately names what the
 rest of the plane must not point at.
 
 ```text
-✗ forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
-  Fix: remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
+REFS  ✗ 1
+   1× forbidden target
+      forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
+      ↳ remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
 ```
 
 The finding rides the refs engine: included by `--refs-only`, suppressed

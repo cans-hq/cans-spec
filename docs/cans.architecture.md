@@ -757,10 +757,15 @@ entry bans a class of TARGET for a class of SOURCE file:
   with `^`/`$` yourself), case-sensitive, matched against the target's
   candidate strings AFTER alias expansion (#57 — aliasing cannot dodge a
   ban): the FILE part (anchor stripped), path-normalized (leading `cans/`
-  and `./` stripped, `//` collapsed, trailing `/` trimmed — so
-  `plugins/x.md` and `cans/plugins/x.md` are the same target, and the
-  issue's `^(cans/)?plugins/.*` and `^plugins/.*` ban the same workspace
-  targets). An external `name://sub/path` pointer (#55) offers BOTH
+  and `./` stripped, `//` collapsed, trailing `/` trimmed, and `.`/`..`
+  segments resolved lexically exactly as the ref engines resolve them on
+  disk — so `plugins/x.md`, `cans/plugins/x.md` and `cans/../plugins/x.md`
+  are the same target, and the issue's `^(cans/)?plugins/.*` and
+  `^plugins/.*` ban the same workspace targets). A `../cans/…` spelling —
+  which resolves back into the canonical `cans/` workspace by popping and
+  re-entering its name — is offered BOTH ways (the written `../cans/…` form
+  and the folded workspace-relative form), so it cannot dodge an anchored
+  ban either. An external `name://sub/path` pointer (#55) offers BOTH
   candidate forms — the written `name://subPath` AND the bare
   root-relative `subPath`.
 - **`severity` (optional):** `error` (the DEFAULT — the ban fails the run,
@@ -782,8 +787,10 @@ entry bans a class of TARGET for a class of SOURCE file:
 
 **Example (human output):**
 ```
-✗ forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
-  Fix: remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
+REFS  ✗ 1
+   1× forbidden target
+      forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
+      ↳ remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
 ```
 
 **Checker contract** (the issue's non-negotiables, binding):
