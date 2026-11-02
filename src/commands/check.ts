@@ -22,7 +22,7 @@ import { checkStructure, checkTbdPolicy } from '../core/structure.ts';
 import { checkStyle } from '../core/style.ts';
 import { checkRedundancy } from '../core/redundancy.ts';
 import {
-  buildRefGraph, checkRefs, detectDeepHops, detectOrphans,
+  buildRefGraph, checkRefs, checkForbiddenTargets, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey, anchorMatches, extractYamlKeys,
   type RefByGroup, type RefGraph, type ExternalRefsConfig,
 } from '../core/refs.ts';
@@ -1022,6 +1022,18 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // deepHops — stay 0, coherent with what the report shows).
   if (!structureOnly) {
     issues.push(...checkRefs(allFiles, graph, root, externalCfg));
+    // issue #62: the forbidden-target layering guard — a refs-cluster
+    // finding, so --refs-only includes it and the --structure gate
+    // suppresses it (this whole cluster sits behind !structureOnly). It
+    // matches the alias-EXPANDED targets the graph already carries (#57),
+    // never consults the filesystem (a forbidden target is reported even
+    // when the ref is also broken — checkRefs verdicts above are
+    // unaffected), and changes no graph consequence: the ref still counts
+    // in refs.total, deep hops, orphans and duplicate-home (contract 6).
+    // NOT counted in the refs.broken JSON counter below — a forbidden
+    // target is not a broken pointer, the same treatment as refs.self /
+    // refs.deep_hop (the counter filters on the refs.broken.* rule keys).
+    issues.push(...checkForbiddenTargets(graph, rules.references.forbidden_targets ?? []));
     issues.push(...deepHops);
     if (rules.references.orphan_check) {
       issues.push(...detectOrphans(specFiles, graph));
