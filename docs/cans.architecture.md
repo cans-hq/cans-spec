@@ -715,6 +715,110 @@ the resolved graph for consumers that cannot see the workspace's
 definitions); `cans budget` follows resolved refs like `cans check`, so
 the two commands never disagree about what a file points at.
 
+### Forbidden targets — references.forbidden_targets (issue #62)
+
+Everything before #62 could verify that a pointer EXISTS — resolution,
+anchors, hops — but not that it is architecturally RIGHT: nothing stopped
+a core spec from pointing down into an individual plugin leaf. The
+layering rule lived in review comments; `forbidden_targets` moves it into
+`_rules.yaml`:
+
+```yaml
+# cans/_rules.yaml
+references:
+  mode: pointer
+  back_pointers: false
+  max_hops: 1
+  orphan_check: true
+  duplicate_home_check: true
+  forbidden_targets:
+    # Core spec must never point down into plugin leaves
+    - source: "cans/[0-9]*.md"
+      pattern: "^(cans/)?plugins/.*"
+      severity: error
+      message: "Abstraction leak: Core plane specs cannot reference individual plugin files."
+```
+
+`forbidden_targets` is a PARAMETER list, not a check switch (§18):
+absent/empty/null = the feature is OFF, and listing it never changes the
+delete/override reconciliation — pre-#62 configs behave identically. Each
+entry bans a class of TARGET for a class of SOURCE file:
+
+- **`source` (required):** a GLOB matched against the referrer's
+  workspace-relative path (`00-overview.md`, `plugins/leaf.md`, `/`
+  separators). Grammar (`src/core/glob.ts`): `*` any run except `/`
+  (stays inside one segment), `**` any run including `/`, `?` exactly one
+  non-`/` character, `[abc]`/`[0-9]`/`[!abc]` a character class, `\X` the
+  literal X; case-sensitive, anchored to the whole path. ONE leading
+  `cans/` segment is a workspace-qualified spelling, stripped from BOTH
+  the glob and the matched path — `cans/[0-9]*.md` and `[0-9]*.md` select
+  the same files (the issue's example works as written).
+- **`pattern` (required):** a JavaScript regex, SEARCH semantics (anchor
+  with `^`/`$` yourself), case-sensitive, matched against the target's
+  candidate strings AFTER alias expansion (#57 — aliasing cannot dodge a
+  ban): the FILE part (anchor stripped), path-normalized (leading `cans/`
+  and `./` stripped, `//` collapsed, trailing `/` trimmed — so
+  `plugins/x.md` and `cans/plugins/x.md` are the same target, and the
+  issue's `^(cans/)?plugins/.*` and `^plugins/.*` ban the same workspace
+  targets). An external `name://sub/path` pointer (#55) offers BOTH
+  candidate forms — the written `name://subPath` AND the bare
+  root-relative `subPath`.
+- **`severity` (optional):** `error` (the DEFAULT — the ban fails the run,
+  exit 2, `ok: false`) or `warning` (reported, does not fail). Exactly
+  this spelling — `warning`, not `warn` (that is node_length's enum, a
+  different key, §18).
+- **`message` (optional):** reported VERBATIM when present. The default
+  message names the source file:line, the target and the matched rule —
+  EXACT shape `forbidden target: <file>:<line> → <target> —
+  references.forbidden_targets[<i>] (source "<source>", pattern
+  "<pattern>")`, with `, via alias "[<name>]"` appended after the closing
+  paren when the ref was an alias use. The suggestion is EXACTLY `remove
+  the see: pointer — or, if this target is legitimate, rescope
+  references.forbidden_targets[<i>] (source/except)`.
+- **`except` (optional):** a list of globs (same base semantics as
+  `source`) exempting source files from THIS rule — the issue's kelir
+  scoping need: ban `[0-9]*.md → plugins/` but exempt the
+  `02-plugin-model.md` catalog and the `00-overview.md` index.
+
+**Example (human output):**
+```
+✗ forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
+  Fix: remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
+```
+
+**Checker contract** (the issue's non-negotiables, binding):
+
+1. Independent of target validity — a forbidden target is reported even
+   when it is ALSO broken, and fixing the anchor must not hide the leak.
+2. A ref matching ANY rule is reported once per matching rule.
+3. Findings are category `refs`, rule key `refs.forbidden_target`, sorted
+   by (file, line, rule).
+4. `--refs-only` INCLUDES them; the `--structure` gate suppresses them.
+5. Forbidden refs still count for `refs.total`, hops, orphan and
+   duplicate-home checks — banning must not hide consequences.
+6. NOT counted in the `refs.broken` counter — a forbidden target is not a
+   broken pointer (the same treatment as self-refs and deep hops), and no
+   new counter is minted.
+7. The check covers every author-written `see:` pointer in the loaded
+   graph — spec files, `_tasks/`/`_adr/` aux files, the `done`
+   extra-referrer pass. Generated `<!-- ref-by -->` back-pointer comments
+   are not refs, so they are excluded by construction.
+
+Open questions from the issue, decided: **source** is a glob over the
+workspace-relative path (with the `cans/` stripping rule above), not a
+regex; **external targets** are tested in both the written `name://` form
+and the bare root-relative form; **exceptions** are the `except` member,
+per rule (not subtract-globs); **anchor-scoped bans** (`pattern` matching
+`file#anchor`) are deliberately NOT in v1 — `pattern` matches the file
+part only; **generated back-pointers** are not refs (contract 7).
+
+What this is NOT (from the issue): not an allowlist (the absence of a ban
+means nothing); not prose policing — only `see:` pointer targets are
+matched, so mentioning a plugin name in prose is untouched; not a
+substitute for the orphan/duplicate-home/hop checks (contract 5); not
+file-level access control (nothing blocks reading or writing — the
+pointer is reported, the file is not locked).
+
 ### Edge cases
 
 | Case | Behavior |
@@ -748,6 +852,7 @@ the two commands never disagree about what a file points at.
 | Alias definition, never used | Warning `refs.alias.unused`; its target still verified (a broken definition fails the run) (issue #57) |
 | Bracketed prose `see [the appendix]`, `see: [1]x` | NOT alias uses — pre-#57 see-like-prose warning (issue #57) |
 | Anchored alias use `see: [1]#X` | Error `refs.alias.bad-use` — anchors live on the definition (issue #57) |
+| Ref whose target matches a `references.forbidden_targets` rule | `refs.forbidden_target` finding, reported per matching rule independently of the ref's validity — the ref is still a full graph citizen (`refs.total`, hops, orphan, duplicate-home unchanged) and never counted in `refs.broken` (issue #62) |
 | Broken-ref suggestion | Never proposes creating an existing path (file or dir) or any path outside the workspace — names the missing spec file or says fix the target |
 | Broken-anchor suggestion (issue #53) | Follows the node: one near match → `did you mean <file>#<canonical slug>?`; several → all named (top 3 + `…`); none → add-the-node advice that never invites renaming existing nodes |
 | Lowercase anchor | Case-insensitive fallback |
@@ -1012,7 +1117,7 @@ Each engine is pure. No side effects. Only `--fix` triggers writes (back-pointer
 
 ## 18. Rules System (`_rules.yaml`)
 
-Minimal YAML parser (~60 lines, no dependency). Supports nested objects, inline arrays `[a,b,c]`, inline objects `{min: 3, max: 120}`, arrays via `- item`.
+Minimal YAML parser (~60 lines, no dependency). Supports nested objects, inline arrays `[a,b,c]`, inline objects `{min: 3, max: 120}`, arrays via `- item`, and block-form lists of objects (`- key: value` with deeper-indented continuation members, issue #62 — previously that shape threw `malformed value (unexpected ':')`).
 
 **Loading:** Missing file = all defaults. Partial file = only listed keys override. Delete a key = check turns off. Invalid YAML = line-numbered error, exit 2 (the check could not run — error class, issue #41), reported as a **config error** (issue #43): rule `config.invalid` on file `_rules.yaml`, never as an engine finding — `--json` buckets it under `sections.config` (an additive section; every normal run keeps the six fixed section keys), and the human output prints the standalone `✗ invalid _rules.yaml: …` diagnosis with no report body.
 
@@ -1070,6 +1175,13 @@ references:
   #   scope: file
   #   style: both
   #   min_uses: 2
+  # forbidden_targets: []  # issue #62 — per-source bans on pointer targets
+  #                          (§12): absent/empty = off. Each entry:
+  #   - source: "cans/[0-9]*.md"   # REQUIRED glob over the referrer path
+  #     pattern: "^(cans/)?plugins/.*"  # REQUIRED regex over the target
+  #     severity: error             # error (default) | warning
+  #     message: "…"                # optional, reported verbatim
+  #     except: ["cans/02-plugin-model.md"]  # optional exempt globs
 redundancy:
   enabled: true
   word_frequency_threshold: 4
@@ -1107,6 +1219,8 @@ output:
 - Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
 
 `references.aliasing` (issue #57) configures per-file pointer aliasing (§12): `enabled` (boolean, default `false` — aliasing is OPT-IN, and disabled plus any alias use or definition present is an error, never a silent pass), `scope` (`"file"` — the only legal value in v1; anything else is a line-numbered config error), `style` (`"numeric"` | `"named"` | `"both"`, default `both`; a use of the other style is an error that still resolves), `min_uses` (integer `>= 1`, default `2` — only targets referenced at least that many times per file, alias uses plus full spellings, are alias-eligible; a hand-written alias below the threshold is an error at the definition). It is a PARAMETER, not a check switch: absent/empty = the documented defaults, and it never participates in the delete/override reconciliation. Unknown sub-keys reject under the same strict #56 discipline as unknown top-level keys — a typo'd `enabledd` must never silently mean "no such knob" while the author believes aliasing is on. Partial blocks merge over the defaults (`aliasing: { enabled: true }` keeps `style: both`).
+
+`references.forbidden_targets` (issue #62) is the layering / abstraction-leak guard: a list of per-source bans on pointer targets (§12). It is a PARAMETER list, not a check switch: absent/empty/null = the feature is OFF, it never participates in the delete/override reconciliation (a pre-#62 config reconciles byte-identically), and it never flips any engine off — listing it can only ADD findings. Member domains per entry: `source` (REQUIRED — a glob over the referrer's workspace-relative path, the `src/core/glob.ts` grammar with the leading-`cans/` stripping rule, §12), `pattern` (REQUIRED — a JavaScript regex over the target's candidate strings), `severity` (`"error"` | `"warning"`, default `error` — the same band idea as node_length's, with the #62 spelling), `message` (a string, reported verbatim), `except` (a list of globs, same base semantics as `source`, exempting source files from THIS rule). Strictly validated like every §18 key: an unknown member inside an entry, a missing `source`/`pattern`, an invalid regex, an invalid glob (an unclosed `[`), an invalid severity (`must be "error" or "warning"`), a non-mapping entry or a non-list `forbidden_targets` value is the same line-numbered config error (exit 2, `config.invalid`) — a ban can never be silently inert because its selector never compiled. The matching semantics (candidate strings, alias expansion, the external dual form, the checker contract) are §12.
 
 `structure.node_length` (issue #61) grows four optional members, measured, scoped and banded per §15: `unit` (`"chars"` | `"words"` | `"tokens"`, default `chars`), `scope` (`"title"` | `"body"` | `"total"`, default `title`), `strip_references` (boolean, default `false`), and `severity` (`"error"` | `"warn"` | `"off"`, default `warn`). A bare `{ min, max }` — the only form v0.10 and earlier accepted — is exactly the defaults, so every pre-#61 config stays legal; the one deliberate behavior change is the severity migration (over-max findings were hardcoded errors in v0.10 and are warnings under the default `warn` — restore fatal with `severity: error` or `cans check --structure=strict`, §20). `structure.multiline` (issue #61, new) is the wrapped-prose policy block of §15: absent, deleted or null (§18) → the whole policy is OFF; present, its members are `mode` (`"allow"` | `"forbid"` | `"fold"`, default `allow`), `max_lines` (a count — the §18 count domain, integers `>= 0`; null/absent → no cap), `indent_aligned` (boolean, default `false`) and `severity` (the same enum and meaning as node_length's, default `warn`). All of it is strictly validated like every §18 key — an unknown sub-key (a typo'd `severety`), a wrong type, or an unknown enum member is the line-numbered config error, and the `min > max` contradiction check covers the node_length range members unchanged.
 

@@ -428,6 +428,52 @@ keeps its see-like-prose warning). `--dry-run` previews. `cans export`
 renders alias uses as their full targets — consumers outside the workspace
 cannot see its definitions.
 
+### Forbidden targets (`references.forbidden_targets`)
+
+`cans check` could always verify that a pointer EXISTS — never that it is
+architecturally right: nothing stopped a core spec from pointing down into
+an individual plugin leaf. `forbidden_targets` writes the layering rule
+down so the check enforces it (issue #62):
+
+```yaml
+references:
+  forbidden_targets:
+    # numbered core specs must not point into plugin leaves…
+    - source: "cans/[0-9]*.md"
+      pattern: "^(cans/)?plugins/.*"
+      severity: error
+      message: "Abstraction leak: Core plane specs cannot reference individual plugin files."
+      # …but the catalog and the overview index legitimately list them:
+      except:
+        - "cans/02-plugin-model.md"
+        - "cans/00-overview.md"
+```
+
+Semantics: `source` is a glob over the referrer's path (a leading `cans/`
+is optional on both sides), `pattern` a JavaScript regex over the target
+— anchor stripped, `cans/` prefix stripped, so `plugins/x.md` and
+`cans/plugins/x.md` are the same target. Alias uses are expanded before
+matching (aliasing cannot dodge a ban) and an external `name://` target is
+tested in both its written and root-relative forms. `severity: error`
+(the default) fails the run — exit 2; `severity: warning` is reported
+without failing. `except` exempts source files from the rule — the
+scoping answer when a catalog or an index legitimately names what the
+rest of the plane must not point at.
+
+```text
+✗ forbidden target: 04-api.md:12 → plugins/pty.md — references.forbidden_targets[0] (source "cans/[0-9]*.md", pattern "^(cans/)?plugins/.*")
+  Fix: remove the see: pointer — or, if this target is legitimate, rescope references.forbidden_targets[0] (source/except)
+```
+
+The finding rides the refs engine: included by `--refs-only`, suppressed
+by `--structure`, counted in `refs.total` (and still subject to the hop,
+orphan and duplicate-home checks) but never in `refs.broken` — a
+forbidden target is a policy violation, not a broken pointer. What it is
+NOT: not an allowlist, and not prose policing — only `see:` pointer
+targets are matched, so mentioning a plugin name in prose is untouched.
+Full matching semantics and the checker contract: §12; config surface and
+strict validation: §18 — in `docs/cans.architecture.md`.
+
 ### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
 
 The old `node_length: { min: 3, max: 90 }` was all-or-nothing: one chars
