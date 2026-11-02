@@ -336,7 +336,15 @@ describe('issue #62 integration — references.forbidden_targets across features
 
   test('s16: graph citizenship — a banned ref still counts in refs.total, its deep hop still reports, its target is no orphan; an unlinked file still is one', () => {
     const ws = makeWs('graph-citizenship');
-    write(ws, '00-overview.md', '- Overview hub\n  - a link: see: 01-a.md\n');
+    // 00-overview points at a QUIET glossary, never down the chain: under
+    // the default max_hops: 1 a 3-edge chain 00→01→02→06 fires TWO deep-hop
+    // windows (00→01→02 for 01-a's ref and 01→02→06 for 02-b's — the issue
+    // #5 per-intermediate-node semantics this engine has always pinned),
+    // and this scenario pins ONLY the banned final edge's hop. The glossary
+    // keeps refs.total at 3 and 00-overview out of orphan territory without
+    // adding a second window.
+    write(ws, '00-overview.md', '- Overview hub\n  - a link: see: 99-glossary.md\n');
+    write(ws, '99-glossary.md', '- Glossary\n  - alpha term\n  - beta term\n');
     write(ws, '01-a.md', '- A spec\n  - b link: see: 02-b.md\n');
     write(ws, '02-b.md', '- B spec\n  - c link: see: 06-c.md\n');
     write(ws, '06-c.md', '- C leaf\n  - gamma shape\n');

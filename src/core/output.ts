@@ -537,6 +537,23 @@ function printGroup(g: IssueGroup, expanded: boolean): void {
       else if (g.suggestion !== undefined) console.log(`      ↳ ${g.suggestion}`);
       return;
     }
+    case 'refs.forbidden_target': {
+      // Issue #62: the message IS the payload — the default form names the
+      // referrer's file:line, the target and the matched rule; a custom
+      // message prints VERBATIM (the CLI contract pins byte-for-byte
+      // presence in the human output; the group key is the message, so
+      // what prints here is every member's message, not a mangled one).
+      // Locations join only when one custom message folds several
+      // findings — a single finding's file:line is already in its
+      // message.
+      if (g.detail !== undefined) {
+        for (const line of wrapText(g.detail, WRAP_COLS, 6)) console.log(line);
+      }
+      if (g.count > 1) {
+        for (const line of wrapText(g.locations.join('  '), WRAP_COLS, 6)) console.log(line);
+      }
+      break;
+    }
     default: {
       for (const line of wrapText(g.locations.join('  '), WRAP_COLS, 6)) console.log(line);
     }
