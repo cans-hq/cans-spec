@@ -68,6 +68,7 @@ interface ExpectApi {
   toBe(expected: unknown): void;
   toEqual(expected: unknown): void;
   toContain(expected: unknown): void;
+  toStartWith(expected: unknown): void;
   toMatch(expected: RegExp | string): void;
   toBeNull(): void;
   toBeDefined(): void;
@@ -113,6 +114,15 @@ function makeExpect(actual: unknown, message?: string): ExpectApi {
         } else if (Array.isArray(actual)) pass = actual.some(x => deepEqual(x, expected));
         else pass = false;
         check(negated ? !pass : pass, that(`to contain ${fmt(expected)}`));
+      },
+      toStartWith(expected) {
+        // bun:test parity (issue #62): the CLI suite pins config-error
+        // PREFIXES with it under Bun; without it here the same suite
+        // crashed under Node instead of asserting. String actuals only —
+        // anything else fails closed rather than coercing silently,
+        // mirroring toContain's String(expected) coercion for the needle.
+        const pass = typeof actual === 'string' && actual.startsWith(String(expected));
+        check(negated ? !pass : pass, that(`to start with ${fmt(expected)}`));
       },
       toMatch(expected) {
         const re = expected instanceof RegExp ? expected : new RegExp(expected);
