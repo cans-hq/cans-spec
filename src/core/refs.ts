@@ -1,9 +1,10 @@
 import { readFileSync, realpathSync } from 'fs';
 import { join, dirname, resolve, relative, isAbsolute } from 'path';
-import type { OutlineNode, RefTarget, BackPointer, Issue } from '../types.ts';
+import type { OutlineNode, RefTarget, BackPointer, Issue, ForbiddenTargetRule } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
 import { anchorSlug, nearSlugMatches, normalizeForAnchor } from './slug.ts';
+import { globToRegExp } from './glob.ts';
 import {
   parseSchematic, schematicFormatFor, resolveSchematicAnchor, schematicAddresses,
 } from './schematic.ts';
@@ -1206,4 +1207,213 @@ export function rebuildBackPointers(
     out.set(key, list);
   }
   return out;
+}
+
+// ── Issue #62: forbidden targets ──
+
+/** Issue #62: the layering guard's shared path normalization — the ONE
+ *  spelling both sides of a ban agree on. `//` runs collapse to `/`
+ *  (`plugins//leaf.md` is a typo, not a different target), then `.`/`..`
+ *  segments resolve LEXICALLY — the mirror of resolveSpecFile's own
+ *  join-then-contain resolution (issue #22 u5 pins `sub/../02-b.md` as a
+ *  VALID ref to `02-b.md`), so a spelling that resolves to the banned file
+ *  cannot dodge the ban written for its canonical form (`cans/../plugins/x.md`
+ *  and `plugins/./x.md` are `plugins/x.md`; the ref engines have always
+ *  resolved them that way). A LEADING `..`-run escapes the workspace
+ *  lexically and is kept as written — the one re-entry spelling that still
+ *  resolves on disk (`../cans/x.md`, popping the workspace's own canonical
+ *  `cans/` name) is folded separately, on the target side only (banCandidates).
+ *  Finally ONE leading `cans/` segment strips (rule globs may be written
+ *  workspace-qualified — `cans/[0-9]*.md` and `[0-9]*.md` select
+ *  identically). Graph keys are already clean workspace-relative paths, so
+ *  they normalize to themselves; the function exists for rule globs and raw
+ *  ref targets. Anchors never reach it: they live in RefTarget.anchor, a
+ *  separate field by construction (parseOutline splits `file#anchor`). */
+function normalizeBanPath(p: string): string {
+  let s = p.replace(/\/{2,}/g, '/');
+  const parts: string[] = [];
+  for (const seg of s.split('/')) {
+    // empty segments are the trailing-slash folder form (`plugins/`) — the
+    // join below re-trims it; `.` is a no-op segment; `..` pops the segment
+    // before it unless it is itself an unpoppable leading `..` (an escape).
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
+    else parts.push(seg);
+  }
+  s = parts.join('/');
+  if (s.startsWith('cans/')) s = s.slice('cans/'.length);
+  return s;
+}
+
+/** Issue #62: the candidate strings one ref TARGET offers a ban's `pattern`
+ *  (§12 checker contract 1/2) — the alias-EXPANDED `ref.file`, path-
+ *  normalized. A `name://sub/path` external pointer (#55) offers BOTH
+ *  spellings — `name://` + the normalized subPath AND the bare normalized
+ *  subPath — so `^kelir://plugins/` and `^plugins/` each catch
+ *  `kelir://plugins/leaf.md` (an author may ban the ROOT shape or the PATH
+ *  shape; the `://` is rebuilt from the parsed parts, never run through the
+ *  `//` collapse). http(s) URLs are not pointers (externalPointerParts
+ *  returns null for them): a URL rides the ordinary single-candidate path
+ *  through the shared normalization — no special casing in either
+ *  direction. The workspace re-entry spelling gets the same both-forms
+ *  answer: §3's discovery names the workspace dir `cans/`, so
+ *  `../cans/plugins/x.md` RESOLVES to `plugins/x.md` on disk (join pops the
+ *  workspace's own name and re-enters) while staying a leading-`..` path
+ *  lexically — the folded spelling rides beside the lexical one so the
+ *  re-entry cannot dodge an anchored ban either. Anything else starting
+ *  `../` genuinely escapes (issue #10/#22: a broken ref) and keeps only the
+ *  lexical candidate. */
+function banCandidates(refFile: string): string[] {
+  const ext = externalPointerParts(refFile);
+  if (ext !== null) {
+    const sub = normalizeBanPath(ext.subPath);
+    return [`${ext.root}://${sub}`, sub];
+  }
+  const lex = normalizeBanPath(refFile);
+  const reentry = lex.replace(/^\.\.\/cans\//, '');
+  return reentry !== lex ? [lex, reentry] : [lex];
+}
+
+/** Issue #62: `references.forbidden_targets` — per-source bans on pointer
+ *  targets, the layering guard (§12/§18). A core spec pointing into plugin
+ *  leaves is a VALID ref (checkRefs resolves it) yet architecturally wrong;
+ *  before #62 no rule could express that. One ForbiddenTargetRule selects
+ *  SOURCE files by glob and bans target shapes by regex; the walk covers
+ *  EVERY ref in `graph.forward` — spec files, `_tasks/`/`_adr/` aux files
+ *  and the `done` extraReferrer alike (they are all graph nodes; the source
+ *  glob decides applicability).
+ *
+ *  Checker contract (the issue's, pinned):
+ *   1. Match AFTER alias expansion (#57): the graph's RefTargets already
+ *      carry the expanded `file`/`anchor` (alias uses keep `raw` as written
+ *      and set `ref.alias`), so aliasing can never dodge a ban — and the
+ *      default message appends `, via alias "[name]"` when it was one.
+ *   2. Match on the FILE part, path-normalized (normalizeBanPath);
+ *      anchors are separate fields and never in `ref.file` by construction.
+ *   3. INDEPENDENT of target validity: the filesystem is never consulted.
+ *      A forbidden target is reported even when the ref is also broken,
+ *      and checkRefs verdicts are unaffected — both findings coexist.
+ *   4. Severity per rule ('error' fails the run, 'warning' does not — the
+ *      node_length/multiline convention); custom `message` is reported
+ *      VERBATIM, the default message names the source file:line, the
+ *      target and the matched rule.
+ *   5. ONE finding per MATCHING RULE per ref — every matching rule fires.
+ *      Rule key `refs.forbidden_target`, category 'refs' (so --refs-only
+ *      includes the findings and the issue #61 --structure gate suppresses
+ *      them — the checkWorkspace refs cluster).
+ *   6. Forbidden refs still count for everything else: refs.total, deep
+ *      hops, orphans, duplicate-home are computed over the SAME graph,
+ *      unchanged. The finding is NOT counted in the refs.broken JSON
+ *      counter — a forbidden target is not a broken pointer, the same
+ *      treatment refs.self/refs.deep_hop get (the counter filters on the
+ *      refs.broken.* rule keys, src/commands/check.ts).
+ *
+ *  Generated `<!-- ref-by -->` comments are not refs by construction — the
+ *  documented answer to the issue's back-pointer question: the graph holds
+ *  only author-written `see:` pointers (parseOutline), while ref-by
+ *  comments are extracted separately (extractBackPointers, issue #19), so
+ *  a ban can never re-enter a workspace through its own back-pointers.
+ *
+ *  SOURCE matching (pinned): `globToRegExp(normalizeBanPath(rule.source))`
+ *  compiled once per rule, matched against `normalizeBanPath(fileKey)` —
+ *  the referrer's workspace-relative graph key. An `except` glob (same
+ *  base semantics) exempts a source file from the rule when ANY entry
+ *  matches.
+ *
+ *  TARGET matching (pinned): `new RegExp(rule.pattern)` compiled once per
+ *  rule, SEARCH semantics, case-sensitive — authors anchor with `^`/`$`
+ *  themselves. A rule matches when ANY banCandidates entry tests true.
+ *
+ *  Defensive compilation: a rule whose `pattern` does not compile or whose
+ *  `source` glob is malformed is SKIPPED — no finding, no throw. That is
+ *  not a silent pass: on the `cans check` path the §18 strict validator
+ *  (issue #56's line-numbered config errors) has already rejected the
+ *  rule, so the skip only guards a DIRECT library caller handing the
+ *  engine garbage — every OTHER rule stays live, and the skip is the
+ *  fail-safe direction for a malformed `except` entry (it can never match,
+ *  so the rule keeps applying instead of silently exempting everything).
+ *
+ *  Returns the findings SORTED by (file asc, line asc, rule index asc) so
+ *  the output never depends on Map iteration order. */
+export function checkForbiddenTargets(
+  graph: RefGraph,
+  rules?: ForbiddenTargetRule[] | null,
+): Issue[] {
+  if (rules === undefined || rules === null || rules.length === 0) return [];
+
+  // Compile once per rule. `i` is the rule's ORIGINAL index in the config
+  // list — findings and suggestions quote `references.forbidden_targets[i]`
+  // with it, so a skipped (garbage) rule never renumbers its siblings.
+  interface CompiledBan {
+    i: number;
+    source: string; // verbatim config spelling — the default message quotes it
+    pattern: string; // verbatim config spelling — ditto
+    message: string | undefined; // custom message, reported VERBATIM
+    level: 'error' | 'warning';
+    sourceRe: RegExp;
+    patternRe: RegExp;
+    exceptRes: RegExp[];
+  }
+  const compiled: CompiledBan[] = [];
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i]!;
+    const sourceRe = globToRegExp(normalizeBanPath(rule.source));
+    if (sourceRe === null) continue; // malformed source glob — rule skipped
+    let patternRe: RegExp | null = null;
+    try {
+      patternRe = new RegExp(rule.pattern);
+    } catch {
+      patternRe = null; // uncompilable pattern — rule skipped
+    }
+    if (patternRe === null) continue;
+    compiled.push({
+      i,
+      source: rule.source,
+      pattern: rule.pattern,
+      message: rule.message,
+      level: rule.severity === 'warning' ? 'warning' : 'error',
+      sourceRe,
+      patternRe,
+      // A malformed except entry compiles to null and is dropped: it can
+      // never match, which keeps the rule APPLIED (fail-safe direction).
+      exceptRes: (rule.except ?? [])
+        .map(g => globToRegExp(normalizeBanPath(g)))
+        .filter((re): re is RegExp => re !== null),
+    });
+  }
+  if (compiled.length === 0) return [];
+
+  const findings: Array<{ i: number; issue: Issue }> = [];
+  for (const [file, targets] of graph.forward) {
+    const srcPath = normalizeBanPath(file);
+    for (const c of compiled) {
+      if (!c.sourceRe.test(srcPath)) continue;
+      if (c.exceptRes.some(re => re.test(srcPath))) continue;
+      for (const ref of targets) {
+        if (!banCandidates(ref.file).some(t => c.patternRe.test(t))) continue;
+        findings.push({
+          i: c.i,
+          issue: {
+            file, line: ref.line, level: c.level, category: 'refs',
+            rule: 'refs.forbidden_target',
+            message: c.message !== undefined
+              ? c.message // custom message — VERBATIM, byte-for-byte
+              : `forbidden target: ${file}:${ref.line} → ${ref.file}`
+                + ` — references.forbidden_targets[${c.i}] (source "${c.source}", pattern "${c.pattern}")`
+                + (ref.alias !== undefined ? `, via alias "[${ref.alias.name}]"` : ''),
+            suggestion: `remove the see: pointer — or, if this target is legitimate,`
+              + ` rescope references.forbidden_targets[${c.i}] (source/except)`,
+          },
+        });
+      }
+    }
+  }
+  // (file asc, line asc, rule index asc) — deterministic regardless of the
+  // Map iteration order the walk above inherited.
+  findings.sort((a, b) => {
+    if (a.issue.file !== b.issue.file) return a.issue.file < b.issue.file ? -1 : 1;
+    if (a.issue.line !== b.issue.line) return a.issue.line - b.issue.line;
+    return a.i - b.i; // same ref, several matching rules — config order
+  });
+  return findings.map(f => f.issue);
 }

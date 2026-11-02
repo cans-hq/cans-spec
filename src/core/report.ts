@@ -271,6 +271,19 @@ function normalizeMessage(issue: IssueLike): Normalized {
   let mt: RegExpMatchArray | null;
 
   // ── refs ──
+  // Issue #62: the layering guard identifies by RULE, never by message
+  // shape — its message is either the engine's default form or ARBITRARY
+  // author text (a custom `message`), so no regex can pin it, a custom
+  // text must never fall through to a shape match, and the #41 generic
+  // scrubber (quotes stripped, digits → '#', 40-char cut) must never
+  // touch it. Pattern is the stable label; the FULL message rides as
+  // `detail` (the CLI contract pins it byte-for-byte in the human
+  // output); the message itself is the group key, so a repeated custom
+  // message coalesces per rule while distinct findings (the default
+  // form embeds the referrer's file:line) never merge.
+  if (issue.rule === 'refs.forbidden_target') {
+    return { rule: 'refs.forbidden_target', pattern: 'forbidden target', key: m, detail: m };
+  }
   if ((mt = m.match(RE_BROKEN_FILE)) !== null) {
     // issue #41: group per missing target — pattern generic, key = target path.
     return { rule: 'refs.broken.file', pattern: 'missing file', key: mt[1]!, targetItem: true };
