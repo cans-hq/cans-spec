@@ -886,7 +886,7 @@ describe('issue #63 config — pre-#63 compatibility: defaults are inert, old co
     const rules = loadOk('agent_guardrails:\n  manifests:\n    protected: [Cargo.toml]\n');
     const dr = defaultRules();
     expect(rules.agent_guardrails).toEqual({
-      ...dr.agent_guardrails,
+      ...dr.agent_guardrails!,
       manifests: { ...dr.agent_guardrails!.manifests, protected: ['Cargo.toml'] },
     });
     expect(rules.structure).toEqual(dr.structure); // deleteMode stayed false
@@ -910,7 +910,7 @@ describe('issue #63 config — cans init ships a strictly valid _rules.yaml', ()
     // does not spell the section (→ the inert defaults) or it spells it
     // explicitly OFF (→ an enabled: false block). A template that enabled
     // guardrails for every new workspace would violate the #63 contract.
-    const ag = rules.agent_guardrails;
+    const ag = rules.agent_guardrails ?? null; // normalize the optional to the null union for narrowing
     expect(ag === null || ag.enabled === false).toBe(true);
     if (ag !== null) {
       expect(ag).toEqual(defaultAgentGuardrails()); // a spelled block must be the documented OFF block
@@ -920,7 +920,7 @@ describe('issue #63 config — cans init ships a strictly valid _rules.yaml', ()
   test('the shipped template file itself (templates/_rules.yaml) passes strict validation', () => {
     const template = readFileSync(join(REPO, 'templates', '_rules.yaml'), 'utf-8');
     const rules = loadOk(template);
-    const ag = rules.agent_guardrails;
+    const ag = rules.agent_guardrails ?? null; // normalize the optional to the null union for narrowing
     expect(ag === null || ag.enabled === false).toBe(true);
   });
 });
