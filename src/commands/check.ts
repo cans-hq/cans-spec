@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import type {
   BackPointer, CheckResult, Issue, OutlineNode, Rules,
   MultilineRules, NodeLengthRules,
@@ -7,7 +7,7 @@ import { readText, writeText } from '../core/runtime.ts';
 import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs,
-  resolveSpecFile, promotableSpecKey,
+  resolveSpecFile, promotableSpecKey, discoverAliasingFiles, isFile, toRelative,
 } from '../core/fs.ts';
 import {
   parseOutline, extractBackPointers, realNodes, flattenNodes, maxDepth as outlineMaxDepth,
@@ -279,6 +279,42 @@ function checkFail(message: string): CheckResult & { error: string } {
     errorCount: 1,
     error: message,
   };
+}
+
+// Issue #65: the tool-artifact class the aliasing walk (discoverAliasingFiles,
+// core/fs.ts) never loads. Mirror of fs.ts's private TOOL_ARTIFACTS — check.ts
+// mirrors engine constants it must agree with (REF_BY_RE, FENCE_RE,
+// REF_TRAILING_PUNCT above) and the two spellings must never diverge: a file
+// in this class can never join the plugin tier, so the #65 refusal must not
+// suggest an include glob for it (the suggestion would be unactionable).
+const PLUGIN_REFUSAL_SKIP = new Set(['AGENTS.md', 'CLAUDE.md', '.cursorrules']);
+
+/** Issue #65: the §37 file-filter refusal, upgraded for the plugin tier.
+ *  The classic message stands when the named file is not a loadable plugin
+ *  candidate; the knob-naming message fires when the file physically EXISTS
+ *  inside the workspace as a plain .md that `references.aliasing.include`
+ *  could load — the discoverability case the issue is about: `cans check
+ *  cans/plugins/profile.md` on a workspace that never configured the glob
+ *  must say WHICH knob opens the file, not just that nothing matched.
+ *  Existence + containment are confirmed WITHOUT loading the file:
+ *  toRelative gives the workspace-relative spelling (escaping paths and
+ *  absolute spellings fail the containment test) and isFile the stat (a
+ *  directory, a missing path — classic message). The same classes the walk
+ *  skips keep the classic message too (`_`-prefixed segments, tool
+ *  artifacts, non-.md): an include glob could never load them, so
+ *  suggesting one would be a lie. */
+function fileFilterRefusal(file: string, root: string): string {
+  const abs = join(root, file);
+  const rel = toRelative(root, abs);
+  const insideRoot = !isAbsolute(file)
+    && rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  const loadable = insideRoot
+    && rel.endsWith('.md')
+    && rel.split('/').every(seg => !seg.startsWith('_') && !PLUGIN_REFUSAL_SKIP.has(seg));
+  if (loadable && isFile(abs)) {
+    return `no spec file matches "${file}" — the file exists but is outside the spec corpus; add a references.aliasing.include glob (e.g. cans/plugins/*.md) in _rules.yaml to check plugin files (issue #65)`;
+  }
+  return `no spec file matches "${file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`;
 }
 
 /** Issue #43: the invalid-_rules.yaml variant of checkFail. Same §37/§41
@@ -928,12 +964,81 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
+  // ── Issue #65: the PLUGIN TIER ──
+  // `references.aliasing.include` (the #65 contract: f1c3450) names workspace
+  // .md files OUTSIDE the spec corpus that join the checked file set when
+  // aliasing is enabled — the `cans/plugins/*.md` profile files whose `see:`
+  // refs (kelir's 133 `#leaf` pointers into a YAML fixture) must verify and
+  // whose aliases must resolve exactly like corpus files' do. Before #65 the
+  // check engine never loaded them, so their refs were never verified and
+  // their aliases never resolved — the corpus-boundary gap the issue closes.
+  //
+  // The tier is the _tasks/_adr aux precedent with ONE hardening, and it
+  // loads only when the feature is actually on (aliasing enabled AND a
+  // non-empty include list — otherwise the pre-#65 run is byte-identical):
+  // - LIKE AUX: parsed for the refs layer only — extractAliases →
+  //   aliasDefinitionIssues → parseOutline (parse warnings DROPPED — no
+  //   structure layer exists to report them on) → resolveFileAliases — and
+  //   the parsed nodes join the ref graph (ref-by marks, hops, SCC, orphan
+  //   relief, refs.total) and finishAliasChecks (unused = warning, min_uses
+  //   = error, broken zero-use definition = run-failing error). Never
+  //   structure/style/content/redundancy-checked (definitions are file
+  //   metadata, never nodes), never promotion SOURCES (the promotion loop
+  //   walks specFiles only — aux precedent), never --fix-rewritable (not in
+  //   specSources).
+  // - THE HARDENING: an unreadable or parse-throwing plugin file is an
+  //   EXPLICIT error issue, mirroring loadSpecFile's io.unreadable /
+  //   parse.error shape. Aux files skip silently because nobody asked for
+  //   them; a plugin file is here because the author's config NAMED it — a
+  //   silent skip would hide exactly the breakage the author asked to see.
+  //
+  // The exclude set is the loaded corpus + aux keys (the #65 contract's own
+  // seam): a pattern overlapping the corpus can never double-load a file,
+  // and promoted keys are already in specFiles by the time this pass runs.
+  const pluginFiles = new Map<string, OutlineNode[]>();
+  const includeGlobs = aliasCfg.include ?? [];
+  if (aliasCfg.enabled && includeGlobs.length > 0) {
+    const loaded = new Set<string>([...specFiles.keys(), ...auxFiles.keys()]);
+    for (const rel of discoverAliasingFiles(root, includeGlobs, loaded)) {
+      let text = '';
+      try {
+        text = await readText(join(root, rel));
+      } catch (e) {
+        issues.push({
+          file: rel, line: 0, level: 'error', category: 'structure',
+          message: `unreadable plugin file: ${e instanceof Error ? e.message : String(e)}`,
+          rule: 'io.unreadable', // issue #41 vocabulary, issue #65 plugin tier
+        });
+        continue;
+      }
+      // Issue #57: the file's own alias table resolves before any consumer —
+      // the same load order the aux pass uses, so a plugin alias use and its
+      // full-pointer twin verify identically (graph-identity).
+      const table = extractAliases(text);
+      aliasTables.set(rel, table);
+      refFindings(aliasDefinitionIssues(table, rel, aliasCfg));
+      let nodes: OutlineNode[];
+      try {
+        nodes = parseOutline(text, rel);
+      } catch (e) {
+        issues.push({
+          file: rel, line: 0, level: 'error', category: 'structure',
+          message: `parse error: ${e instanceof Error ? e.message : String(e)}`,
+          rule: 'parse.error', // issue #41 vocabulary, issue #65 plugin tier
+        });
+        continue;
+      }
+      refFindings(resolveFileAliases(nodes, table, rel, aliasCfg));
+      pluginFiles.set(rel, nodes);
+    }
+  }
+
   // `let` (not `const`): the --fix --yes anchor repair rewrites referrer
   // sources below and rebuilds both on the post-repair parses, so every later
   // consumer — the back-pointer sweep, the ref-by phase, refs.total — sees the
   // POST-fix state (§35: a --fix report describes the workspace the run
   // leaves behind, not the one it found).
-  let allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
+  let allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles, ...pluginFiles]);
   // §24 (done): the archiving task has already been renamed into _archive/, so
   // its parsed nodes join the graph here under their former _tasks/ identity —
   // its see: refs still earn their targets' ref-by marks.
@@ -965,12 +1070,22 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   const checkable = opts.file !== null
     ? [...specFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
     : [...specFiles.keys()];
+  // Issue #65: the named file may be a PLUGIN-TIER file — no spec key matches
+  // it, but the tier loaded it. The run proceeds instead of refusing: the
+  // plugin file is checked at the refs layer only (no structure/style layer
+  // exists for it by construction), its refs ride the global graph, and the
+  // report counts it as checked (the files wiring below). The match is the
+  // same targetMatchesKey equivalence the spec filter uses, so `profile.md`,
+  // `profile` and `cans/plugins/profile.md` name one plugin file.
+  const pluginMatch = opts.file !== null
+    ? [...pluginFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
+    : [];
   // §37: a file filter that matches nothing is a user-correctable mistake —
   // never a silently-empty clean check (missing Part-4 item, QA-02 F13).
-  if (opts.file !== null && checkable.length === 0) {
-    return checkFail(
-      `no spec file matches "${opts.file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`,
-    );
+  // Issue #65: when the named file exists as a plain workspace .md the plugin
+  // tier COULD load, the refusal names that knob (fileFilterRefusal).
+  if (opts.file !== null && checkable.length === 0 && pluginMatch.length === 0) {
+    return checkFail(fileFilterRefusal(opts.file, root));
   }
   const checkableMap = new Map<string, OutlineNode[]>(
     checkable.map(k => [k, specFiles.get(k)!]),
@@ -1247,7 +1362,11 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
       // sweep and the ref-by phase, so the whole rest of the run is coherent:
       // repaired refs are no longer broken (they earn ref-by marks in this
       // same run) and pre-existing comments they satisfy read as current.
-      allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles]);
+      // Issue #65: the plugin tier rides along — dropping it here would
+      // silently remove every plugin ref from the post-repair graph (their
+      // ref-by marks would vanish from the targets --fix rewrites in this
+      // same run), exactly the seam the tier's allFiles membership guards.
+      allFiles = new Map<string, OutlineNode[]>([...specFiles, ...auxFiles, ...pluginFiles]);
       if (opts.extraReferrer !== undefined && opts.extraReferrer !== null) {
         allFiles.set(opts.extraReferrer.key, opts.extraReferrer.nodes);
       }
@@ -1459,7 +1578,17 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // issue #41: exit contract 0 clean · 1 warnings · 2 errors.
     // strict affects `ok` only, never the exit code.
     exitCode: errorCount > 0 ? 2 : (warningCount > 0 ? 1 : 0),
-    files: specFiles.size,
+    // Issue #65: the checked-file count. The spec corpus keeps the pre-#65
+    // shape (specFiles.size, filter-independent — the issue #11 filtered run
+    // reports the corpus it describes), and it contributes NOTHING when the
+    // [file] filter matched no spec file (a named plugin-file run checked no
+    // spec file — counting the corpus would misreport what was checked).
+    // The plugin tier contributes the files the run actually CHECKED: the
+    // whole tier on an unfiltered run (it joins the checked file set, the #65
+    // contract), the filter-matched plugin files on a named run (the named
+    // plugin file is checked at the refs layer — files: 1).
+    files: (checkable.length > 0 || opts.file === null ? specFiles.size : 0)
+      + (opts.file === null ? pluginFiles.size : pluginMatch.length),
     nodes: nodeCount,
     // §35: maxDepth is 1-based (a 4-level chain reports 4); 0 for an empty workspace.
     maxDepth: nodeCount === 0 ? 0 : depthMax + 1,
