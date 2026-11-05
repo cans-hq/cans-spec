@@ -346,3 +346,393 @@ describe('issue #63 config — the documented OFF states: explicitly empty and e
     expect(rules.structure.depth).toEqual({ min: 1, max: 3 });
   });
 });
+
+// ── rejections: unknown members under the issue #56 typo discipline ────────
+
+describe('issue #63 config — unknown members reject (issue #56 typo discipline, line-numbered)', () => {
+  const SUFFIX = ' (issue #56: _rules.yaml is validated strictly — §18 documents the legal keys)';
+
+  test('section-level typo `enabld` rejects, named with its own line', () => {
+    // Lines: 1 agent_guardrails, 2 the typo.
+    expect(loadErr('agent_guardrails:\n  enabld: true\n')).toBe(
+      'line 2 — unrecognized key "agent_guardrails.enabld"' + SUFFIX,
+    );
+  });
+
+  test('section-level typo `severety` rejects too — a typo\'d severity must never read as the default', () => {
+    expect(loadErr('agent_guardrails:\n  severety: warn\n')).toBe(
+      'line 2 — unrecognized key "agent_guardrails.severety"' + SUFFIX,
+    );
+  });
+
+  test('unknown member inside isolation (`prefx`) rejects at its own line', () => {
+    // Lines: 1 section, 2 isolation, 3 mode, 4 the typo.
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode: off\n    prefx: x\n')).toBe(
+      'line 4 — unrecognized key "agent_guardrails.isolation.prefx"' + SUFFIX,
+    );
+  });
+
+  test('unknown member inside manifests (`prottected`) rejects at its own line', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    prottected: [Cargo.toml]\n')).toBe(
+      'line 3 — unrecognized key "agent_guardrails.manifests.prottected"' + SUFFIX,
+    );
+  });
+
+  test('unknown member inside devlog (`paths`) rejects at its own line', () => {
+    expect(loadErr('agent_guardrails:\n  devlog:\n    paths: log/devlog.md\n')).toBe(
+      'line 3 — unrecognized key "agent_guardrails.devlog.paths"' + SUFFIX,
+    );
+  });
+
+  test('unknown member inside negative_invariants (`reqired`) rejects at its own line', () => {
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    reqired: true\n')).toBe(
+      'line 3 — unrecognized key "agent_guardrails.negative_invariants.reqired"' + SUFFIX,
+    );
+  });
+
+  test('unknown members in DIFFERENT blocks each report at their own line (first offender wins)', () => {
+    // Lines: 2 isolation (ok), 4 manifests typo — the walk hits isolation's
+    // valid members first, then manifests' typo at line 4.
+    expect(
+      loadErr('agent_guardrails:\n  isolation:\n    mode: off\n  manifests:\n    prottected: [x]\n'),
+    ).toBe('line 5 — unrecognized key "agent_guardrails.manifests.prottected"' + SUFFIX);
+  });
+});
+
+// ── rejections: the severity enum is exactly 'error' | 'warn' ──────────────
+
+describe('issue #63 config — severity members are exactly "error" | "warn" ("warning" rejects)', () => {
+  test("severity: 'warning' REJECTS — deliberate pin: the §63 section scale differs from #62's per-entry spelling", () => {
+    // #62's forbidden_targets entries spell 'error' | 'warning'; the #63
+    // section-level severity spells 'error' | 'warn' (the structure.severity
+    // convention minus 'off' — an off guardrails block is `enabled: false`).
+    expect(loadErr('agent_guardrails:\n  severity: warning\n')).toBe(
+      'line 2 — "agent_guardrails.severity" must be "error" or "warn", got "warning"',
+    );
+  });
+
+  test("severity: 'off' rejects too — the OFF state is spelled `enabled: false`, never a severity", () => {
+    expect(loadErr('agent_guardrails:\n  severity: off\n')).toBe(
+      'line 2 — "agent_guardrails.severity" must be "error" or "warn", got "off"',
+    );
+  });
+
+  test('non-string severity (number) rejects with the got-value convention', () => {
+    expect(loadErr('agent_guardrails:\n  severity: 3\n')).toBe(
+      'line 2 — "agent_guardrails.severity" must be "error" or "warn", got "3"',
+    );
+  });
+
+  test('an explicit empty severity (null) is out-of-domain — the enum has no empty meaning', () => {
+    expect(loadErr('agent_guardrails:\n  severity:\n')).toBe(
+      'line 2 — "agent_guardrails.severity" must be "error" or "warn", got null (empty value)',
+    );
+  });
+});
+
+// ── rejections: scalars, section shape, and every block's domain ───────────
+
+describe('issue #63 config — scalar domains and section shape reject line-numbered', () => {
+  test('enabled: non-boolean rejects with the boolean expectation', () => {
+    expect(loadErr('agent_guardrails:\n  enabled: yes\n')).toBe(
+      'line 2 — "agent_guardrails.enabled" must be true or false, got "yes"',
+    );
+    expect(loadErr('agent_guardrails:\n  enabled: 1\n')).toBe(
+      'line 2 — "agent_guardrails.enabled" must be true or false, got "1"',
+    );
+  });
+
+  test('enabled: explicit empty (null) rejects — an empty value is a typo, not a documented state', () => {
+    expect(loadErr('agent_guardrails:\n  enabled:\n')).toBe(
+      'line 2 — "agent_guardrails.enabled" must be true or false, got null (empty value)',
+    );
+  });
+
+  test('section value non-mapping rejects with the §18 shape error (typeof naming at the top level)', () => {
+    // The section-level shape check names the value's TYPE (boolean/string/
+    // number), unlike the leaf got-value convention — confirmed and pinned.
+    expect(loadErr('agent_guardrails: true\n')).toBe(
+      'line 1 — "agent_guardrails" must be a mapping, got boolean',
+    );
+    expect(loadErr('agent_guardrails: banana\n')).toBe(
+      'line 1 — "agent_guardrails" must be a mapping, got string',
+    );
+    expect(loadErr('agent_guardrails: 42\n')).toBe(
+      'line 1 — "agent_guardrails" must be a mapping, got number',
+    );
+    expect(loadErr('agent_guardrails:\n  - a\n')).toBe(
+      'line 1 — "agent_guardrails" must be a mapping, got a list',
+    );
+  });
+});
+
+describe('issue #63 config — isolation block: shape and domain rejections', () => {
+  test('non-mapping isolation rejects with the block expectation spelled once', () => {
+    expect(loadErr('agent_guardrails:\n  isolation: banana\n')).toBe(
+      'line 2 — "agent_guardrails.isolation" must be a mapping like ' +
+        '{ mode: require-target-prefix, prefix: "target/agent-" }, got "banana"',
+    );
+    expect(loadErr('agent_guardrails:\n  isolation: 7\n')).toBe(
+      'line 2 — "agent_guardrails.isolation" must be a mapping like ' +
+        '{ mode: require-target-prefix, prefix: "target/agent-" }, got "7"',
+    );
+  });
+
+  test('an explicit empty isolation member (null) is out-of-domain — only the SECTION is null-ok', () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n')).toBe(
+      'line 2 — "agent_guardrails.isolation" must be a mapping like ' +
+        '{ mode: require-target-prefix, prefix: "target/agent-" }, got null (empty value)',
+    );
+  });
+
+  test("mode: 'required-target-prefix' (the near-miss spelling) rejects with the member set", () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode: required-target-prefix\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.mode" must be "require-target-prefix" or "off", ' +
+        'got "required-target-prefix"',
+    );
+  });
+
+  test("mode: 'on' / mode: true reject — the switch spellings are exactly 'require-target-prefix' | 'off'", () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode: on\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.mode" must be "require-target-prefix" or "off", got "on"',
+    );
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode: true\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.mode" must be "require-target-prefix" or "off", got "true"',
+    );
+  });
+
+  test('an explicit empty mode (null) rejects', () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode:\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.mode" must be "require-target-prefix" or "off", ' +
+        'got null (empty value)',
+    );
+  });
+});
+
+describe('issue #63 config — manifests block: shape and domain rejections', () => {
+  test('non-mapping manifests rejects with the block expectation', () => {
+    expect(loadErr('agent_guardrails:\n  manifests: 7\n')).toBe(
+      'line 2 — "agent_guardrails.manifests" must be a mapping like ' +
+        '{ atomic_writes_only: true, protected: [package.json] }, got "7"',
+    );
+  });
+
+  test('atomic_writes_only: non-boolean and explicit empty reject', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    atomic_writes_only: "true"\n')).toBe(
+      'line 3 — "agent_guardrails.manifests.atomic_writes_only" must be true or false, got "true"',
+    );
+    expect(loadErr('agent_guardrails:\n  manifests:\n    atomic_writes_only:\n')).toBe(
+      'line 3 — "agent_guardrails.manifests.atomic_writes_only" must be true or false, ' +
+        'got null (empty value)',
+    );
+  });
+
+  test('protected: empty list rejects — an empty guard list would silently protect nothing', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected: []\n')).toBe(
+      'line 3 — "agent_guardrails.manifests.protected" must be a non-empty list of ' +
+        'workspace-relative manifest paths, got a list',
+    );
+  });
+
+  test('protected: non-list rejects (a scalar is a typo, not a one-manifest list)', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected: Cargo.toml\n')).toBe(
+      'line 3 — "agent_guardrails.manifests.protected" must be a non-empty list of ' +
+        'workspace-relative manifest paths, got "Cargo.toml"',
+    );
+  });
+
+  test('protected: empty/absolute/escaping entries reject at their own indexed lines', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected:\n      - ""\n')).toBe(
+      'line 4 — "agent_guardrails.manifests.protected[0]" must be a non-empty workspace-relative path, got ""',
+    );
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected:\n      - /etc/pkg\n')).toBe(
+      'line 4 — "agent_guardrails.manifests.protected[0]" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "/etc/pkg"',
+    );
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected:\n      - ../pkg\n')).toBe(
+      'line 4 — "agent_guardrails.manifests.protected[0]" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "../pkg"',
+    );
+  });
+
+  test('the index in a protected-entry error counts real entries (the offender is [1], not [0])', () => {
+    expect(loadErr('agent_guardrails:\n  manifests:\n    protected: [Cargo.toml, /abs/x]\n')).toBe(
+      'line 3 — "agent_guardrails.manifests.protected[1]" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "/abs/x"',
+    );
+  });
+});
+
+describe('issue #63 config — devlog block: shape and domain rejections', () => {
+  test('non-mapping devlog rejects with the block expectation (list and scalar forms)', () => {
+    expect(loadErr('agent_guardrails:\n  devlog: []\n')).toBe(
+      'line 2 — "agent_guardrails.devlog" must be a mapping like ' +
+        '{ enabled: true, path: "log/devlog.md", required_sections: [touched_files, test_outcomes, still_open] }, ' +
+        'got a list',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog: log.md\n')).toBe(
+      'line 2 — "agent_guardrails.devlog" must be a mapping like ' +
+        '{ enabled: true, path: "log/devlog.md", required_sections: [touched_files, test_outcomes, still_open] }, ' +
+        'got "log.md"',
+    );
+  });
+
+  test('devlog.enabled: non-boolean rejects', () => {
+    expect(loadErr('agent_guardrails:\n  devlog:\n    enabled: "yes"\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.enabled" must be true or false, got "yes"',
+    );
+  });
+
+  test('required_sections: empty list and non-list reject with the list expectation', () => {
+    expect(loadErr('agent_guardrails:\n  devlog:\n    required_sections: []\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.required_sections" must be a non-empty list of ' +
+        'section names, got a list',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog:\n    required_sections: touched_files\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.required_sections" must be a non-empty list of ' +
+        'section names, got "touched_files"',
+    );
+  });
+
+  test('required_sections: empty-string and non-string entries reject at their own indexed lines', () => {
+    expect(loadErr('agent_guardrails:\n  devlog:\n    required_sections:\n      - ""\n')).toBe(
+      'line 4 — "agent_guardrails.devlog.required_sections[0]" must be a non-empty section name, got ""',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog:\n    required_sections:\n      - 5\n')).toBe(
+      'line 4 — "agent_guardrails.devlog.required_sections[0]" must be a non-empty section name, got "5"',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog:\n    required_sections:\n      - touched_files\n      - [x]\n')).toBe(
+      'line 5 — "agent_guardrails.devlog.required_sections[1]" must be a non-empty section name, got a list',
+    );
+  });
+});
+
+describe('issue #63 config — negative_invariants block: shape and domain rejections', () => {
+  test('non-mapping negative_invariants rejects with the block expectation', () => {
+    expect(loadErr('agent_guardrails:\n  negative_invariants: true\n')).toBe(
+      'line 2 — "agent_guardrails.negative_invariants" must be a mapping like ' +
+        '{ required: true, anchor: "Negative Invariants" }, got "true"',
+    );
+  });
+
+  test('required: non-boolean and explicit empty reject', () => {
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    required: 1\n')).toBe(
+      'line 3 — "agent_guardrails.negative_invariants.required" must be true or false, got "1"',
+    );
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    required:\n')).toBe(
+      'line 3 — "agent_guardrails.negative_invariants.required" must be true or false, ' +
+        'got null (empty value)',
+    );
+  });
+
+  test('anchor: empty string and non-string reject with the heading-text expectation', () => {
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    anchor: ""\n')).toBe(
+      'line 3 — "agent_guardrails.negative_invariants.anchor" must be a non-empty heading text, got ""',
+    );
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    anchor: 9\n')).toBe(
+      'line 3 — "agent_guardrails.negative_invariants.anchor" must be a non-empty heading text, got "9"',
+    );
+    expect(loadErr('agent_guardrails:\n  negative_invariants:\n    anchor:\n')).toBe(
+      'line 3 — "agent_guardrails.negative_invariants.anchor" must be a non-empty heading text, ' +
+        'got null (empty value)',
+    );
+  });
+});
+
+// ── the shared workspace-relative path discipline ──────────────────────────
+
+describe('issue #63 config — validateWorkspaceRelativePath: one message shape across all three path surfaces', () => {
+  const POSIX_EXPECTATION =
+    'must be a workspace-relative POSIX path (no leading "/", no ".." segment, no "\\")';
+  const EMPTY_EXPECTATION = 'must be a non-empty workspace-relative path';
+
+  test('isolation.prefix: empty string → the non-empty expectation; absolute / ".." / backslash → the POSIX expectation', () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n    prefix: ""\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.prefix" ' + EMPTY_EXPECTATION + ', got ""',
+    );
+    expect(loadErr('agent_guardrails:\n  isolation:\n    prefix: /abs/target\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.prefix" ' + POSIX_EXPECTATION + ', got "/abs/target"',
+    );
+    expect(loadErr('agent_guardrails:\n  isolation:\n    prefix: ../out\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.prefix" ' + POSIX_EXPECTATION + ', got "../out"',
+    );
+    expect(loadErr('agent_guardrails:\n  isolation:\n    prefix: "target\\agent"\n')).toBe(
+      'line 3 — "agent_guardrails.isolation.prefix" ' + POSIX_EXPECTATION + ', got "target\\agent"',
+    );
+  });
+
+  test('devlog.path: the SAME POSIX discipline (empty / absolute / ".." escape)', () => {
+    expect(loadErr('agent_guardrails:\n  devlog:\n    path: ""\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.path" ' + EMPTY_EXPECTATION + ', got ""',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog:\n    path: /log/devlog.md\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.path" ' + POSIX_EXPECTATION + ', got "/log/devlog.md"',
+    );
+    expect(loadErr('agent_guardrails:\n  devlog:\n    path: ../log/devlog.md\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.path" ' + POSIX_EXPECTATION + ', got "../log/devlog.md"',
+    );
+  });
+
+  test('the engine joins these onto the workspace root verbatim — a nested ".." segment escapes too', () => {
+    // not just a LEADING ../ — a '..' buried mid-path is the same escape
+    expect(loadErr('agent_guardrails:\n  devlog:\n    path: log/../secrets.md\n')).toBe(
+      'line 3 — "agent_guardrails.devlog.path" ' + POSIX_EXPECTATION + ', got "log/../secrets.md"',
+    );
+  });
+
+  test('legal workspace-relative paths load: nested directories, dots in names, deep prefixes', () => {
+    const rules = loadOk(
+      [
+        'agent_guardrails:',
+        '  isolation:',
+        '    prefix: "build/wip.agents-"',
+        '  devlog:',
+        '    path: "log/agents/2025/handoff.md"',
+        '  manifests:',
+        '    protected:',
+        '      - "sub.dir/Cargo.toml"',
+        '',
+      ].join('\n'),
+    );
+    expect(rules.agent_guardrails!.isolation.prefix).toBe('build/wip.agents-');
+    expect(rules.agent_guardrails!.devlog.path).toBe('log/agents/2025/handoff.md');
+    expect(rules.agent_guardrails!.manifests.protected).toEqual(['sub.dir/Cargo.toml']);
+  });
+});
+
+// ── line-number discipline: the member's own line reports ──────────────────
+
+describe('issue #63 config — line-number discipline: errors inside multi-line blocks name the member line', () => {
+  test('a bad value deep in a multi-line block reports the offending member line (not the section line)', () => {
+    // Lines: 1 section, 2 devlog, 3 enabled, 4 path, 5 required_sections,
+    // 6 touched_files, 7 the empty entry, 8 still_open.
+    expect(
+      loadErr(
+        'agent_guardrails:\n  devlog:\n    enabled: true\n    path: log/devlog.md\n' +
+          '    required_sections:\n      - touched_files\n      - ""\n      - still_open\n',
+      ),
+    ).toBe(
+      'line 7 — "agent_guardrails.devlog.required_sections[1]" must be a non-empty section name, got ""',
+    );
+  });
+
+  test('a member AFTER valid siblings reports its own line (mode ok on line 3, prefix bad on line 4)', () => {
+    expect(loadErr('agent_guardrails:\n  isolation:\n    mode: require-target-prefix\n    prefix: /abs\n')).toBe(
+      'line 4 — "agent_guardrails.isolation.prefix" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "/abs"',
+    );
+  });
+
+  test('inline-object members share the enclosing key line (parseYamlTracked convention)', () => {
+    expect(loadErr('agent_guardrails:\n  isolation: { mode: off, prefix: ../out }\n')).toBe(
+      'line 2 — "agent_guardrails.isolation.prefix" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "../out"',
+    );
+  });
+
+  test('a fully inline section maps member errors to the section line', () => {
+    expect(loadErr('agent_guardrails: { enabled: "yes" }\n')).toBe(
+      'line 1 — "agent_guardrails.enabled" must be true or false, got "yes"',
+    );
+  });
+});
