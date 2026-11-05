@@ -163,3 +163,75 @@ output:
   # enables). For a single anchor, `cans slug "<node text>"` is the precise
   # tool and needs no flag.
   slug_hints: false
+
+# Issue #63 — agent execution policies for autonomous agents working in this
+# workspace. OPT-IN: the shipped template does NOT enable the block (the
+# example below is fully commented out — an unsupervised workspace until you
+# spell it). To opt in, uncomment `agent_guardrails:` and the members you
+# want; every omitted member keeps its documented default (a partial block
+# deep-merges over the defaults), and an explicitly EMPTY `agent_guardrails:`
+# is legal and means OFF. The section is a PARAMETER section, not a check
+# section: it never joins the delete/override reconciliation (listing it can
+# only add guardrails findings, never flip an engine off), and its engine
+# inspects LOCAL WORKSPACE STATE ONLY — task declarations, the devlog,
+# AGENTS.md, build-output directories. It never touches CI/CD or runner
+# configurations. Four sub-policies, one per failure mode the issue names:
+#   isolation           — concurrent agents building into the same shared
+#                         output directories (target/, dist/, build/, out/ at
+#                         the workspace root) stomp each other's artifacts.
+#                         mode: require-target-prefix forces every
+#                         task-declared build output under `prefix`.
+#   manifests           — a half-written root manifest (a dependency list cut
+#                         off mid-edit) breaks every concurrent reader.
+#                         atomic_writes_only forbids in-place rewrites of the
+#                         protected manifests — copy-modify-swap instead.
+#   devlog              — an evicted or context-reset agent leaves nothing
+#                         behind. The append-only handoff log carries
+#                         touched_files / test_outcomes / still_open so the
+#                         next agent inherits the state (the _tasks/
+#                         checkboxes do not carry it).
+#   negative_invariants — strictly forbidden patterns, dependencies and
+#                         implementations must be visible UP FRONT, under a
+#                         fixed AGENTS.md anchor heading — not discovered by
+#                         failed review.
+# Keys and defaults (§18 of docs/cans.architecture.md is the full contract):
+#   enabled        master switch — the whole block is inert unless true
+#                  (default false)
+#   severity       error | warn — the band ALL guardrails findings emit at;
+#                  error fails the run (exit 2), warn is advisory
+#                  (default error)
+#   isolation.mode          require-target-prefix | off (default off)
+#   isolation.prefix        the workspace-relative directory prefix agents
+#                           must declare build outputs under (default
+#                           target/agent- → target/agent-<name>/)
+#   manifests.atomic_writes_only   true (default) | false
+#   manifests.protected     the protected root manifests, workspace-relative
+#                           (default [Cargo.toml, package.json, pyproject.toml])
+#   devlog.enabled          true (default) | false
+#   devlog.path             the workspace-relative handoff-log path (default
+#                           log/devlog.md)
+#   devlog.required_sections  headings the log must carry (default
+#                           [touched_files, test_outcomes, still_open])
+#   negative_invariants.required   true (default) | false
+#   negative_invariants.anchor     the AGENTS.md heading the engine looks for
+#                           (default "Negative Invariants" — the heading this
+#                           template ships in AGENTS.md)
+# Every path here is a workspace-relative POSIX path: no leading "/", no ".."
+# segment, no "\" — the engine joins these onto the workspace root verbatim,
+# so anything else is a line-numbered config error like every other §18 key.
+# agent_guardrails:
+#   enabled: true
+#   severity: error
+#   isolation:
+#     mode: require-target-prefix
+#     prefix: target/agent-
+#   manifests:
+#     atomic_writes_only: true
+#     protected: [Cargo.toml, package.json, pyproject.toml]
+#   devlog:
+#     enabled: true
+#     path: log/devlog.md
+#     required_sections: [touched_files, test_outcomes, still_open]
+#   negative_invariants:
+#     required: true
+#     anchor: Negative Invariants
