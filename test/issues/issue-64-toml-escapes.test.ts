@@ -284,7 +284,7 @@ describe('issue #64: cans check end-to-end', () => {
     const ws = makeWs('cli-clean', { '00-overview.md': spec, 'artifacts/config.toml': REPRO_TOML });
     const r = spawnCli(['check', '--json'], ws.tmp, { ...process.env, CANS_ROOT: '' });
     expect(r.exit).toBe(0);
-    const j = JSON.parse(r.out) as { ok: boolean; refs: { total: number; broken: number } };
+    const j = JSON.parse(r.out) as { ok: boolean; refs: { total: number; broken: number; deepHops: number } };
     expect(j.ok).toBe(true);
     expect(j.refs).toEqual({ total: 4, broken: 0, deepHops: 0 });
   });
