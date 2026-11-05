@@ -149,6 +149,74 @@ One owner per task file. Claim before editing.
 - from: agent-1 → to: agent-3 | task: add-dark-mode | context: color audit pending
 ```
 
+## Agent Execution Policy
+
+How to execute work when this workspace opts in to agent guardrails
+(`agent_guardrails:` in `_rules.yaml` — off by default; when on, `cans check`
+enforces exactly what the workspace enabled, at its configured severity).
+
+Build where your task says. When build isolation is required
+(`isolation.mode: require-target-prefix`), every build output goes under the
+declared prefix — `target/agent-<name>/` — never into the shared root
+directories (`target/`, `dist/`, `build/`, `out/`):
+
+```
+# GOOD: build outputs in target/agent-auth/   ← prefixed, no contention
+# BAD:  build outputs in target/              ← shared, two agents collide
+```
+
+Never rewrite a protected manifest in place (`Cargo.toml`, `package.json`,
+`pyproject.toml` by default). A half-written manifest breaks every concurrent
+reader. Copy → modify → atomic swap:
+
+```
+cp package.json package.json.new    # edit the copy, not the original
+mv package.json.new package.json    # atomic swap: readers see old or new
+```
+
+No residue: a leftover `package.json.bak`, `.orig`, `~` or `.tmp` next to a
+protected manifest is reported as an in-place mutation.
+
+Leave a breadcrumb when you stop. Before a session ends — normally or by
+eviction — APPEND a dated entry to the devlog (`log/devlog.md`, append-only:
+add at the end, never rewrite or prune what is already there) with all three
+sections. The next agent inherits from this log, not from your context:
+
+```markdown
+## 2026-02-01 — add-dark-mode — agent-1
+
+### touched_files
+
+- cans/02-authentication.md
+- src/middleware/session.ts
+
+### test_outcomes
+
+- bun test: 42 pass / 0 fail
+
+### still_open
+
+- refresh-token rotation: untested edge case
+```
+
+## Negative Invariants
+
+Strictly forbidden in this workspace — patterns, dependencies and
+implementations the workspace AUTHOR bans up front. Everything listed here is
+a hard boundary, not a preference: do not implement, import, or work around
+any of it. If a task or ADR seems to require something listed below, stop and
+report the conflict in `_collab/conflicts.md` — never resolve it silently.
+
+This section must exist and stay non-empty: the guardrails engine (when
+`agent_guardrails.negative_invariants.required` is on in `_rules.yaml`)
+checks that AGENTS.md carries this heading with content beneath it. The
+workspace author curates the list; replace the examples below with this
+workspace's real boundaries:
+
+- No new runtime dependency without an ADR recording why (ADR first, manifest second).
+- No hand-edited generated artifacts — regenerate instead (`dist/`, lockfiles, minified bundles).
+- No spec rule duplicated into another file — one canonical home, point at it with `see:`.
+
 ## Token Budget
 
 Before reading:

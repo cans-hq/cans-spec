@@ -21,6 +21,7 @@ import {
 import { checkStructure, checkTbdPolicy } from '../core/structure.ts';
 import { checkStyle } from '../core/style.ts';
 import { checkRedundancy } from '../core/redundancy.ts';
+import { checkAgentGuardrails } from '../core/guardrails.ts';
 import {
   buildRefGraph, checkRefs, checkForbiddenTargets, detectDeepHops, detectOrphans,
   rebuildBackPointers, targetMatchesKey, anchorMatches, extractYamlKeys,
@@ -1294,6 +1295,19 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // overflow.max_node_chars budget) is REMOVED. structure.node_length
     // (§15) is the single node-text-length limit; `overflow.*` keys in
     // _rules.yaml now reject as unrecognized (strict §18 validation).
+  }
+
+  // ── issue #63: the agent-guardrails engine (agent_guardrails, §18) ──
+  // Full checks only: SKIPPED under the --refs-only gate (mirroring
+  // checkStructure) AND under the --structure gate (mirroring the refs
+  // cluster) — a gate's report carries only its own cluster. Workspace-GLOBal
+  // by nature (the devlog, AGENTS.md and _tasks/ declarations are not spec
+  // files), so — exactly like refs — a [file] filter never scopes it. The
+  // engine itself re-checks `enabled`; for a pre-#63 config (block absent /
+  // empty / null, or enabled: false) this call returns [] and the whole run
+  // stays byte-identical to the base commit.
+  if (!opts.refsOnly && !structureOnly) {
+    issues.push(...checkAgentGuardrails(root, rules.agent_guardrails));
   }
 
   // --fix: rewrite ref-by comments ONLY, in spec files ONLY.

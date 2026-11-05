@@ -143,13 +143,19 @@ function stripHashComment(text: string): string {
 /** Scan a quoted scalar starting at text[start] (the quote char itself).
  *  Returns the decoded value, the index just past the CLOSING quote and the
  *  index where the content after the colon-prefixed key begins, or null when
- *  the string does not terminate inside `text`. `line` feeds error reports. */
-function scanQuoted(text: string, start: number, line: number): { value: string; end: number } | null {
+ *  the string does not terminate inside `text`. `line` feeds error reports.
+ *  `rawNewline` reports whether the RAW body (escapes still intact) contained
+ *  a real '\n' character — issue #64: callers that must reject raw newlines
+ *  test this, never the decoded value, where an escape (\n, \u000A) lands as
+ *  a genuine newline character without the source ever having one. */
+function scanQuoted(text: string, start: number, line: number): { value: string; end: number; rawNewline: boolean } | null {
   const quote = text[start]!;
   if (quote === "'") {
     let body = '';
+    let rawNewline = false;
     for (let i = start + 1; i < text.length; i++) {
       const c = text[i]!;
+      if (c === '\n') rawNewline = true;
       if (c !== "'") {
         body += c;
         continue;
@@ -159,21 +165,23 @@ function scanQuoted(text: string, start: number, line: number): { value: string;
         i++;
         continue;
       }
-      return { value: body, end: i + 1 };
+      return { value: body, end: i + 1, rawNewline };
     }
     return null;
   }
   // Double-quoted: collect the raw body, then decode escapes.
   let body = '';
+  let rawNewline = false;
   for (let i = start + 1; i < text.length; i++) {
     const c = text[i]!;
+    if (c === '\n') rawNewline = true;
     if (c === '\\') {
       if (i + 1 >= text.length) return null;
       body += c + text[i + 1]!;
       i++;
       continue;
     }
-    if (c === '"') return { value: decodeEscapes(body, line), end: i + 1 };
+    if (c === '"') return { value: decodeEscapes(body, line), end: i + 1, rawNewline };
     body += c;
   }
   return null;
@@ -1359,7 +1367,11 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
     }
     const q = scanQuoted(text, i, no);
     if (q === null) fail(no, 'unterminated basic string');
-    if (q.value.includes('\n')) fail(no, 'raw newline in a single-line basic string');
+    // Issue #64: a RAW newline is the crime (and cannot even reach this scan
+    // from the per-line TOML reader — it dies earlier as an unterminated
+    // string); an escape that DECODES to one (`\n`, `\u000A`) is valid TOML.
+    // Test the raw body, never the decoded value.
+    if (q.rawNewline) fail(no, 'raw newline in a single-line basic string');
     return { value: scalar(q.value), end: q.end };
   }
   if (c === "'") {
@@ -1373,7 +1385,9 @@ function tomlValue(text: string, pos: number, no: number): { value: SchematicVal
     }
     const q = scanQuoted(text, i, no);
     if (q === null) fail(no, 'unterminated literal string');
-    if (q.value.includes('\n')) fail(no, 'raw newline in a single-line literal string');
+    // Literal strings never decode, so rawNewline ≡ the old decoded check —
+    // kept on the raw flag for consistency (issue #64).
+    if (q.rawNewline) fail(no, 'raw newline in a single-line literal string');
     return { value: scalar(q.value), end: q.end };
   }
   if (c === '[') {

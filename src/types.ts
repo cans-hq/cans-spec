@@ -315,6 +315,59 @@ export interface OutputRules {
   slug_hints: boolean;
 }
 
+/** Issue #63: one `agent_guardrails` block — workspace-only execution
+ *  policies for autonomous agents working inside a CANS-governed workspace.
+ *  The block lives at the top level of `_rules.yaml` and is OPT-IN: absent /
+ *  empty / `enabled: false` leaves the workspace unsupervised (the
+ *  guardrails engine is silent — zero findings, zero behavior change).
+ *  Workspace-only by design (the issue's framing): the engine inspects
+ *  local workspace state only — task declarations, the devlog, AGENTS.md,
+ *  build-output directories — and never touches CI/CD or runner configs. */
+export interface AgentGuardrailsRules {
+  /** Master switch: the whole block is inert unless true. */
+  enabled: boolean;
+  /** The level guardrails findings are emitted at: 'error' (fails the run,
+   *  exit 2) or 'warn' (advisory) — the issue #63 example spelling, the
+   *  structure.severity convention minus 'off' (a guardrails block that is
+   *  off is spelled `enabled: false`, not a severity of off). */
+  severity: 'error' | 'warn';
+  /** Workspace isolation: agents must build into independent, prefixed
+   *  output directories instead of colliding on the shared default. */
+  isolation: {
+    /** 'require-target-prefix' (the check is on) | 'off' (default). */
+    mode: 'require-target-prefix' | 'off';
+    /** Workspace-relative directory prefix agents must declare their build
+     *  outputs under (e.g. `target/agent-` → `target/agent-<name>/`). */
+    prefix: string;
+  };
+  /** Atomic-edit discipline for root workspace manifests: agents must never
+   *  rewrite protected manifests in place (copy-modify-swap instead), so a
+   *  syntax error mid-write cannot break concurrent tasks. */
+  manifests: {
+    atomic_writes_only: boolean;
+    /** Workspace-relative paths of the protected root manifests. */
+    protected: string[];
+  };
+  /** Eviction survival: the append-only local handoff log agents must
+   *  maintain so the next agent inherits what was touched, what passed,
+   *  and what is still open (the `_tasks/` checkboxes do not carry it). */
+  devlog: {
+    enabled: boolean;
+    /** Workspace-relative path of the handoff log. */
+    path: string;
+    /** Section names the log must carry (matched as Markdown headings). */
+    required_sections: string[];
+  };
+  /** Negative boundaries: agents need immediate visibility into strictly
+   *  forbidden patterns, dependencies and implementations — an upfront
+   *  banned-patterns block in AGENTS.md under a fixed anchor heading. */
+  negative_invariants: {
+    required: boolean;
+    /** The heading anchor AGENTS.md must carry (e.g. `Negative Invariants`). */
+    anchor: string;
+  };
+}
+
 export interface Rules {
   structure: StructureRules;
   style: StyleRules;
@@ -324,6 +377,14 @@ export interface Rules {
   token_budget: TokenBudgetRules;
   /** Issue #59: output-surface preferences (display switches, not checks). */
   output: OutputRules;
+  /** Issue #63: workspace-only agent execution policies (the top-level
+   *  `agent_guardrails` block in `_rules.yaml`). A PARAMETER block, not a
+   *  check switch: absent/empty/null = the workspace is unsupervised — the
+   *  guardrails engine is silent and every pre-#63 config behaves
+   *  byte-identically (the issue #55/#57/#62 optional-parameter
+   *  convention; never part of the §18 delete/override reconciliation).
+   *  See AgentGuardrailsRules. */
+  agent_guardrails?: AgentGuardrailsRules | null;
 }
 
 // ── Command Results ──

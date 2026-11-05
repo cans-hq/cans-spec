@@ -1113,9 +1113,14 @@ The post-#56 model:
    warnings, min_uses audit, zero-use-definition verification — a broken
    definition fails the run)
 6. checkRedundancy() (all 4 layers)
-7. Collect all Issue[]
-8. Format output (JSON or text)
-9. Exit code
+7. checkAgentGuardrails() (issue #63 — the workspace-only execution policies
+   of §18: build-output isolation, protected-manifest atomic writes, the
+   devlog handoff log, the AGENTS.md negative-invariants anchor. Runs only
+   when `agent_guardrails.enabled` — absent / empty / `enabled: false` keeps
+   the engine silent: zero findings, zero behavior change)
+8. Collect all Issue[]
+9. Format output (JSON or text)
+10. Exit code
 ```
 
 Each engine is pure. No side effects. Only `--fix` triggers writes (back-pointers only).
@@ -1214,6 +1219,27 @@ token_budget:
 # delete/override reconciliation.
 output:
   slug_hints: false
+# issue #63 — agent_guardrails (documented below): the workspace-only
+# execution policies for autonomous agents. OPT-IN — absent / empty /
+# enabled: false all leave the engine silent; every member below is the
+# documented default a partial block deep-merges over. The shipped
+# templates/_rules.yaml carries the example fully commented out:
+# agent_guardrails:
+#   enabled: false               # master switch — inert unless true
+#   severity: error              # error | warn — band for ALL findings
+#   isolation:
+#     mode: off                  # require-target-prefix | off
+#     prefix: target/agent-      # workspace-relative build-output prefix
+#   manifests:
+#     atomic_writes_only: true
+#     protected: [Cargo.toml, package.json, pyproject.toml]
+#   devlog:
+#     enabled: true
+#     path: log/devlog.md
+#     required_sections: [touched_files, test_outcomes, still_open]
+#   negative_invariants:
+#     required: true
+#     anchor: Negative Invariants
 ```
 
 `redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
@@ -1244,6 +1270,114 @@ delete/override reconciliation: it is not a check surface, so listing
 `output:` alone must never read as a curated config (which would flip every
 unlisted engine off), and an omitted key simply keeps its documented
 default — off.
+
+`agent_guardrails` (issue #63) is the workspace-only execution-policy block
+for autonomous agents — "make all agent execution rules opt-in and
+configurable per project without touching pipeline or runner
+configurations": the engine inspects LOCAL workspace state only (task
+declarations, the devlog, AGENTS.md, build-output directories) and never
+reads or writes CI/CD or runner configurations. It is a PARAMETER section,
+not a check section: never in CHECK_SECTIONS, so it never joins the
+delete/override reconciliation — a pre-#63 config reconciles
+byte-identically, and listing `agent_guardrails:` alone curates nothing
+(it can only add guardrails findings, never flip an engine off). OPT-IN
+three ways: an absent key or section keeps the default block with
+`enabled: false`; an explicitly EMPTY `agent_guardrails:` (null — the first
+§18 top-level section whose explicit empty form is legal and means the
+documented OFF state, `NULL_OK_SECTIONS`) loads clean and leaves
+`agent_guardrails === null` on the Rules surface, the engine silent with
+zero overhead; and a present block with `enabled: false` is a declared-but-off
+config, inert whatever its other members say. When the block is present
+(non-null), omitted members deep-merge over the documented defaults (the
+aliasing convention: `agent_guardrails: { enabled: true }` keeps
+`severity: error`, `isolation.mode: off`, …), and `enabled` is the master
+switch. Members:
+
+- `enabled` (boolean, default **false**) — the whole block is inert unless
+  true. The engine is silent for every config that does not opt in.
+- `severity` (`"error"` | `"warn"`, default `"error"`) — the band ALL
+  guardrails findings emit at: `error` fails the run (exit 2), `warn` is
+  advisory. The structure-severity convention minus `"off"` — off is spelled
+  `enabled: false`, never a severity.
+- `isolation` (a mapping, default `{ mode: off, prefix: target/agent- }`) —
+  `mode` (`"require-target-prefix"` | `"off"`, default `"off"`) and `prefix`
+  (a non-empty workspace-relative POSIX path, default `"target/agent-"`):
+  the directory prefix task-declared build outputs must sit under
+  (`target/agent-` → `target/agent-<name>/`).
+- `manifests` (a mapping, default
+  `{ atomic_writes_only: true, protected: [Cargo.toml, package.json, pyproject.toml] }`) —
+  `atomic_writes_only` (boolean) and `protected` (a NON-EMPTY list of
+  workspace-relative manifest paths; an empty list rejects).
+- `devlog` (a mapping, default
+  `{ enabled: true, path: "log/devlog.md", required_sections: [touched_files, test_outcomes, still_open] }`) —
+  `enabled` (boolean), `path` (a workspace-relative POSIX path) and
+  `required_sections` (a NON-EMPTY list of non-empty section names, matched
+  by the engine as Markdown headings in the log).
+- `negative_invariants` (a mapping, default
+  `{ required: true, anchor: "Negative Invariants" }`) — `required` (boolean)
+  and `anchor` (a non-empty heading text, any Markdown heading level).
+
+The three members that name workspace locations (`isolation.prefix`,
+`devlog.path`, every `manifests.protected` entry) carry the same
+workspace-containment discipline as `external_roots` (issue #55): the engine
+joins them onto the workspace root verbatim, so an absolute or escaping path
+must never parse — `line N — "agent_guardrails.devlog.path" must be a
+workspace-relative POSIX path (no leading "/", no ".." segment, no "\\"),
+got …`. Everything else follows the strict #56 discipline unchanged: an
+unknown sub-key inside any block (`unrecognized key
+"agent_guardrails.devlog.pah" …`), a non-boolean, an unknown enum member
+(`"agent_guardrails.isolation.mode" must be "require-target-prefix" or
+"off", got …`), an empty list where a non-empty one is documented
+(`"agent_guardrails.manifests.protected" must be a non-empty list of
+workspace-relative manifest paths, got …`), an in-block null member (null is
+legal only as the WHOLE-section empty form above), or a non-mapping block
+(`"agent_guardrails.isolation" must be a mapping like { mode:
+require-target-prefix, prefix: "target/agent-" }, got …`) is the
+line-numbered config error — exit 2, `config.invalid` on `_rules.yaml`, the
+check does not run.
+
+When enabled, the guardrails engine runs four checks over local workspace
+state and emits every finding at `severity`:
+
+1. **Isolation** (`isolation.mode: require-target-prefix`): task-declared
+   build outputs must sit under `isolation.prefix`; a task declaring an
+   output in a shared default build directory (`target/`, `dist/`, `build/`,
+   `out/` at the workspace root) is a contention finding — two agents
+   building into the same shared dir stomp each other's artifacts. `mode:
+   off` (the default) never fires.
+2. **Manifests** (`manifests.atomic_writes_only`): the devlog's
+   `touched_files` claiming a protected manifest, or atomic-write residue
+   next to one (`<path>.bak` / `.orig` / `~` / `.tmp`), is an
+   in-place-mutation finding — a half-written manifest breaks every
+   concurrent reader, so protected manifests are copy-modify-swap only.
+3. **Devlog** (`devlog.enabled`): `devlog.path` must exist and carry EVERY
+   name in `devlog.required_sections` as a Markdown heading. The append-only
+   handoff log is the eviction-survival contract: what was touched, what
+   passed, what is still open — the `_tasks/` checkboxes do not carry it.
+4. **Negative invariants** (`negative_invariants.required`): AGENTS.md must
+   carry the `negative_invariants.anchor` heading with non-empty content
+   beneath it — the workspace author's upfront banned-patterns block
+   (templates/AGENTS.md ships the anchor as `## Negative Invariants`, §33).
+
+Every finding rides the existing `structure` category — the issue-category
+union stays closed (additive rule vocabulary instead, the issue #59
+additive-wire discipline: zero reshaped output) — and carries a
+machine-readable `guardrails.*` rule key, the vocabulary agents parse for:
+
+| Rule key | Fires when |
+|---|---|
+| `guardrails.isolation.task_build_dir` | an active task declares a build/output outside `isolation.prefix` |
+| `guardrails.isolation.default_build_dir` | a shared default build dir (`target/`, `dist/`, `build/`, `out/`) exists at the workspace root |
+| `guardrails.manifests.devlog_touched` | the devlog's `touched_files` lists a protected manifest |
+| `guardrails.manifests.residue` | atomic-write residue (`<path>.bak` / `.orig` / `~` / `.tmp`) sits next to a protected manifest |
+| `guardrails.devlog.missing_file` | `devlog.enabled` and the devlog file does not exist |
+| `guardrails.devlog.missing_sections` | the devlog lacks one or more `required_sections` headings |
+| `guardrails.invariants.missing_file` | `negative_invariants.required` and the root `AGENTS.md` does not exist |
+| `guardrails.invariants.missing_anchor` | AGENTS.md lacks the anchor heading |
+| `guardrails.invariants.empty_block` | the anchor heading has no non-empty content beneath it |
+
+Disabled (absent / empty / `enabled: false`) the engine is silent: zero
+findings, zero behavior change — every pre-#63 config runs byte-identically.
 
 ---
 
@@ -1327,6 +1461,8 @@ Primitive. `--flag value` only. No `--flag=value`, no short flags, no combined f
 Creates workspace skeleton. Idempotent. Skips existing files unless `--force`.
 
 **Flags:** `--flat` (default), `--folders`, `--bare` (minimal), `--force`, `--tool <name>` (emits CLAUDE.md or .cursorrules from AGENTS.md).
+
+**Emitted templates (issue #63):** the AGENTS.md template ships the standard agent execution-policy block — `## Agent Execution Policy` (build only under the prefixed `target/agent-*` dirs when isolation requires it, atomic copy-modify-swap on protected root manifests — never in-place rewrites, and the append-only `log/devlog.md` devlog handoff with the `touched_files` / `test_outcomes` / `still_open` sections) and `## Negative Invariants` — the default `agent_guardrails.negative_invariants.anchor` (§18) — with three starter bans the workspace author replaces with this workspace's real boundaries. `_rules.yaml` ships the `agent_guardrails:` block fully COMMENTED OUT: an init workspace stays strictly valid and unsupervised until the author opts in (§18).
 
 **Refuses** if already inside a `cans/` directory.
 
@@ -1840,7 +1976,7 @@ Strips YAML frontmatter. Converts `[[wiki-links]]` and `![[embeds]]` → `see:`.
 
 ---
 
-## 33. AGENTS.md Template (~800 tokens)
+## 33. AGENTS.md Template (~2,100 tokens)
 
 ```markdown
 # CANS Agent Instructions
@@ -1878,6 +2014,32 @@ You are working in a CANS project. Specs live in `cans/`.
 - One owner per task file. Claim before editing.
 - If a task has ← another-agent, do not edit it.
 - If you disagree with a spec, add to _collab/conflicts.md. Never overwrite.
+
+## Agent Execution Policy
+- Active only when the workspace opts in: `agent_guardrails:` in _rules.yaml
+  (off by default; `cans check` enforces what the workspace enabled, at its
+  configured severity).
+- Build isolation (`isolation.mode: require-target-prefix`): every build
+  output under the declared prefix — `target/agent-<name>/` — never the
+  shared root dirs (target/, dist/, build/, out/).
+- Protected manifests (Cargo.toml, package.json, pyproject.toml): never
+  rewrite in place. Copy → modify → atomic swap; no .bak/.orig/~/.tmp residue.
+- Devlog handoff: before a session ends, APPEND a dated entry to
+  log/devlog.md (append-only) carrying all three sections — touched_files /
+  test_outcomes / still_open. The next agent inherits from the log, not
+  from your context.
+
+## Negative Invariants
+- Strictly forbidden patterns / dependencies / implementations, listed by
+  the workspace AUTHOR — hard boundaries, not preferences.
+- Do not implement, import or work around anything listed here; if a task or
+  ADR seems to require it, report the conflict in _collab/conflicts.md.
+- The section must exist and stay non-empty (the guardrails engine checks
+  the anchor heading — §18 negative_invariants); starter bans:
+  - No new runtime dependency without an ADR recording why.
+  - No hand-edited generated artifacts — regenerate instead.
+  - No spec rule duplicated into another file — one canonical home, point
+    at it with `see:`.
 
 ## Token Budget
 - Before reading: `cans budget read "<concept>" --json`
