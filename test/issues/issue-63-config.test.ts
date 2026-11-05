@@ -736,3 +736,226 @@ describe('issue #63 config — line-number discipline: errors inside multi-line 
     );
   });
 });
+
+// ── reconciliation neutrality: agent_guardrails never curates a check ──────
+
+describe('issue #63 config — reconciliation neutrality: listing agent_guardrails never curates a check section', () => {
+  /** A template-shaped file: every §18 CHECK section complete (structure 5
+   *  keys, style 4, content 2, references 5, redundancy 6, token_budget 4). */
+  const TEMPLATE_SHAPED = (withGuardrails: boolean): string =>
+    [
+      'structure:',
+      '  node_length: { min: 3, max: 120 }',
+      '  siblings: { min: 1, max: 12 }',
+      '  depth: { min: 1, max: 5 }',
+      '  single_child_collapse: true',
+      '  empty_nodes: false',
+      'style:',
+      '  prefer: sibling',
+      '  force_nested_above: 6',
+      '  force_sibling_below: 3',
+      '  shared_prefix_detection: true',
+      'content:',
+      '  tbd_allowed: true',
+      '  max_tbd_per_file: 5',
+      'references:',
+      '  mode: pointer',
+      '  back_pointers: true',
+      '  max_hops: 1',
+      '  orphan_check: true',
+      '  duplicate_home_check: true',
+      'redundancy:',
+      '  enabled: true',
+      '  word_frequency_threshold: 4',
+      '  phrase_overlap_threshold: 0.7',
+      '  cross_file_threshold: 2',
+      '  fuzzy: true',
+      'token_budget:',
+      '  enabled: true',
+      '  default_limit: 4096',
+      '  estimate_chars_per_token: 3.5',
+      '  warn_threshold: 0.8',
+      ...(withGuardrails ? ['agent_guardrails:', '  enabled: true'] : []),
+      '',
+    ].join('\n');
+
+  test('the template-shaped file + agent_guardrails reconciles every check key EXACTLY as without it', () => {
+    const withG = loadOk(TEMPLATE_SHAPED(true));
+    const withoutG = loadOk(TEMPLATE_SHAPED(false));
+    expect(withG.structure).toEqual(withoutG.structure);
+    expect(withG.style).toEqual(withoutG.style);
+    expect(withG.content).toEqual(withoutG.content);
+    expect(withG.references).toEqual(withoutG.references);
+    expect(withG.redundancy).toEqual(withoutG.redundancy);
+    expect(withG.token_budget).toEqual(withoutG.token_budget);
+    expect(withG.output).toEqual(withoutG.output);
+    // …and the guardrails section itself is the only difference
+    expect(withG.agent_guardrails).toEqual({ ...defaultAgentGuardrails(), enabled: true });
+    expect(withoutG.agent_guardrails).toEqual(defaultAgentGuardrails());
+  });
+
+  test('a sparse file listing ONLY agent_guardrails keeps every check section at its default', () => {
+    // agent_guardrails is NOT in CHECK_SECTIONS → never in SECTION_KEYS → the
+    // delete/override reconciliation never sees it: deleteMode stays false
+    // (no structure:, no complete section), so nothing is deleted/turned off.
+    const rules = loadOk('agent_guardrails:\n  enabled: true\n');
+    const dr = defaultRules();
+    expect(rules.structure).toEqual(dr.structure);
+    expect(rules.style).toEqual(dr.style);
+    expect(rules.content).toEqual(dr.content);
+    expect(rules.references).toEqual(dr.references);
+    expect(rules.redundancy).toEqual(dr.redundancy);
+    expect(rules.token_budget).toEqual(dr.token_budget);
+    expect(rules.output).toEqual(dr.output);
+    expect(rules.agent_guardrails!.enabled).toBe(true); // the listed key still applies
+  });
+
+  test('a sparse file with agent_guardrails + a minority references section: coverage math unchanged', () => {
+    // references lists 1 of its 5 SECTION_KEYS (mode is a parameter that
+    // counts towards coverage) — not majority, so the omitted check keys keep
+    // their defaults. Adding agent_guardrails must not change that: identical
+    // to the same file without the section.
+    const S = (g: boolean): string =>
+      ['references:', '  mode: pointer', ...(g ? ['agent_guardrails:', '  enabled: true'] : []), ''].join('\n');
+    const withG = loadOk(S(true));
+    const withoutG = loadOk(S(false));
+    expect(withG.references).toEqual(withoutG.references);
+    expect(withG.references.back_pointers).toBe(true); // default, NOT deleted to false
+    expect(withG.references.orphan_check).toBe(true);
+    expect(withG.references.duplicate_home_check).toBe(true);
+    expect(withG.references.max_hops).toBe(defaultRules().references.max_hops);
+  });
+
+  test('an explicit empty section in an otherwise template-shaped file is equally neutral', () => {
+    const base = loadOk(TEMPLATE_SHAPED(false));
+    const withEmpty = loadOk(TEMPLATE_SHAPED(false).replace('token_budget:', 'agent_guardrails:\ntoken_budget:'));
+    expect(withEmpty.structure).toEqual(base.structure);
+    expect(withEmpty.token_budget).toEqual(base.token_budget);
+    expect(withEmpty.agent_guardrails).toBeNull(); // the documented OFF state
+  });
+});
+
+// ── pre-#63 compatibility: the section defaults to inert ───────────────────
+
+describe('issue #63 config — pre-#63 compatibility: defaults are inert, old configs unchanged', () => {
+  test('defaultRules() ships the inert block (enabled: false) — engine-off by construction', () => {
+    const dr = defaultRules();
+    expect(dr.agent_guardrails).toEqual(defaultAgentGuardrails());
+    expect(dr.agent_guardrails!.enabled).toBe(false);
+  });
+
+  test('loadRules on a workspace WITHOUT the section returns the same inert defaults', () => {
+    const rules = loadOk('structure:\n  node_length: { min: 3, max: 120 }\n');
+    expect(rules.agent_guardrails).toEqual(defaultAgentGuardrails());
+    expect(rules.agent_guardrails!.enabled).toBe(false);
+    // and a completely empty config file too (the §18 absent-file convention)
+    const empty = loadOk('# nothing but a comment\n');
+    expect(empty.agent_guardrails).toEqual(defaultAgentGuardrails());
+  });
+
+  test('a realistic pre-#63 sparse config loads identically, with agent_guardrails default-filled', () => {
+    // The shape a pre-#63 workspace would have on disk: parameters and check
+    // keys only, no agent_guardrails section. Every pre-existing section must
+    // reconcile exactly as before (references 2-of-5 covered → not majority →
+    // nothing deleted); the new section arrives inert.
+    const { rules, error } = load(
+      [
+        'references:',
+        '  mode: pointer',
+        '  back_pointers: false',
+        'redundancy:',
+        '  stopwords:',
+        '    - the',
+        '    - a',
+        '',
+      ].join('\n'),
+    );
+    expect(error).toBeNull();
+    const dr = defaultRules();
+    expect(rules!.agent_guardrails).toEqual(defaultAgentGuardrails());
+    expect(rules!.references).toEqual({ ...dr.references, mode: 'pointer', back_pointers: false });
+    expect(rules!.redundancy).toEqual({ ...dr.redundancy, stopwords: ['the', 'a'] });
+    expect(rules!.structure).toEqual(dr.structure);
+    expect(rules!.style).toEqual(dr.style);
+  });
+
+  test('agent_guardrails is not a §18 check section: the Rules surface never grows check reconciliation for it', () => {
+    // Deleting a guardrails key is a PARAMETER omission (defaults keep), not
+    // a check deletion (→ OFF). A file that lists ONLY the manifests block
+    // (one member of the section) must not turn anything off anywhere.
+    const rules = loadOk('agent_guardrails:\n  manifests:\n    protected: [Cargo.toml]\n');
+    const dr = defaultRules();
+    expect(rules.agent_guardrails).toEqual({
+      ...dr.agent_guardrails,
+      manifests: { ...dr.agent_guardrails!.manifests, protected: ['Cargo.toml'] },
+    });
+    expect(rules.structure).toEqual(dr.structure); // deleteMode stayed false
+  });
+});
+
+// ── init-template validity: `cans init` output is strictly valid ───────────
+
+describe('issue #63 config — cans init ships a strictly valid _rules.yaml', () => {
+  test('a real `cans init` workspace passes strict validation (with whatever agent_guardrails spelling the template ships)', () => {
+    const dir = join(SCRATCH, `init-${++wsSeq}`);
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    createdDirs.push(dir);
+    const r = runCli(['init'], dir);
+    expect(r.exit).toBe(0);
+
+    // The generated cans/_rules.yaml loads without any §18 error…
+    const rules = loadRules(join(dir, 'cans'));
+    // …and the guardrails engine is OFF by construction: either the template
+    // does not spell the section (→ the inert defaults) or it spells it
+    // explicitly OFF (→ an enabled: false block). A template that enabled
+    // guardrails for every new workspace would violate the #63 contract.
+    const ag = rules.agent_guardrails;
+    expect(ag === null || ag.enabled === false).toBe(true);
+    if (ag !== null) {
+      expect(ag).toEqual(defaultAgentGuardrails()); // a spelled block must be the documented OFF block
+    }
+  });
+
+  test('the shipped template file itself (templates/_rules.yaml) passes strict validation', () => {
+    const template = readFileSync(join(REPO, 'templates', '_rules.yaml'), 'utf-8');
+    const rules = loadOk(template);
+    const ag = rules.agent_guardrails;
+    expect(ag === null || ag.enabled === false).toBe(true);
+  });
+});
+
+// ── CLI blackbox: an invalid block is a config error, never a finding ──────
+
+describe('issue #63 config — CLI blackbox: an invalid agent_guardrails is a config error (exit 2)', () => {
+  test("severity: 'warning' → exit 2, config.invalid on _rules.yaml with the line-numbered detail", () => {
+    const ws = makeWs('invalid-severity');
+    writeFileSync(join(ws.cans, '01-alpha.md'), '- Alpha overview hub\n  - Zephyr ledger details\n');
+    writeFileSync(
+      join(ws.cans, '_rules.yaml'),
+      ['agent_guardrails:', '  enabled: true', '  severity: warning', ''].join('\n'),
+    );
+
+    const r = runCli(['check', '--json'], ws.root);
+    expectConfigError(
+      r,
+      'line 3 — "agent_guardrails.severity" must be "error" or "warn", got "warning"',
+    );
+  });
+
+  test('an escaping path member is a config error too — the check never runs on an uncontained prefix', () => {
+    const ws = makeWs('escaping-prefix');
+    writeFileSync(join(ws.cans, '01-alpha.md'), '- Alpha overview hub\n  - Zephyr ledger details\n');
+    writeFileSync(
+      join(ws.cans, '_rules.yaml'),
+      ['agent_guardrails:', '  isolation:', '    prefix: ../out', ''].join('\n'),
+    );
+
+    const r = runCli(['check', '--json'], ws.root);
+    expectConfigError(
+      r,
+      'line 3 — "agent_guardrails.isolation.prefix" must be a workspace-relative POSIX path ' +
+        '(no leading "/", no ".." segment, no "\\"), got "../out"',
+    );
+  });
+});
