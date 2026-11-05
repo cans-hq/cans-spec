@@ -979,6 +979,28 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
           if (typeof mv !== 'number' || !Number.isInteger(mv) || mv < 1) {
             fail('an integer >= 1', at, mv);
           }
+        } else if (key === 'include') {
+          // Issue #65: workspace-relative globs of plugin files that join
+          // the checked file set when aliasing is enabled. One glob grammar
+          // (core/glob.ts), the same discipline as forbidden_targets'
+          // source/except: a non-list shape fails with the documented
+          // expectation, each member must be a non-empty string that
+          // COMPILES — a malformed glob (unclosed "[" class or dangling
+          // escape) is a line-numbered error, so an include pattern can
+          // never be silently inert while the author believes plugin files
+          // are being checked.
+          if (!Array.isArray(mv)) fail('a list of globs (* ? [class] **)', at, mv);
+          mv.forEach((g, j) => {
+            const gAt = `${at}[${j}]`;
+            if (typeof g !== 'string' || g === '') {
+              fail('a non-empty glob (* ? [class] **)', gAt, g);
+            }
+            if (globToRegExp(g) === null) {
+              throw new Error(
+                `line ${lineOf(keyLines, gAt)} — "${gAt}" is not a valid glob (unclosed "[" or dangling "\\")`,
+              );
+            }
+          });
         } else {
           throw new Error(
             `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,

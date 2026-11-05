@@ -71,10 +71,11 @@ const FENCE_RE = /^```/;
 const BULLETISH_RE = /^\s*-\s+/;
 
 /** The §18 default aliasing block: disabled, file scope, both styles,
- *  min_uses 2 (issue #57: "defaults when the block is absent … and
- *  full-pointer corpora pass unchanged"). */
+ *  min_uses 2, no include patterns (issue #57: "defaults when the block is
+ *  absent … and full-pointer corpora pass unchanged"; issue #65 adds
+ *  `include` — absent = corpus-only, the pre-#65 behavior). */
 export function defaultAliasing(): AliasingRules {
-  return { enabled: false, scope: 'file', style: 'both', min_uses: 2 };
+  return { enabled: false, scope: 'file', style: 'both', min_uses: 2, include: [] };
 }
 
 /** Is `name` a grammar-legal alias name (numeric or named)? */

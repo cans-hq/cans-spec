@@ -1,6 +1,7 @@
 import { statSync, readdirSync, existsSync, mkdirSync, type Stats } from 'fs';
 import { join, relative, dirname, basename, isAbsolute } from 'path';
 import { globFiles as runtimeGlobFiles } from './runtime.ts';
+import { globToRegExp } from './glob.ts';
 
 const SPEC_FILE_RE = /^\d{2}-.+\.md$/;
 
@@ -69,6 +70,59 @@ export function discoverSpecFiles(root: string): string[] {
   };
   walk(root, '');
   return out.sort();
+}
+
+/** Issue #65: plugin files — the workspace .md files matched by the
+ *  `references.aliasing.include` globs, outside the spec corpus and the aux
+ *  ref holders (_tasks/, _adr/). Same walk discipline as discoverSpecFiles:
+ *  `_`-prefixed path segments and tool artifacts are skipped at every level
+ *  (a plugin can never be smuggled in under `_tasks/` or as AGENTS.md).
+ *  The match is anchored to the WHOLE '/'-joined relative key (core/glob.ts
+ *  grammar — `cans/plugins/*.md` never matches `a/cans/plugins/x.md`), and
+ *  keys already in `exclude` (the loaded corpus/aux sets, so a pattern
+ *  overlapping the corpus can never double-load a file) are dropped.
+ *
+ *  A malformed glob (empty, unclosed `[`, dangling `\`) compiles to null and
+ *  never matches: the §18 strict validator rejects such patterns with a
+ *  line number before discovery runs, so the null path is defense-in-depth,
+ *  not a second, weaker grammar. A pattern that matches nothing yields
+ *  nothing — discovery does not second-guess the author's globs.
+ *
+ *  Returns '/'-joined relative keys, sorted, deduplicated. */
+export function discoverAliasingFiles(
+  root: string,
+  include: ReadonlyArray<string>,
+  exclude: ReadonlySet<string>,
+): string[] {
+  if (include.length === 0 || !dirExists(root)) return [];
+  const regexes: RegExp[] = [];
+  for (const g of include) {
+    const r = globToRegExp(g);
+    if (r !== null) regexes.push(r);
+  }
+  if (regexes.length === 0) return [];
+  const out = new Set<string>();
+  const walk = (dir: string, prefix: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('_') || TOOL_ARTIFACTS.has(entry.name)) continue;
+      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        if (exclude.has(rel)) continue;
+        if (regexes.some(r => r.test(rel))) out.add(rel);
+      } else if (entry.isDirectory()) {
+        if (exclude.has(rel)) continue;
+        walk(join(dir, entry.name), rel);
+      }
+    }
+  };
+  walk(root, '');
+  return [...out].sort();
 }
 
 /** Detect flat-vs-folder conflicts: both `<slug>.md` AND `<slug>/index.md` exist.

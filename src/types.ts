@@ -271,6 +271,20 @@ export interface AliasingRules {
    *  file) are alias-eligible: a hand-written alias below the threshold is an
    *  error — indirection with no saving. Integer >= 1, default 2. */
   min_uses: number;
+  /** Issue #65: workspace-relative glob patterns (the core/glob.ts grammar)
+   *  of markdown files OUTSIDE the spec corpus that join the checked file
+   *  set when aliasing is enabled — `cans/plugins/*.md` plugin files whose
+   *  `see:` refs (including `#leaf` pointers into YAML artifacts, issue #58)
+   *  must resolve, verify and alias exactly like corpus files. A matched
+   *  file loads in the PLUGIN tier: refs and alias tables only (the
+   *  _tasks/_adr aux precedent) — never structure/style/content/redundancy,
+   *  never promoted, never --fix-rewritable in v1. Absent/empty =
+   *  corpus-only, byte-identical to the pre-#65 behavior; the member is a
+   *  PARAMETER (like scope/style/min_uses) and never participates in the
+   *  §18 delete/override reconciliation. Validated strictly (issue #56): a
+   *  non-list shape, an empty pattern, or a glob that does not compile is a
+   *  line-numbered config error. */
+  include?: string[];
 }
 
 export interface RedundancyRules {
