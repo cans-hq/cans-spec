@@ -8,6 +8,7 @@ import {
   discoverSpecFiles, discoverActiveTasks, discoverAdrs, resolveWorkspaceRoot,
   dirExists, detectFlatFolderConflicts, detectMalformedSpecDirs,
   resolveSpecFile, promotableSpecKey, discoverAliasingFiles, isFile, toRelative,
+  normalizeNamedFileArg,
 } from '../core/fs.ts';
 import {
   parseOutline, extractBackPointers, realNodes, flattenNodes, maxDepth as outlineMaxDepth,
@@ -296,23 +297,28 @@ const PLUGIN_REFUSAL_SKIP = new Set(['AGENTS.md', 'CLAUDE.md', '.cursorrules']);
  *  could load — the discoverability case the issue is about: `cans check
  *  cans/plugins/profile.md` on a workspace that never configured the glob
  *  must say WHICH knob opens the file, not just that nothing matched.
- *  Existence + containment are confirmed WITHOUT loading the file:
- *  toRelative gives the workspace-relative spelling (escaping paths and
- *  absolute spellings fail the containment test) and isFile the stat (a
- *  directory, a missing path — classic message). The same classes the walk
- *  skips keep the classic message too (`_`-prefixed segments, tool
- *  artifacts, non-.md): an include glob could never load them, so
- *  suggesting one would be a lie. */
+ *  Existence + containment are confirmed WITHOUT loading the file: two
+ *  legal spellings feed the probe — workspace-relative (the ref-target
+ *  convention) and process-CWD-relative (the production `cans/`-inside-
+ *  the-project layout, the issue's own command spellings) through
+ *  normalizeNamedFileArg; a file that exists under the workspace and is of
+ *  a class the include walk COULD load gets the knob-naming message.
+ *
+ *  The class guards ride the NORMALIZED key (toRelative + isFile): the same
+ *  classes the walk skips keep the classic message too (`_`-prefixed
+ *  segments, tool artifacts, non-.md) — an include glob could never load
+ *  them, so suggesting one would be a lie. */
 function fileFilterRefusal(file: string, root: string): string {
-  const abs = join(root, file);
+  const key = normalizeNamedFileArg(root, file);
+  const abs = join(root, key);
   const rel = toRelative(root, abs);
-  const insideRoot = !isAbsolute(file)
+  const insideRoot = !isAbsolute(key)
     && rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
   const loadable = insideRoot
     && rel.endsWith('.md')
     && rel.split('/').every(seg => !seg.startsWith('_') && !PLUGIN_REFUSAL_SKIP.has(seg));
   if (loadable && isFile(abs)) {
-    return `no spec file matches "${file}" — the file exists but is outside the spec corpus; add a references.aliasing.include glob (e.g. cans/plugins/*.md) in _rules.yaml to check plugin files (issue #65)`;
+    return `no spec file matches "${file}" — the file exists but is outside the spec corpus; add a references.aliasing.include glob (e.g. plugins/*.md) in _rules.yaml to check plugin files (issue #65)`;
   }
   return `no spec file matches "${file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`;
 }
@@ -1067,8 +1073,14 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   refFindings(finishAliasChecks(allFiles, aliasTables, root, externalCfg, aliasCfg));
 
   // File filter: restrict structure/style/redundancy to one file (refs stay global).
+  // Issue #65: the named-file filter accepts BOTH legal spellings —
+  // workspace-relative (the ref-target convention) and process-CWD-relative
+  // (the production `cans/`-inside-the-project layout, the issue's own
+  // command spellings). Normalization only fires when the path EXISTS under
+  // the workspace, so it adds matches without ever rewriting a refusal.
+  const fileKey = opts.file !== null ? normalizeNamedFileArg(root, opts.file) : null;
   const checkable = opts.file !== null
-    ? [...specFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
+    ? [...specFiles.keys()].filter(k => targetMatchesKey(fileKey!, k))
     : [...specFiles.keys()];
   // Issue #65: the named file may be a PLUGIN-TIER file — no spec key matches
   // it, but the tier loaded it. The run proceeds instead of refusing: the
@@ -1079,7 +1091,7 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // key is named by its path spellings (`cans/plugins/profile.md`,
   // `cans/plugins/profile`) exactly the way spec keys accept theirs.
   const pluginMatch = opts.file !== null
-    ? [...pluginFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
+    ? [...pluginFiles.keys()].filter(k => targetMatchesKey(fileKey!, k))
     : [];
   // §37: a file filter that matches nothing is a user-correctable mistake —
   // never a silently-empty clean check (missing Part-4 item, QA-02 F13).

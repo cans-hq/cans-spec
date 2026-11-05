@@ -1,5 +1,5 @@
 import { statSync, readdirSync, existsSync, mkdirSync, type Stats } from 'fs';
-import { join, relative, dirname, basename, isAbsolute } from 'path';
+import { join, relative, dirname, basename, isAbsolute, resolve } from 'path';
 import { globFiles as runtimeGlobFiles } from './runtime.ts';
 import { globToRegExp } from './glob.ts';
 
@@ -123,6 +123,33 @@ export function discoverAliasingFiles(
   };
   walk(root, '');
   return [...out].sort();
+}
+
+/** Issue #65: normalize a named-file CLI argument to the workspace-relative
+ *  spelling the engines match against (targetMatchesKey over loaded keys).
+ *
+ *  Two legal spellings exist in production: relative to the WORKSPACE ROOT
+ *  (the ref-target convention, `plugins/profile.md`), and relative to the
+ *  process CWD — the production contract keeps the workspace in a `cans/`
+ *  directory inside the project (resolveWorkspaceRoot's walk-up), so an
+ *  author at the project root spells the same file
+ *  `cans/plugins/profile.md` (the issue #65 commands). The workspace
+ *  spelling wins when both exist; a raw that names no file under the
+ *  workspace (or escapes it) is returned UNCHANGED so the callers' refusal
+ *  probes treat it exactly as before — normalization only ever ADDS a
+ *  match, never rewrites a refusal into a load. */
+export function normalizeNamedFileArg(root: string, raw: string): string {
+  const clean = raw.replace(/\/+$/, '');
+  if (clean === '') return raw;
+  const asWorkspace = join(root, clean);
+  if (isInsideRoot(root, asWorkspace) && isFile(asWorkspace)) {
+    return toRelative(root, asWorkspace);
+  }
+  const fromCwd = resolve(process.cwd(), clean);
+  if (isInsideRoot(root, fromCwd) && isFile(fromCwd)) {
+    return toRelative(root, fromCwd);
+  }
+  return raw;
 }
 
 /** Detect flat-vs-folder conflicts: both `<slug>.md` AND `<slug>/index.md` exist.

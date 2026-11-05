@@ -221,7 +221,7 @@ function baseWs(name: string, rules: string, profile: string = PROFILE): { tmp: 
 // historical message byte-identical for names that exist nowhere).
 const ENHANCED = (file: string): string =>
   `no spec file matches "${file}" — the file exists but is outside the spec corpus; ` +
-  `add a references.aliasing.include glob (e.g. cans/plugins/*.md) in _rules.yaml to alias plugin files (issue #65)`;
+  `add a references.aliasing.include glob (e.g. plugins/*.md) in _rules.yaml to alias plugin files (issue #65)`;
 const HISTORICAL = (file: string): string =>
   `no spec file matches "${file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`;
 

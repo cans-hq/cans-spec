@@ -399,7 +399,7 @@ describe('issue #65 engine — the refusal names the knob', () => {
     expect(enhanced.ok).toBe(false);
     expect(enhanced.exitCode).toBe(2);
     expect(enhanced.error).toBe(
-      'no spec file matches "cans/plugins/profile.md" — the file exists but is outside the spec corpus; add a references.aliasing.include glob (e.g. cans/plugins/*.md) in _rules.yaml to check plugin files (issue #65)',
+      'no spec file matches "cans/plugins/profile.md" — the file exists but is outside the spec corpus; add a references.aliasing.include glob (e.g. plugins/*.md) in _rules.yaml to check plugin files (issue #65)',
     );
 
     // Missing file: the suggestion would be unactionable — classic message.

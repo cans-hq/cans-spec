@@ -44,7 +44,7 @@ import type { AliasResult, AliasFileOutcome } from '../types.ts';
 import { readText, writeText } from '../core/runtime.ts';
 import {
   resolveWorkspaceRoot, discoverSpecFiles, discoverActiveTasks, discoverAdrs,
-  discoverAliasingFiles, dirExists, exists, isFile,
+  discoverAliasingFiles, dirExists, exists, isFile, normalizeNamedFileArg,
 } from '../core/fs.ts';
 import { targetMatchesKey } from '../core/refs.ts';
 import { loadRules } from '../core/rules.ts';
@@ -73,7 +73,13 @@ const ALIAS_FLAGS: FlagSpec[] = [
  *  never "the file", whatever its name. The probed path always ends in .md,
  *  so non-markdown files keep the historical refusal. */
 function namedMdFileInsideWorkspace(root: string, name: string): boolean {
-  const clean = name.replace(/\/+$/, '');
+  // Issue #65: the probe rides the NORMALIZED key — the production layout
+  // keeps the workspace in a `cans/` directory inside the project, so the
+  // issue's command spellings (`cans/plugins/profile.md` from the project
+  // root) and the workspace-relative keys (`plugins/profile.md`) differ;
+  // both must read as "exists outside the loaded set".
+  const key = normalizeNamedFileArg(root, name);
+  const clean = key.replace(/\/+$/, '');
   if (clean === '') return false;
   const candidates = clean.endsWith('.md') ? [clean] : [`${clean}.md`];
   for (const c of candidates) {
@@ -152,7 +158,13 @@ export async function run(args: string[]): Promise<AliasResult> {
   if (aliasCfg.enabled === true && includeGlobs.length > 0) {
     rels.push(...discoverAliasingFiles(root, includeGlobs, new Set(rels)));
   }
-  const scoped = file !== null ? rels.filter(rel => targetMatchesKey(file, rel)) : rels;
+  // Issue #65: the named filter accepts BOTH legal spellings — the raw
+  // (workspace-relative) and the process-CWD-relative spelling (the
+  // production `cans/`-inside-the-project layout); normalization only fires
+  // when the path exists under the workspace. The refusal message below
+  // still quotes the author's original spelling.
+  const fileKey = file !== null ? normalizeNamedFileArg(root, file) : null;
+  const scoped = file !== null ? rels.filter(rel => targetMatchesKey(fileKey!, rel)) : rels;
   if (file !== null && scoped.length === 0) {
     // Issue #65: a named file that physically exists inside the workspace as
     // a .md file but matches no loaded key is a CORPUS-BOUNDARY refusal, not
@@ -164,7 +176,7 @@ export async function run(args: string[]): Promise<AliasResult> {
     if (namedMdFileInsideWorkspace(root, file)) {
       return fail(
         `no spec file matches "${file}" — the file exists but is outside the spec corpus; ` +
-        `add a references.aliasing.include glob (e.g. cans/plugins/*.md) in _rules.yaml to alias plugin files (issue #65)`,
+        `add a references.aliasing.include glob (e.g. plugins/*.md) in _rules.yaml to alias plugin files (issue #65)`,
       );
     }
     return fail(`no spec file matches "${file}" — pass a spec filename like 04-api.md or run \`cans status\` to list files`);
