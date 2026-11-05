@@ -428,6 +428,60 @@ keeps its see-like-prose warning). `--dry-run` previews. `cans export`
 renders alias uses as their full targets — consumers outside the workspace
 cannot see its definitions.
 
+### The plugin tier (`references.aliasing.include`)
+
+Aliasing and anchor verification stop at the spec corpus — and the refs that
+motivated them often live outside it: kelir's `cans/plugins/profile.md` holds
+133 `see:` pointers into `artifacts/examples/fixtures/kelir.yaml#leaf`
+anchors that `cans check` never loaded, never verified and could never alias.
+Issue #65 closes the boundary: list workspace-relative glob patterns under
+`references.aliasing.include` and the matching files join the checked file
+set as the PLUGIN TIER whenever aliasing is enabled (the `_tasks/`/`_adr/`
+aux precedent, hardened):
+
+```yaml
+references:
+  aliasing:
+    enabled: true
+    include:
+      - cans/plugins/*.md    # every plugin .md joins the checked set
+```
+
+Semantics: plugin files are parsed for refs and alias tables, and their refs
+join the ref graph like any other referrer's (ref-by marks, hops, SCC, orphan
+relief, `refs.total`). Alias uses and definitions in a plugin file resolve
+and verify EXACTLY like a corpus file's — file existence, `#leaf` anchor
+match (ambiguous-leaf and broken-leaf errors included), declared external
+roots, traversal containment, duplicate-home, `orphan_check`. A broken alias
+definition fails the run (exit 2), not just the uses; an unused definition is
+a warning; below `min_uses` is an error; `min_uses` and `style` are enforced
+identically. Unlike aux files, an unreadable or parse-broken plugin file is
+an EXPLICIT error — the author explicitly included it, so it is never
+silently skipped.
+
+What the tier deliberately does NOT do: plugin files get no structure, style,
+content or redundancy checks (a refs-only tier — definitions are file
+metadata, never nodes); their refs never promote targets into the spec
+corpus; they are not `--fix`-rewritable in v1; and they are not listed by
+`cans status`. Scope stays file-only (issue #57): a plugin file's aliases are
+its own definitions only — no cross-file leakage.
+
+CLI: `cans alias expand|collapse` operate on plugin files under the same
+rules (collapse requires aliasing enabled; per-file refusals leave files
+byte-identical; expand restores full pointers byte-identically).
+`cans check <plugin-file>` names the file as checked (refs layer) instead of
+"0 files checked"; a named file that exists but is outside every loaded set
+refuses with a hint to add a `references.aliasing.include` glob.
+
+Backwards compatible by construction: `include` is a PARAMETER like
+`scope`/`style`/`min_uses` (never part of the §18 delete/override
+reconciliation), and absent or empty means corpus-only — the pre-#65
+behavior, byte-identical, no existing workspace needs a change. Strict
+validation keeps the #56 discipline: a non-list shape, an empty member, or a
+glob that does not compile is a line-numbered config error (`line N —
+"references.aliasing.include[0]" is not a valid glob (unclosed "[" or
+dangling "\")`) — an include pattern can never be silently inert.
+
 ### Forbidden targets (`references.forbidden_targets`)
 
 `cans check` could always verify that a pointer EXISTS — never that it is
