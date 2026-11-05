@@ -6,4 +6,5 @@ export * from './structure.ts';
 export * from './style.ts';
 export * from './redundancy.ts';
 export * from './rules.ts';
+export * from './guardrails.ts';
 export * from './token-budget.ts';
