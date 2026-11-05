@@ -178,11 +178,9 @@ describe('issue #63 g2 — isolation (a): task build dirs must sit under the pre
     expect(issues).toHaveLength(3);
     expect(issues.map(i => i.file)).toEqual(['_tasks/a.md', '_tasks/b.md', '_tasks/c.md']); // discoverActiveTasks order
     expect(issues.map(i => i.line)).toEqual([1, 1, 1]);
-    expect(issues.map(i => i.message)).toEqual([
-      expect.stringContaining('declares target: dist'),
-      expect.stringContaining('declares output: out'),
-      expect.stringContaining('declares build_dir: build/x'),
-    ]);
+    expect(issues[0]!.message).toContain('declares target: dist');
+    expect(issues[1]!.message).toContain('declares output: out');
+    expect(issues[2]!.message).toContain('declares build_dir: build/x');
   });
 
   test('normalization: ./, //, trailing slash and quotes all satisfy the prefix; a prefixed value never fires', () => {
@@ -358,14 +356,10 @@ describe('issue #63 g4 — manifests (a): devlog touched_files listing a protect
     });
     const issues = checkAgentGuardrails(root, manifestsOnly());
     expect(issues).toHaveLength(3);
-    // Findings iterate the PROTECTED config order (Cargo.toml, package.json,
-    // pyproject.toml); each carries its own first listing line.
     expect(issues.map(i => i.line)).toEqual([4, 2, 3]);
-    expect(issues.map(i => i.message)).toEqual([
-      expect.stringContaining('lists Cargo.toml'),
-      expect.stringContaining('lists package.json'),
-      expect.stringContaining('lists pyproject.toml'),
-    ]);
+    expect(issues[0]!.message).toContain('lists Cargo.toml');
+    expect(issues[1]!.message).toContain('lists package.json');
+    expect(issues[2]!.message).toContain('lists pyproject.toml');
   });
 
   test('the section ends at the next heading of level <= its own; deeper headings stay inside', () => {
@@ -409,12 +403,10 @@ describe('issue #63 g4 — manifests (a): devlog touched_files listing a protect
     });
     const issues = checkAgentGuardrails(root, manifestsOnly());
     expect(issues).toHaveLength(3);
-    expect(issues.map(i => i.line)).toEqual([2, 2, 2]); // one finding per manifest
-    expect(issues.map(i => i.message)).toEqual([
-      expect.stringContaining('lists Cargo.toml'),
-      expect.stringContaining('lists package.json'),
-      expect.stringContaining('lists pyproject.toml'),
-    ]);
+    expect(issues.map(i => i.line)).toEqual([2, 2, 2]); // one finding per manifest, protected config order
+    expect(issues[0]!.message).toContain('lists Cargo.toml');
+    expect(issues[1]!.message).toContain('lists package.json');
+    expect(issues[2]!.message).toContain('lists pyproject.toml');
   });
 
   test('switch off / no devlog file / custom devlog path', () => {
