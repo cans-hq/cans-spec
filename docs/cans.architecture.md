@@ -715,6 +715,74 @@ the resolved graph for consumers that cannot see the workspace's
 definitions); `cans budget` follows resolved refs like `cans check`, so
 the two commands never disagree about what a file points at.
 
+### The plugin tier — refs outside the corpus (issue #65)
+
+#57's aliasing and #58's leaf-anchor verification stop at the spec corpus —
+and the refs that motivated them often live outside it. The kelir case: a
+plugin file, `cans/plugins/profile.md`, holding 133 `see:` pointers into
+`artifacts/examples/fixtures/kelir.yaml#leaf` anchors — never loaded by
+`cans check`, never verified, never aliasable. The fix is one config member
+plus a third tier in the checked file set: `references.aliasing.include`
+(§18), a list of workspace-relative glob patterns; when
+`references.aliasing.enabled` is true, the matched files join the checked
+file set as the PLUGIN TIER — the `_tasks/`/`_adr/` aux precedent (refs
+parsed, targets verified), hardened for files the author explicitly named.
+
+**Discovery — `discoverAliasingFiles(root, include, exclude)`** (§32), the
+walk shared by the check engine and the alias CLI: the same walk discipline
+as `discoverSpecFiles` — `_`-prefixed path segments and tool artifacts are
+skipped at every level, so a plugin can never be smuggled in under
+`_tasks/` or as `AGENTS.md`; patterns are matched ANCHORED against the
+whole `/`-joined relative key in the `core/glob.ts` grammar (`*` never
+crosses a segment, `**` does, `?` is one character, `[…]` a class —
+`cans/plugins/*.md` never matches `a/cans/plugins/x.md`, and
+`plugins/*.md` never matches `cans/plugins/x.md`); keys already in
+`exclude` — the loaded corpus and aux sets — WIN, so a pattern overlapping
+the corpus can never double-load a file. A pattern that matches nothing
+yields nothing (discovery does not second-guess the author's globs); the
+result is sorted, deduplicated keys.
+
+**Pipeline position (§17):** the plugin pass runs AFTER the aux pass and
+BEFORE the ref graph is built — plugin files are parsed for refs and alias
+tables and merged into `allFiles`, so every graph consumer downstream sees
+them; `finishAliasChecks` covers the tier (zero-use-definition
+verification, unused warnings, the `min_uses` audit) exactly as it does
+for corpus files.
+
+**The checker contract** (the issue's non-negotiables, binding):
+
+1. **Resolve exactly like the pointer.** Alias uses and definitions in a
+   plugin file verify EXACTLY like a corpus file's — file existence,
+   `#leaf` anchor match per #58 (missing leaf `refs.broken.anchor`,
+   ambiguous flat leaf `refs.anchor.ambiguous`, malformed schematic
+   `refs.anchor.parse-error`), declared external roots (§55), traversal
+   containment, duplicate-home, `orphan_check`.
+2. **Uses count as refs.** Plugin refs join the ref graph — ref-by marks,
+   hops, SCC/mesh classification, orphan relief, `refs.total`.
+3. **The verdicts are the corpus's.** Undefined use → error; unused
+   definition → warning; a used alias below `min_uses` → error; `min_uses`
+   and `style` enforced identically. A broken alias definition fails the
+   run (exit 2), not just the uses.
+4. **Definitions are metadata; the tier is refs-only.** Plugin files get
+   NO structure, style, content or redundancy checks; their refs never
+   promote targets into the spec corpus (the #54 promotion stays
+   SPEC-refs-only); they are not `--fix`-rewritable in v1; they are not
+   listed by `cans status`.
+5. **Lossless, idempotent, graph-identical transforms.** `cans alias
+   expand|collapse` operate on plugin files under the same rules (§23b);
+   expand restores the full pointers byte-identically.
+6. **Backwards compatible.** Absent or empty `include` = corpus-only — the
+   pre-#65 behavior, byte-identical; and `include` is a PARAMETER
+   (`scope`/`style`/`min_uses`-like): it never joins the §18
+   delete/override reconciliation.
+
+**Hardened vs the aux precedent:** aux files were always loaded whether or
+not they parse; an UNREADABLE or parse-broken plugin file is an EXPLICIT
+error — the author explicitly included it, so it is never silently skipped
+(and never warning-and-pass). Strict validation of the member itself is
+§18; scope stays file-only in v1 — a plugin file's aliases are its own
+definitions only, no cross-file leakage (the §12 scope rule, unchanged).
+
 ### Forbidden targets — references.forbidden_targets (issue #62)
 
 Everything before #62 could verify that a pointer EXISTS — resolution,
@@ -1104,14 +1172,19 @@ The post-#56 model:
    definitions extracted as file metadata and every alias USE resolved to
    its full target BEFORE any consumer sees the nodes — issue #57, §12;
    wrapped prose continuation lines recorded per node — issue #61, §15 —
-   never tree members)
+   never tree members). The aux holders (`_tasks/`, `_adr/`) load, then —
+   after the aux pass, before the ref graph is built — the issue #65 plugin
+   tier: the `references.aliasing.include`-matched files (discovered by
+   `discoverAliasingFiles`, §12/§32) are parsed for refs and alias tables
+   and merged into allFiles
 2. Build RefGraph
 3. checkStructure() (node_length granular knobs + the multiline policy,
    issue #61 — §15)
 4. checkStyle()
 5. checkRefs() (+ the issue #57 definition-level finish pass: unused-alias
    warnings, min_uses audit, zero-use-definition verification — a broken
-   definition fails the run)
+   definition fails the run; the pass covers the issue #65 plugin tier's
+   alias tables too, §12)
 6. checkRedundancy() (all 4 layers)
 7. checkAgentGuardrails() (issue #63 — the workspace-only execution policies
    of §18: build-output isolation, protected-manifest atomic writes, the
@@ -1252,6 +1325,24 @@ output:
 - Both spellings work (§12): declare the sibling's repo root and spell `name://cans/artifacts/…`, or declare its cans/ dir and spell `name://artifacts/…` — the sub-path is always relative to the declared root.
 
 `references.aliasing` (issue #57) configures per-file pointer aliasing (§12): `enabled` (boolean, default `false` — aliasing is OPT-IN, and disabled plus any alias use or definition present is an error, never a silent pass), `scope` (`"file"` — the only legal value in v1; anything else is a line-numbered config error), `style` (`"numeric"` | `"named"` | `"both"`, default `both`; a use of the other style is an error that still resolves), `min_uses` (integer `>= 1`, default `2` — only targets referenced at least that many times per file, alias uses plus full spellings, are alias-eligible; a hand-written alias below the threshold is an error at the definition). It is a PARAMETER, not a check switch: absent/empty = the documented defaults, and it never participates in the delete/override reconciliation. Unknown sub-keys reject under the same strict #56 discipline as unknown top-level keys — a typo'd `enabledd` must never silently mean "no such knob" while the author believes aliasing is on. Partial blocks merge over the defaults (`aliasing: { enabled: true }` keeps `style: both`).
+
+`references.aliasing.include` (issue #65) extends the block with the
+plugin-tier file set (§12): a list of workspace-relative glob patterns —
+the `src/core/glob.ts` grammar (`*` stays in one segment, `**` crosses
+segments, `?` is one character, `[…]` a character class), matched ANCHORED
+against the whole `/`-joined relative path — naming files OUTSIDE the spec
+corpus that join the checked file set when aliasing is enabled. It is a
+PARAMETER like `scope`/`style`/`min_uses`: absent or empty = corpus-only,
+the pre-#65 behavior byte-identical (existing configs need no change), and
+it never participates in the delete/override reconciliation. Strictly
+validated like every §18 key, with the issue's "never silently inert"
+guarantee: a non-list shape (`line N — "references.aliasing.include" must
+be a list of globs (* ? [class] **), got …`), an empty or non-string member
+(`line N — "references.aliasing.include[1]" must be a non-empty glob
+(* ? [class] **), got …`), or a glob that does not compile (`line N —
+"references.aliasing.include[0]" is not a valid glob (unclosed "[" or
+dangling "\\")`) is the line-numbered config error — exit 2,
+`config.invalid` on `_rules.yaml`, the check does not run.
 
 `references.forbidden_targets` (issue #62) is the layering / abstraction-leak guard: a list of per-source bans on pointer targets (§12). It is a PARAMETER list, not a check switch: absent/empty/null = the feature is OFF, it never participates in the delete/override reconciliation (a pre-#62 config reconciles byte-identically), and it never flips any engine off — listing it can only ADD findings. Member domains per entry: `source` (REQUIRED — a glob over the referrer's workspace-relative path, the `src/core/glob.ts` grammar with the leading-`cans/` stripping rule, §12), `pattern` (REQUIRED — a JavaScript regex over the target's candidate strings), `severity` (`"error"` | `"warning"`, default `error` — the same band idea as node_length's, with the #62 spelling), `message` (a string, reported verbatim), `except` (a list of globs, same base semantics as `source`, exempting source files from THIS rule). Strictly validated like every §18 key: an unknown member inside an entry, a missing `source`/`pattern`, an invalid regex, an invalid glob (an unclosed `[`), an invalid severity (`must be "error" or "warning"`), a non-mapping entry or a non-list `forbidden_targets` value is the same line-numbered config error (exit 2, `config.invalid`) — a ban can never be silently inert because its selector never compiled. The matching semantics (candidate strings, alias expansion, the external dual form, the checker contract) are §12.
 
@@ -1477,7 +1568,7 @@ Creates workspace skeleton. Idempotent. Skips existing files unless `--force`.
 
 Runs all validation engines. The most-used command.
 
-**Reads:** `_rules.yaml`, spec files, `_tasks/*.md` (light ref check only), `_adr/*.md` (ref check).
+**Reads:** `_rules.yaml`, spec files, `_tasks/*.md` (light ref check only), `_adr/*.md` (ref check), and — when `references.aliasing.include` names them (§12/§18) — the plugin tier's files (refs + alias verification only; an unreadable or parse-broken plugin file is an explicit error, never silently skipped).
 **Writes:** Nothing by default. `--fix` updates back-pointer comments; `--fix --yes` additionally repairs broken ref anchors (issue #53 Part 2.4, below). `--fix --dry-run` writes nothing at all.
 **Excludes:** `_collab/`, `AGENTS.md`, `_rules.yaml` from structural checks.
 
@@ -1504,6 +1595,17 @@ existing rule keys (`refs.broken.file` for undeclared/escape/missing,
 `refs.external.absent` for the absent-root warning, `structure.duplicate_home`
 for the cross-root duplicate home), and the absent-root warning lands in
 `sections.refs` like every other refs warning.
+
+**Plugin tier (issue #65):** the files `references.aliasing.include`
+matches (§12) join the checked file set for refs and alias verification
+only — no structure, style, content or redundancy finding ever names them,
+their refs never promote targets into the spec corpus, they are not
+`--fix`-rewritable in v1, and `cans status` does not list them. A named
+`[file]` that IS a plugin file is reported as checked (refs layer) — the
+report names the file instead of "0 files checked"; a named file that
+exists but sits outside every loaded set (corpus, aux, plugin tier)
+refuses with a hint to add a `references.aliasing.include` glob, never a
+silently-empty run.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits. (The one exception, gated behind `--fix --yes`: pure anchor-segment rewrites inside `see:` tokens — see the anchor-repair contract below. Node text is never touched.)
 
@@ -1694,7 +1796,11 @@ later would otherwise strand aliased files. The transforms are pure
 byte-level line surgery in `core/alias.ts` (`expandAliases` /
 `collapseAliases`); the command resolves the workspace, loads the rules,
 discovers the check file set (spec files + the aux ref holders `_tasks/`,
-`_adr/` — so disabling aliasing later has a complete expand path) and
+`_adr/` — so disabling aliasing later has a complete expand path — plus,
+when `references.aliasing.include` matches them, the issue #65 plugin
+tier's files, §12: expand restores a plugin file's full pointers
+byte-identically, and collapse's aliasing-enabled precondition and
+per-file refusals apply to plugin files exactly as to the corpus) and
 writes.
 
 - **`expand`** — alias uses become full targets, definitions are removed.
@@ -1969,6 +2075,7 @@ Strips YAML frontmatter. Converts `[[wiki-links]]` and `![[embeds]]` → `see:`.
 - `dirExists()`: `fs.stat` + isDirectory
 - `mkdirp()`: recursive directory creation
 - `discoverSpecFiles()`: flat `*.md` + folder `index.md` at ANY depth (issue #54), excluding `_` prefixed and `AGENTS.md` at every level; `/`-joined relative keys
+- `discoverAliasingFiles()`: issue #65 — the workspace `.md` files matched by the `references.aliasing.include` globs (§12), outside the corpus and the aux holders: the spec walk's discipline (`_`-prefixed and tool-artifact segments skipped at every level), patterns matched ANCHORED against the whole `/`-joined key (`core/glob.ts` grammar), `exclude` (the loaded corpus/aux keys) wins; sorted, deduplicated keys
 - `promotableSpecKey()`: issue #54 — maps a raw `see:` target to the relative key of a promotable subfolder `.md` (§11 flat-first resolution, `.md`-only, inside-root, no `_`/tool-artifact segments)
 - `discoverActiveTasks()`: `_tasks/*.md`
 - `discoverArchivedTasks()`: `_tasks/_archive/*.md`

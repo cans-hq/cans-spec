@@ -101,6 +101,16 @@ references:
   #   scope: file
   #   style: both
   #   min_uses: 2
+  #   include:                    # issue #65 — alias + verify plugin files:
+  #     - cans/plugins/*.md       # workspace-relative globs (the core/glob.ts
+  #                               # grammar, anchored to the whole `/`-joined
+  #                               # path) naming files OUTSIDE the spec corpus
+  #                               # that join the checked set when aliasing is
+  #                               # enabled — parsed for refs and alias tables,
+  #                               # verified exactly like corpus files (never
+  #                               # structure/style/content-checked). Absent
+  #                               # or empty = corpus-only, byte-identical to
+  #                               # the pre-#65 behavior.
   # Issue #62 — per-source bans on pointer targets (the layering guard):
   # write the abstraction rule down and `cans check` enforces it. Absent,
   # empty or null = the feature is OFF. Each entry bans a class of TARGET
