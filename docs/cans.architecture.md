@@ -1359,6 +1359,23 @@ state and emits every finding at `severity`:
    beneath it — the workspace author's upfront banned-patterns block
    (templates/AGENTS.md ships the anchor as `## Negative Invariants`, §33).
 
+Every finding rides the existing `structure` category — the issue-category
+union stays closed (additive rule vocabulary instead, the issue #59
+additive-wire discipline: zero reshaped output) — and carries a
+machine-readable `guardrails.*` rule key, the vocabulary agents parse for:
+
+| Rule key | Fires when |
+|---|---|
+| `guardrails.isolation.task_build_dir` | an active task declares a build/output outside `isolation.prefix` |
+| `guardrails.isolation.default_build_dir` | a shared default build dir (`target/`, `dist/`, `build/`, `out/`) exists at the workspace root |
+| `guardrails.manifests.devlog_touched` | the devlog's `touched_files` lists a protected manifest |
+| `guardrails.manifests.residue` | atomic-write residue (`<path>.bak` / `.orig` / `~` / `.tmp`) sits next to a protected manifest |
+| `guardrails.devlog.missing_file` | `devlog.enabled` and the devlog file does not exist |
+| `guardrails.devlog.missing_sections` | the devlog lacks one or more `required_sections` headings |
+| `guardrails.invariants.missing_file` | `negative_invariants.required` and the root `AGENTS.md` does not exist |
+| `guardrails.invariants.missing_anchor` | AGENTS.md lacks the anchor heading |
+| `guardrails.invariants.empty_block` | the anchor heading has no non-empty content beneath it |
+
 Disabled (absent / empty / `enabled: false`) the engine is silent: zero
 findings, zero behavior change — every pre-#63 config runs byte-identically.
 
