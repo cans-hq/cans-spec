@@ -112,17 +112,20 @@ interface MdHeading {
   line: number; // 1-based
 }
 
-/** Split source into lines tagged with their fence state (fence markers
- *  themselves are fenced). 1-based addressing matches every engine's line
- *  numbers. */
+/** Split source into lines tagged with their fence state — the marker line
+ *  itself is fenced (never a heading, never a declaration) and toggles the
+ *  state for the lines after it, exactly like check.ts's rewriteRefBy fence
+ *  map. 1-based addressing matches every engine's line numbers. */
 function scanMdLines(source: string): MdLine[] {
   const out: MdLine[] = [];
   let fenceOpen = false;
   for (const raw of source.split('\n')) {
-    const fence = FENCE_RE.test(raw.trim());
-    out.push({ text: raw, fence: fence || fenceOpen });
-    if (fence) fenceOpen = false;
-    else if (fence) fenceOpen = true;
+    if (FENCE_RE.test(raw.trim())) {
+      out.push({ text: raw, fence: true }); // the marker itself is never content
+      fenceOpen = !fenceOpen;
+    } else {
+      out.push({ text: raw, fence: fenceOpen });
+    }
   }
   return out;
 }
@@ -224,14 +227,19 @@ function isolationFindings(root: string, cfg: AgentGuardrailsRules, level: Issue
     for (const rel of discoverActiveTasks(root)) {
       const source = readIfExists(join(root, rel));
       if (source === null) continue; // unreadable task: not statically decidable, skip
-      const lines = source.split('\n');
+      // Fence-aware scan (mirrored FENCE_RE convention): a fenced example
+      // inside a task file (e.g. a quoted _rules.yaml block) is prose, not a
+      // declaration.
+      const lines = scanMdLines(source);
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i]!.match(TASK_DECL_RE);
+        if (lines[i]!.fence) continue;
+        const m = lines[i]!.text.match(TASK_DECL_RE);
         if (m === null || !TASK_BUILD_KEYS.has(m[1]!)) continue;
         const raw = unquote(m[2]!);
         if (raw === '') continue; // an empty value declares no directory
         if (raw.includes('://')) continue; // a URI is not a workspace path
         const declared = normalizePath(raw);
+        if (declared === '') continue; // '/' normalized away — no directory named
         // The brief's literal predicate: string-prefix-match after path
         // normalization (prefix 'target/agent-' satisfied by
         // 'target/agent-<task>/…' and by 'target/agent-' itself).
