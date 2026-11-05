@@ -1075,8 +1075,9 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
   // plugin file is checked at the refs layer only (no structure/style layer
   // exists for it by construction), its refs ride the global graph, and the
   // report counts it as checked (the files wiring below). The match is the
-  // same targetMatchesKey equivalence the spec filter uses, so `profile.md`,
-  // `profile` and `cans/plugins/profile.md` name one plugin file.
+  // same targetMatchesKey equivalence the spec filter uses, so a deep plugin
+  // key is named by its path spellings (`cans/plugins/profile.md`,
+  // `cans/plugins/profile`) exactly the way spec keys accept theirs.
   const pluginMatch = opts.file !== null
     ? [...pluginFiles.keys()].filter(k => targetMatchesKey(opts.file!, k))
     : [];
