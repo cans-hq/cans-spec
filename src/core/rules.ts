@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { MultilineRules, Rules } from '../types.ts';
+import type { AgentGuardrailsRules, MultilineRules, Rules } from '../types.ts';
 import { defaultAliasing } from './alias.ts';
 import { globToRegExp } from './glob.ts';
 
@@ -269,6 +269,29 @@ export function parseMinimalYaml(source: string): Record<string, unknown> {
   return parseYamlTracked(source).value;
 }
 
+/** Issue #63: the documented defaults of the workspace-only agent execution
+ *  policy block. The block is OPT-IN — `enabled: false` keeps the engine
+ *  silent — but every sub-block spells its documented default here so a
+ *  partially-written `agent_guardrails:` section deep-merges to exactly the
+ *  values §18 documents (the issue's example spelling). */
+export function defaultAgentGuardrails(): AgentGuardrailsRules {
+  return {
+    enabled: false,
+    severity: 'error',
+    isolation: { mode: 'off', prefix: 'target/agent-' },
+    manifests: {
+      atomic_writes_only: true,
+      protected: ['Cargo.toml', 'package.json', 'pyproject.toml'],
+    },
+    devlog: {
+      enabled: true,
+      path: 'log/devlog.md',
+      required_sections: ['touched_files', 'test_outcomes', 'still_open'],
+    },
+    negative_invariants: { required: true, anchor: 'Negative Invariants' },
+  };
+}
+
 export function defaultRules(): Rules {
   return {
     structure: {
@@ -334,6 +357,10 @@ export function defaultRules(): Rules {
     },
     // issue #59: display preferences — the slug-hint band is opt-in.
     output: { slug_hints: false },
+    // issue #63: workspace-only agent execution policies — opt-in, the
+    // block is inert until `enabled: true` (the engine is silent for every
+    // pre-#63 config: omitted / empty / false all read as unsupervised).
+    agent_guardrails: defaultAgentGuardrails(),
   };
 }
 
@@ -390,7 +417,11 @@ interface KeySpec {
     | 'docString'
     | 'rootMap'
     | 'aliasBlock'
-    | 'forbiddenTargets';
+    | 'forbiddenTargets'
+    | 'guardIsolation'
+    | 'guardManifests'
+    | 'guardDevlog'
+    | 'guardInvariants';
   /** integer/number: inclusive lower bound. range: bound for BOTH members. */
   min?: number;
   /** number: inclusive upper bound. */
@@ -514,6 +545,26 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
   output: {
     slug_hints: { kind: 'boolean' },
   },
+  // Issue #63: workspace-only agent execution policies for autonomous
+  // agents — a PARAMETER section, not a check section (never in
+  // CHECK_SECTIONS, so it never joins SECTION_KEYS and listing it never
+  // changes what a "curated config" means for the delete/override
+  // reconciliation — pre-#63 configs reconcile byte-identically).
+  // absent/empty/null = the workspace is unsupervised (NULL_OK_SECTIONS;
+  // the guardrails engine is silent), the same convention as
+  // references.aliasing (#57) and references.forbidden_targets (#62).
+  // Omitted members keep the documented defaults (defaultAgentGuardrails);
+  // the four block members are validated by their own KeySpec kinds, the
+  // issue #61 multiline convention (a block kind per member surface, each
+  // member error carrying the member's own tracked line).
+  agent_guardrails: {
+    enabled: { kind: 'boolean' },
+    severity: { kind: 'enum', members: ['error', 'warn'] },
+    isolation: { kind: 'guardIsolation' },
+    manifests: { kind: 'guardManifests' },
+    devlog: { kind: 'guardDevlog' },
+    negative_invariants: { kind: 'guardInvariants' },
+  },
   // templates/_rules.yaml ships this inert documentation section (issue #53:
   // the anchor algorithm is fixed, not configurable — the section teaches it).
   // Accepted so `cans init` output is strictly valid; never read by engines.
@@ -532,6 +583,14 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
  *  must never decide what a "curated config" means, or listing `output:`
  *  alone would flip every unlisted engine off). */
 const CHECK_SECTIONS = new Set(['structure', 'style', 'content', 'references', 'redundancy', 'token_budget']);
+
+/** Issue #63: top-level sections whose explicit EMPTY form (`section:` with
+ *  nothing under it, parsed as null) is legal and means the documented OFF
+ *  state. Every other top-level section must be a mapping — the issue #56
+ *  discipline. agent_guardrails is the first member: the workspace-only
+ *  agent execution policy is opt-in, and an explicitly empty block enables
+ *  nothing (the same convention as the aliasing/forbidden_targets keys). */
+const NULL_OK_SECTIONS = new Set(['agent_guardrails']);
 
 /** §18 default keys per section — drives the delete/override reconciliation in
  *  loadRules. Derived from RULES_SCHEMA (every key of every CHECK section) so
@@ -617,6 +676,31 @@ function validateSeverityMember(at: string, mv: unknown, keyLines: Map<string, n
   }
 }
 
+/** Issue #63: the workspace-relative path shape shared by the
+ *  agent_guardrails members that name workspace locations (isolation.prefix,
+ *  devlog.path, manifests.protected entries). Non-empty, POSIX separators,
+ *  contained in the workspace: no leading `/`, no `..` segment, no `\` —
+ *  the guardrails engine joins these onto the workspace root verbatim, so
+ *  an absolute or escaping path must never parse (the same
+ *  workspace-containment discipline as external_roots, issue #55). Same
+ *  fail()-shaped line-numbered error as every other member check. */
+function validateWorkspaceRelativePath(
+  keyLines: Map<string, number>,
+  fail: (expectation: string, at?: string, got?: unknown) => never,
+  at: string,
+  p: unknown,
+): void {
+  if (typeof p !== 'string' || p === '') {
+    fail('a non-empty workspace-relative path', at, p);
+  }
+  if (p.startsWith('/') || p.includes('\\') || p.split('/').includes('..')) {
+    throw new Error(
+      `line ${lineOf(keyLines, at)} — "${at}" must be a workspace-relative POSIX path ` +
+        `(no leading "/", no ".." segment, no "\\"), got ${gotText(p)}`,
+    );
+  }
+}
+
 /** Expectation text for a spec, used when the value is null (out-of-domain
  *  empty) or otherwise needs the kind’s full shape description. */
 function numericOrOtherExpectation(spec: KeySpec): string {
@@ -639,6 +723,20 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   // non-list shape error — spells the full member surface once.
   if (spec.kind === 'forbiddenTargets') {
     return 'a list of forbidden-target rules (each a mapping: source, pattern, severity?, message?, except?)';
+  }
+  // Issue #63: the expectations shared by the null-rejection branch and the
+  // non-mapping shape errors — each block member spells its own surface.
+  if (spec.kind === 'guardIsolation') {
+    return 'a mapping like { mode: require-target-prefix, prefix: "target/agent-" }';
+  }
+  if (spec.kind === 'guardManifests') {
+    return 'a mapping like { atomic_writes_only: true, protected: [package.json] }';
+  }
+  if (spec.kind === 'guardDevlog') {
+    return 'a mapping like { enabled: true, path: "log/devlog.md", required_sections: [touched_files, test_outcomes, still_open] }';
+  }
+  if (spec.kind === 'guardInvariants') {
+    return 'a mapping like { required: true, anchor: "Negative Invariants" }';
   }
   return 'a string';
 }
@@ -978,6 +1076,109 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
       });
       return;
     }
+    case 'guardIsolation': {
+      // Issue #63: the agent_guardrails.isolation block — mode
+      // ('require-target-prefix' | 'off') + the directory prefix agents
+      // must build under. Unknown members reject under the issue #56 typo
+      // discipline; the block value is null only via its KEY's nullOk —
+      // an in-block null member is out-of-domain like every parameter.
+      if (!isPlainObject(v)) {
+        fail(numericOrOtherExpectation(spec));
+      }
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'mode') {
+          if (mv !== 'require-target-prefix' && mv !== 'off') {
+            fail('"require-target-prefix" or "off"', at, mv);
+          }
+        } else if (member === 'prefix') {
+          validateWorkspaceRelativePath(keyLines, fail, at, mv);
+        } else {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,
+          );
+        }
+      }
+      return;
+    }
+    case 'guardManifests': {
+      // Issue #63: the agent_guardrails.manifests block — atomic_writes_only
+      // + the protected root-manifest list (non-empty; each entry a
+      // workspace-relative path). Same typo discipline as every block.
+      if (!isPlainObject(v)) {
+        fail(numericOrOtherExpectation(spec));
+      }
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'atomic_writes_only') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (member === 'protected') {
+          if (!Array.isArray(mv) || mv.length === 0) {
+            fail('a non-empty list of workspace-relative manifest paths', at, mv);
+          }
+          mv.forEach((e, j) => validateWorkspaceRelativePath(keyLines, fail, `${at}[${j}]`, e));
+        } else {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,
+          );
+        }
+      }
+      return;
+    }
+    case 'guardDevlog': {
+      // Issue #63: the agent_guardrails.devlog block — the append-only
+      // handoff log: enabled, its workspace-relative path, and the
+      // non-empty list of section names it must carry (matched as
+      // Markdown headings by the engine).
+      if (!isPlainObject(v)) {
+        fail(numericOrOtherExpectation(spec));
+      }
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'enabled') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (member === 'path') {
+          validateWorkspaceRelativePath(keyLines, fail, at, mv);
+        } else if (member === 'required_sections') {
+          if (!Array.isArray(mv) || mv.length === 0) {
+            fail('a non-empty list of section names', at, mv);
+          }
+          mv.forEach((e, j) => {
+            if (typeof e !== 'string' || e === '') {
+              fail('a non-empty section name', `${at}[${j}]`, e);
+            }
+          });
+        } else {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,
+          );
+        }
+      }
+      return;
+    }
+    case 'guardInvariants': {
+      // Issue #63: the agent_guardrails.negative_invariants block — the
+      // AGENTS.md banned-patterns anchor: required + the heading text the
+      // engine looks for (a Markdown heading, any level).
+      if (!isPlainObject(v)) {
+        fail(numericOrOtherExpectation(spec));
+      }
+      for (const [member, mv] of Object.entries(v)) {
+        const at = `${path}.${member}`;
+        if (member === 'required') {
+          if (typeof mv !== 'boolean') fail('true or false', at, mv);
+        } else if (member === 'anchor') {
+          if (typeof mv !== 'string' || mv === '') {
+            fail('a non-empty heading text', at, mv);
+          }
+        } else {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — unrecognized key "${at}" ${UNRECOGNIZED_SUFFIX}`,
+          );
+        }
+      }
+      return;
+    }
   }
 }
 
@@ -998,6 +1199,10 @@ function validateRulesStrict(parsed: Record<string, unknown>, keyLines: Map<stri
         `line ${lineOf(keyLines, section)} — unrecognized key "${section}" ${UNRECOGNIZED_SUFFIX}`,
       );
     }
+    // Issue #63: an explicitly EMPTY opt-in block is the §18 documented OFF
+    // state (NULL_OK_SECTIONS) — the null deep-merges over the defaults and
+    // the engine sees `agent_guardrails === null`: silent, zero overhead.
+    if (value === null && NULL_OK_SECTIONS.has(section)) continue;
     if (!isPlainObject(value)) {
       const got = value === null
         ? 'empty value (nothing under the key)'
