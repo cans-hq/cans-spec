@@ -78,7 +78,33 @@ export const SEE_POINTER_RE: RegExp =
 export function extractCodebasePointers(
   text: string,
 ): Array<Omit<import('../types.ts').CodebasePointer, 'file'>> {
-  throw new Error('issue #66: not implemented (engine layer)');
+  const out: Array<Omit<import('../types.ts').CodebasePointer, 'file'>> = [];
+  // §45 line normalization (outline.ts's normalizeEol convention): CRLF and
+  // lone CR are line terminators just like LF, so line numbers agree with
+  // every other consumer's 1-based counting.
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    // Per-line matching (the §2.1 contract): a fresh reset per line, so the
+    // global regex's lastIndex state can never leak ACROSS lines while the
+    // exec loop below still finds every occurrence WITHIN one line.
+    SEE_POINTER_RE.lastIndex = 0;
+    for (;;) {
+      const m = SEE_POINTER_RE.exec(lines[i]!);
+      if (m === null) break;
+      // targetFile AS WRITTEN: group 1 excludes the optional `cans/` prefix
+      // (the regex matches it outside the capture), so reconstruct the
+      // written spelling when the span carries it — resolution strips it
+      // again, `refs --codebase` echoes it.
+      const targetFile = /^see:\s+cans\//.test(m[0]) ? `cans/${m[1]}` : m[1]!;
+      out.push({
+        line: i + 1,
+        raw: m[0],
+        targetFile,
+        targetSlug: m[2] ?? null,
+      });
+    }
+  }
+  return out;
 }
 
 /** §3 file selection: walk `cfg.roots` (each root resolved from the PROJECT

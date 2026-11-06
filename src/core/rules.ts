@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AgentGuardrailsRules, MultilineRules, Rules } from '../types.ts';
+import type { AgentGuardrailsRules, CodebaseRules, MultilineRules, Rules } from '../types.ts';
 import { defaultAliasing } from './alias.ts';
 import { globToRegExp } from './glob.ts';
 
@@ -292,6 +292,28 @@ export function defaultAgentGuardrails(): AgentGuardrailsRules {
   };
 }
 
+// Issue #66: the documented defaults of the codebase inbound-references
+// scanner (the `codebase` block of _rules.yaml). OPT-IN like agent_guardrails:
+// `enabled: false` keeps the scanner silent, and every sub-member spells its
+// documented default here so a partially-written `codebase:` section
+// deep-merges to exactly the values the issue documents. The include list is
+// the RFC §3 code-extension set and the exclude list the §3 build-artifact
+// set — the verbatim lists live in templates/_rules.yaml and
+// defaultCodebaseRules in core/rules.ts (keep the three in sync). NOTE for
+// maintainers: a double-star glob can never be written inside a BLOCK comment
+// (its star-slash closes the comment — this file's history is the proof);
+// these defaults are CODE (string literals), and every comment about them
+// above and below uses line comments or rephrases.
+export function defaultCodebaseRules(): CodebaseRules {
+  return {
+    enabled: false,
+    roots: ['.'],
+    include: ['**/*.rs', '**/*.ts', '**/*.js', '**/*.py', '**/*.go', '**/*.c', '**/*.cpp'],
+    exclude: ['**/target/**', '**/node_modules/**', '**/.git/**', '**/dist/**'],
+    severity: 'error',
+  };
+}
+
 export function defaultRules(): Rules {
   return {
     structure: {
@@ -361,6 +383,10 @@ export function defaultRules(): Rules {
     // block is inert until `enabled: true` (the engine is silent for every
     // pre-#63 config: omitted / empty / false all read as unsupervised).
     agent_guardrails: defaultAgentGuardrails(),
+    // issue #66: the codebase inbound-references scanner — opt-in exactly
+    // like agent_guardrails above (a PARAMETER block: omitted / empty / null
+    // all read as OFF; the engine is silent for every pre-#66 config).
+    codebase: defaultCodebaseRules(),
   };
 }
 
@@ -421,7 +447,9 @@ interface KeySpec {
     | 'guardIsolation'
     | 'guardManifests'
     | 'guardDevlog'
-    | 'guardInvariants';
+    | 'guardInvariants'
+    | 'codebaseRoots'
+    | 'codebaseGlobs';
   /** integer/number: inclusive lower bound. range: bound for BOTH members. */
   min?: number;
   /** number: inclusive upper bound. */
@@ -565,6 +593,25 @@ const RULES_SCHEMA: Record<string, Record<string, KeySpec>> = {
     devlog: { kind: 'guardDevlog' },
     negative_invariants: { kind: 'guardInvariants' },
   },
+  // Issue #66: the codebase inbound-references scanner — a PARAMETER
+  // section, not a check section (never in CHECK_SECTIONS, so it never
+  // joins SECTION_KEYS and listing it never changes what a "curated config"
+  // means for the delete/override reconciliation — pre-#66 configs reconcile
+  // byte-identically). absent/empty/null = the scanner is OFF
+  // (NULL_OK_SECTIONS), the same convention as agent_guardrails (#63).
+  // Omitted members keep the documented defaults (defaultCodebaseRules);
+  // the list members are validated by their own KeySpec kinds — a non-list
+  // shape, an empty entry, a root with a leading "/", a ".." segment or a
+  // backslash, and a glob that fails to compile are all line-numbered
+  // config errors (issue #56 discipline). severity is the
+  // forbidden_targets spelling: "error" | "warning" (NOT "warn").
+  codebase: {
+    enabled: { kind: 'boolean' },
+    roots: { kind: 'codebaseRoots' },
+    include: { kind: 'codebaseGlobs' },
+    exclude: { kind: 'codebaseGlobs' },
+    severity: { kind: 'enum', members: ['error', 'warning'] },
+  },
   // templates/_rules.yaml ships this inert documentation section (issue #53:
   // the anchor algorithm is fixed, not configurable — the section teaches it).
   // Accepted so `cans init` output is strictly valid; never read by engines.
@@ -589,8 +636,10 @@ const CHECK_SECTIONS = new Set(['structure', 'style', 'content', 'references', '
  *  state. Every other top-level section must be a mapping — the issue #56
  *  discipline. agent_guardrails is the first member: the workspace-only
  *  agent execution policy is opt-in, and an explicitly empty block enables
- *  nothing (the same convention as the aliasing/forbidden_targets keys). */
-const NULL_OK_SECTIONS = new Set(['agent_guardrails']);
+ *  nothing (the same convention as the aliasing/forbidden_targets keys).
+ *  Issue #66 adds `codebase`: the inbound-references scanner is equally
+ *  opt-in — an explicitly empty block enables nothing. */
+const NULL_OK_SECTIONS = new Set(['agent_guardrails', 'codebase']);
 
 /** §18 default keys per section — drives the delete/override reconciliation in
  *  loadRules. Derived from RULES_SCHEMA (every key of every CHECK section) so
@@ -738,6 +787,10 @@ function numericOrOtherExpectation(spec: KeySpec): string {
   if (spec.kind === 'guardInvariants') {
     return 'a mapping like { required: true, anchor: "Negative Invariants" }';
   }
+  // Issue #66: the codebase list-member expectations — shared by the
+  // null-rejection branch and the non-list shape error.
+  if (spec.kind === 'codebaseRoots') return 'a list of project-relative directory paths';
+  if (spec.kind === 'codebaseGlobs') return 'a list of globs (* ? [class] **)';
   return 'a string';
 }
 
@@ -1199,6 +1252,54 @@ function validateValue(path: string, v: unknown, spec: KeySpec, keyLines: Map<st
           );
         }
       }
+      return;
+    }
+    case 'codebaseRoots': {
+      // Issue #66: codebase.roots — the directories to scan, each a
+      // project-relative POSIX path (resolved from the PROJECT root, the
+      // parent of the workspace — the external_roots convention). Same shape
+      // rules as the agent_guardrails workspace paths (validateWorkspace-
+      // RelativePath): non-empty, no leading "/", no ".." segment, no "\" —
+      // the scanner joins these onto the project root, so an absolute or
+      // escaping root must never parse. Each entry error carries the
+      // entry's own tracked line; inline members share the key's line
+      // (parseYamlTracked).
+      if (!Array.isArray(v)) fail(numericOrOtherExpectation(spec));
+      v.forEach((entry, i) => {
+        const at = `${path}[${i}]`;
+        if (typeof entry !== 'string' || entry === '') {
+          fail('a non-empty project-relative directory path', at, entry);
+        }
+        if (entry.startsWith('/') || entry.includes('\\') || entry.split('/').includes('..')) {
+          throw new Error(
+            `line ${lineOf(keyLines, at)} — "${at}" must be a project-relative POSIX path ` +
+              `(no leading "/", no ".." segment, no "\\"), got ${gotText(entry)}`,
+          );
+        }
+      });
+      return;
+    }
+    case 'codebaseGlobs': {
+      // Issue #66: codebase.include / codebase.exclude — glob lists in the
+      // ONE documented grammar (core/glob.ts), the same discipline as
+      // references.aliasing.include (#65) and forbidden_targets' source/
+      // except (#62): a non-list shape fails with the documented
+      // expectation, each member must be a non-empty string that COMPILES —
+      // a malformed glob (unclosed "[" class or dangling escape) is a
+      // line-numbered error, so a selector can never be silently inert
+      // while the author believes files are being scanned.
+      if (!Array.isArray(v)) fail(numericOrOtherExpectation(spec));
+      v.forEach((g, j) => {
+        const gAt = `${path}[${j}]`;
+        if (typeof g !== 'string' || g === '') {
+          fail('a non-empty glob (* ? [class] **)', gAt, g);
+        }
+        if (globToRegExp(g) === null) {
+          throw new Error(
+            `line ${lineOf(keyLines, gAt)} — "${gAt}" is not a valid glob (unclosed "[" or dangling "\\")`,
+          );
+        }
+      });
       return;
     }
   }

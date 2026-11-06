@@ -25,6 +25,8 @@ async function dispatch(): Promise<CommandResult> {
     case 'export':  return (await import('./commands/export.ts')).run(args);
     case 'slug':    return (await import('./commands/slug.ts')).run(args);
     case 'alias':   return (await import('./commands/alias.ts')).run(args);
+    // issue #66: the reverse-traceability query (`cans refs <node> --codebase`).
+    case 'refs':    return (await import('./commands/refs.ts')).run(args);
     case 'help':
     case '-h':      // §20/§44: conventional help shortcuts
     case '--help':
