@@ -48,7 +48,14 @@
  *  against and MUST NOT drift; the bodies land with the engine layer. */
 
 import type { CodebaseRules, CodebaseScan } from '../types.ts';
-import type { OutlineNode } from '../types.ts';
+import type { CodebaseFinding, Issue, OutlineNode } from '../types.ts';
+import { readdirSync } from 'node:fs';
+import { dirname, join, relative, isAbsolute } from 'node:path';
+import { globToRegExp } from './glob.ts';
+import { readText } from './runtime.ts';
+import { flattenNodes } from './outline.ts';
+import { anchorMatches } from './refs.ts';
+import { anchorSlug, nearSlugMatches } from './slug.ts';
 
 /** §2.1 — the matching rule, verbatim from the RFC (character classes
  *  rewritten in explicit-range spelling; semantics identical):
@@ -119,7 +126,62 @@ export async function collectSourceFiles(
   root: string,
   cfg: CodebaseRules,
 ): Promise<string[]> {
-  throw new Error('issue #66: not implemented (engine layer)');
+  const projectRoot = dirname(root);
+  // The globs decide (defense-in-depth compile like discoverAliasingFiles:
+  // the §18 validator rejects malformed patterns before discovery runs, so a
+  // null here can never be the documented path — it simply never matches).
+  const include: RegExp[] = [];
+  for (const g of cfg.include) {
+    const re = globToRegExp(g);
+    if (re !== null) include.push(re);
+  }
+  const exclude: RegExp[] = [];
+  for (const g of cfg.exclude) {
+    const re = globToRegExp(g);
+    if (re !== null) exclude.push(re);
+  }
+  // TRUE when `candidate` IS `dir` or lives under it (the containment shape
+  // fs.ts's isInsideRoot uses, widened with equality: the workspace root
+  // itself counts as inside).
+  const inside = (dir: string, candidate: string): boolean => {
+    const rel = relative(dir, candidate);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  };
+  const found = new Set<string>();
+  for (const r of cfg.roots) {
+    // Each root resolves from the PROJECT root (dirname of the workspace —
+    // the references.external_roots convention); "." names the whole project.
+    const absRoot = join(projectRoot, r);
+    if (inside(root, absRoot)) continue; // the workspace itself: never scanned
+    walk(absRoot);
+  }
+  // Deterministic: ascending by project-relative path, duplicates from
+  // overlapping roots collapsed by the Set.
+  return [...found].sort();
+
+  function walk(dir: string): void {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // missing/unreadable root or subtree: empty, never a throw
+    }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (inside(root, abs)) continue; // never descend into the workspace
+        walk(abs);
+      } else if (entry.isFile()) {
+        if (inside(root, abs)) continue; // corpus refs verify in the refs engine
+        // The matched spelling is the PROJECT-root-relative path with `/`
+        // separators (the glob grammar's own convention, on every runtime).
+        const rel = relative(projectRoot, abs).split('\\').join('/');
+        if (!include.some(re => re.test(rel))) continue;
+        if (exclude.some(re => re.test(rel))) continue;
+        found.add(rel);
+      }
+    }
+  }
 }
 
 /** §2.3 full validation pass: select files (collectSourceFiles), extract
@@ -141,5 +203,108 @@ export async function checkCodebaseRefs(
   cfg: CodebaseRules,
   corpus: ReadonlyMap<string, OutlineNode[]>,
 ): Promise<CodebaseScan> {
-  throw new Error('issue #66: not implemented (engine layer)');
+  const projectRoot = dirname(root);
+  const files = await collectSourceFiles(root, cfg);
+  const findings: CodebaseFinding[] = [];
+  const warnings: Issue[] = [];
+  let pointers = 0;
+  // Deterministic order falls out of the inputs: files ascend (sorted by
+  // collectSourceFiles), pointers come out in document order (line asc, then
+  // raw order within a line), findings append as encountered.
+  for (const rel of files) {
+    let text: string;
+    try {
+      // `rel` is project-root-relative; the workspace is never in the scan.
+      text = await readText(join(projectRoot, rel));
+    } catch (e) {
+      // Reported, never silently skipped (the pointer set of an unreadable
+      // file is unknowable — its absence is what the warning is for).
+      warnings.push({
+        file: rel,
+        line: 0,
+        level: 'warning',
+        category: 'refs',
+        message: `unreadable source file: ${e instanceof Error ? e.message : String(e)} — pointers in it are not scanned`,
+        rule: 'codebase.io',
+      });
+      continue;
+    }
+    const extracted = extractCodebasePointers(text);
+    pointers += extracted.length;
+    for (const p of extracted) {
+      const pointer = { ...p, file: rel };
+      // File resolution (§2.3): exact match on the written spelling first,
+      // then the `cans/`-stripped spelling — both name the same corpus key.
+      const stripped = p.targetFile.startsWith('cans/')
+        ? p.targetFile.slice('cans/'.length)
+        : p.targetFile;
+      const key = corpus.has(p.targetFile)
+        ? p.targetFile
+        : corpus.has(stripped)
+          ? stripped
+          : null;
+      if (key === null) {
+        findings.push({
+          ...pointer,
+          resolvedFile: null,
+          reason: 'FileNotFound',
+          message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — file not found in the spec corpus`,
+        });
+        continue;
+      }
+      if (p.targetSlug === null) continue; // file-level pointer: resolves, nothing to verify
+      // Anchor resolution: the SAME tolerant matching the corpus refs engine
+      // uses (anchorMatches → normalizeForAnchor) over the key's node titles
+      // — exact after normalization, NEVER fuzzy (the fuzzy layer is
+      // suggestion-only, below). YAML leaf anchors are not probed: v1 scope
+      // is spec nodes.
+      const nodes = flattenNodes(corpus.get(key)!);
+      if (nodes.some(n => anchorMatches(n.text, p.targetSlug!))) continue;
+      const finding: CodebaseFinding = {
+        ...pointer,
+        resolvedFile: key,
+        reason: 'AnchorNotFound',
+        message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — anchor not found in ${key}`,
+      };
+      const suggestion = anchorSuggestion(p.targetFile, p.targetSlug!, nodes);
+      if (suggestion !== null) finding.suggestion = suggestion;
+      findings.push(finding);
+    }
+  }
+  return { findings, warnings, scanned: files.length, pointers };
+}
+
+/** The `did you mean` layer for a failing codebase anchor — the shape of
+ *  brokenAnchorSuggestion in refs.ts, scoped to this engine's suggestion-only
+ *  contract: nearSlugMatches ranks the target's real node titles (synthetic
+ *  parser placeholders excluded, issue #8) at or above the suggestion
+ *  threshold (SLUG_SUGGEST_THRESHOLD); candidates collapse to their canonical
+ *  anchorSlug and dedupe.
+ *  ONE near candidate → a pure ref-anchor fix proposal; two or more → the
+ *  ambiguity surfaced (top 3, the rest folded into `…`); none → null, and
+ *  the finding simply carries no suggestion (resolution itself never went
+ *  fuzzy, so this is advice, never a verdict change). The proposed spelling
+ *  echoes the pointer's WRITTEN target (both spellings resolve). */
+function anchorSuggestion(
+  writtenTarget: string,
+  anchor: string,
+  nodes: readonly OutlineNode[],
+): string | null {
+  const candidates: string[] = [];
+  for (const n of nodes) {
+    if (n.synthetic !== true) candidates.push(n.text);
+  }
+  const slugs = [...new Set(nearSlugMatches(candidates, anchor).map(m => anchorSlug(m.text)))]
+    .filter(s => s !== '');
+  if (slugs.length === 1) {
+    return `did you mean ${writtenTarget}#${slugs[0]}? — fix the ref anchor`;
+  }
+  if (slugs.length >= 2) {
+    // Top 3 by score (nearSlugMatches order), the rest folded into `…` so the
+    // line stays inside the compact-output budget.
+    const named = slugs.slice(0, 3).map(s => `${writtenTarget}#${s}`).join(', ');
+    const more = slugs.length > 3 ? ', …' : '';
+    return `did you mean ${named}${more}? — fix the ref anchor`;
+  }
+  return null;
 }
