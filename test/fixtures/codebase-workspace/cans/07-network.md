@@ -1,0 +1,8 @@
+- Network
+  - Timeouts
+    - Default deadline of thirty seconds
+    - Retries back off exponentially
+  - Circuit breaker
+    - Opens after five consecutive failures
+    - Half-open probes every ten seconds
+  - Home: see: 00-overview.md

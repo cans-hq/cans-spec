@@ -1,0 +1,8 @@
+- Storage
+  - Quotas
+    - Hard limit enforced at write time
+    - Soft limit warns at ninety percent
+  - Blob retention
+    - Cold tier after thirty days
+    - Restore rehydrates on first read
+  - Index: see: 00-overview.md

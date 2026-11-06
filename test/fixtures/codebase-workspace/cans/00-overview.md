@@ -1,0 +1,3 @@
+- Gateway service overview
+  - The numbered files spec the planes
+  - Cross-plane rules live in their own file

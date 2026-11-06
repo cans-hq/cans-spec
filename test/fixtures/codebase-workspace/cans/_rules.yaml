@@ -1,0 +1,35 @@
+# Issue #66 fixture — the codebase inbound-references scanner, ON.
+#
+# Layout note: this directory is the PROJECT ROOT (the parent of the cans/
+# workspace), so `codebase.roots` resolves from here and `src/` joins the
+# scan while `cans/` itself is always skipped. `references.back_pointers`
+# stays false so the corpus's hub refs (every numbered file sees
+# 00-overview.md) need no ref-by comments — the corpus must check clean so
+# the suite's exit codes isolate the codebase band.
+references:
+  back_pointers: false
+
+codebase:
+  enabled: true
+  roots: ["."]
+  # The RFC §3 default include list, spelled out verbatim — plus ONE
+  # deliberate extra, **/*.yaml, which brings the YAML-comment variant
+  # (src/net.yaml) into the scan; the pure default set (what the
+  # `cans check --codebase` flag-on-without-config run uses) covers only the
+  # seven code extensions below and does NOT scan src/net.yaml.
+  include:
+    - "**/*.rs"
+    - "**/*.ts"
+    - "**/*.js"
+    - "**/*.py"
+    - "**/*.go"
+    - "**/*.c"
+    - "**/*.cpp"
+    - "**/*.yaml"
+  # The RFC §3 default exclude list, spelled out verbatim.
+  exclude:
+    - "**/target/**"
+    - "**/node_modules/**"
+    - "**/.git/**"
+    - "**/dist/**"
+  severity: error

@@ -1,0 +1,8 @@
+- Authentication
+  - Sessions
+    - Expire after 24 hours of inactivity
+    - Refresh requires an active grant
+  - Token validation
+    - Signature checked before every use
+    - Clock skew tolerated by 30 seconds
+  - Map: see: 00-overview.md
