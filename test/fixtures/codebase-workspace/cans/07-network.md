@@ -2,11 +2,11 @@
   - Timeouts
     - Default deadline is thirty seconds
     - Retries back off exponentially
-    - Idle connections reaped after a minute
+    - Idle connections reaped within a minute
     - Deadlines propagate downstream
   - Circuit breaker
     - Opens after five consecutive failures
-    - Half-open probes every ten seconds
+    - Half-open probes run each fifth pass
     - Reset requires three successes
     - Trip events log the endpoint
   - Home: see: 00-overview.md

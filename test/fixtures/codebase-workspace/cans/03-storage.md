@@ -5,7 +5,7 @@
     - Tracked per user and per bucket
     - Resets on the first of the month
   - Blob retention
-    - Cold tier after thirty days
+    - Cold tier once thirty days pass
     - Restore rehydrates on first read
     - Deletes require a legal hold release
     - Integrity verified by checksum

@@ -173,8 +173,16 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     const p = ws('a4');
     const r = runCli(['check', '--codebase'], p);
     expect(r.exit).toBe(2);
+    // The folded view names the family with its count and the first member's
+    // diagnosis + did-you-mean fix (the report compaction contract, issue
+    // #41 — one member per group in the fold):
+    expect(r.out + r.err).toContain('2× broken codebase ref');
     expect(r.out + r.err).toContain('src/api/routes.ts');
-    expect(r.out + r.err).toContain('src/storage/quota.py');
+    // `--show refs` unfolds: EVERY member names its source file.
+    const ex = runCli(['check', '--codebase', '--show', 'refs'], p);
+    expect(ex.exit).toBe(2);
+    expect(ex.out + ex.err).toContain('src/api/routes.ts');
+    expect(ex.out + ex.err).toContain('src/storage/quota.py');
   });
 });
 
@@ -239,7 +247,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
   test('c2: the file-level query answers every anchor into the file (incl. the tolerant slug)', () => {
     const p = ws('c2');
     const j = parseJsonOut(runCli(['refs', '01-auth.md', '--codebase', '--json'], p).out);
-    expect(j.exit).toBe(0);
+    expect(j.exitCode).toBe(0);
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',

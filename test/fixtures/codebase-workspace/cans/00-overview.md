@@ -1,4 +1,4 @@
 - Gateway service overview
-  - The numbered specs cover each plane
+  - The numbered files spec each plane
   - Cross-plane concerns live in their own document
   - This index answers every back-pointer
