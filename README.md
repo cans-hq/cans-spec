@@ -532,6 +532,82 @@ targets are matched, so mentioning a plugin name in prose is untouched.
 Full matching semantics and the checker contract: §12; config surface and
 strict validation: §18 — in `docs/cans.architecture.md`.
 
+### Codebase references (`codebase`)
+
+Your spec doesn't rot alone: real implementations annotate functions,
+types and logic with pointers back to canonical spec nodes — `// see:
+01-auth.md#Sessions` in Rust, `# see: 04-api.md#Routing` in Python, block
+comments in Go, YAML keys. Until now those rotted silently (rename a node
+and nothing fails), and nothing could trace which source files reference
+a node. The `codebase` scanner closes both gaps. Opt-in:
+
+```yaml
+# cans/_rules.yaml
+codebase:
+  enabled: true
+  roots: ["."]             # resolved from the PROJECT ROOT (the parent of cans/)
+  include:                 # default: **/*.rs **/*.ts **/*.js **/*.py **/*.go **/*.c **/*.cpp
+    - "**/*.rs"
+    - "**/*.py"
+  exclude:                 # default build artifacts at any depth:
+    - "**/target/**"       #   **/target/** **/node_modules/** **/.git/** **/dist/**
+  severity: error          # error (fails the run) | warning (advisory)
+```
+
+```bash
+cans check --codebase                    # one scan without a config block (flag or config — either enables)
+cans check --codebase --json             # machine-readable, wire shape below
+cans refs "01-auth.md#Sessions" --codebase   # every source file pointing at that node
+```
+
+```text
+$ cans check --codebase --json
+{
+  "ok": false, "exitCode": 2,
+  "codebase": {
+    "scanned": 5, "pointers": 10, "broken": 2,
+    "issues": [
+      { "type": "CodebaseBrokenReference", "file": "src/api/routes.ts", "line": 3,
+        "raw": "see: 03-storage.md#Qutas", "targetFile": "03-storage.md",
+        "targetSlug": "Qutas", "reason": "AnchorNotFound" },
+      { "type": "CodebaseBrokenReference", "file": "src/storage/quota.py", "line": 7,
+        "raw": "see: 09-observability.md", "targetFile": "09-observability.md",
+        "targetSlug": null, "reason": "FileNotFound" }
+    ]
+  }
+}
+```
+
+The block is additive: present only when the phase ran, so plain-check
+JSON stays byte-identical to the pre-#66 shape. Each issue ALSO rides
+`sections.refs` as rule `codebase.broken_reference` at the configured
+band. CI note: the scan is deterministic (same tree → same findings, same
+order), so `severity: error` turns pointer rot into a non-zero exit —
+rename a spec node, CI fails until the pointers follow.
+
+`cans refs "01-auth.md#Sessions" --codebase` prints each hit as
+`file:line` plus the line text as written and exits 0 whether or not
+matches exist (a successful query is a successful query); without
+`--codebase` the command refuses with guidance — a flag that silently
+does nothing is a typo hiding in plain sight.
+
+How resolution works:
+
+- `<file>` resolves against the corpus keys (the spec files the workspace
+  loaded); one optional leading `cans/` is stripped, so `01-auth.md` and
+  `cans/01-auth.md` are the same target.
+- `#<slug>` resolves with the same tolerant anchor matching the corpus
+  refs engine uses (case- and separator-insensitive — `#token_validation`
+  finds `Token validation`); the `slug:` algorithm above is the canonical
+  spelling.
+- No fuzzy resolution — a near miss (`#Qutas`) is reported broken with a
+  `did you mean` suggestion, never auto-healed.
+- Files are scanned as text: leading prose, trailing notes, block
+  comments and YAML keys are invisible to the match; trailing prose after
+  the pointer never fails it.
+- The `cans/` workspace itself is always skipped — corpus refs verify in
+  the refs engine, never twice.
+
 ### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
 
 The old `node_length: { min: 3, max: 90 }` was all-or-nothing: one chars

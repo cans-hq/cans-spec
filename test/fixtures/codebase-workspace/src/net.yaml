@@ -1,0 +1,4 @@
+# Network policy defaults.
+timeout_s: 30        # see: 07-network.md#Timeouts
+retries: 3
+backoff_ms: 250

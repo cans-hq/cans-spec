@@ -1,0 +1,12 @@
+- Authentication
+  - Sessions
+    - Expire after 24 hours of inactivity
+    - Refresh requires an active grant
+    - Bounded to a single user at a time
+    - Revoked on credential rotation
+  - Token validation
+    - Signature checked before every use
+    - Clock skew tolerated by 30 seconds
+    - Audience bound to the gateway
+    - Replay window of sixty heartbeats
+  - Map: see: 00-overview.md

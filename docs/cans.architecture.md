@@ -894,6 +894,111 @@ substitute for the orphan/duplicate-home/hop checks (contract 5); not
 file-level access control (nothing blocks reading or writing — the
 pointer is reported, the file is not locked).
 
+### Codebase inbound references — embedded pointers in source files (issue #66)
+
+Everything above verifies refs the CORPUS holds. The reverse direction
+stayed dark: implementations annotate real code with pointers back to
+spec nodes — `// see: 01-auth.md#Sessions` in Rust, `# see: 04-api.md#Routing`
+in Python, Go block comments, YAML keys — and until #66 those rotted
+silently (renaming a spec node broke them behind no check) and no query
+could trace which source files reference a node. Issue #66 adds the
+codebase inbound-references scanner: an OUTBOUND pass over the project's
+source tree (text-only — no ASTs, no toolchains, no language runtimes)
+that extracts embedded `see: <file>[#<slug>]` pointers, resolves them
+against the loaded corpus, and reports the broken ones; plus the
+`cans refs <node> --codebase` reverse-traceability query (§23c). The
+matching rule is §2.1 of the RFC, verbatim:
+`see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([a-zA-Z0-9_\-]+))?` —
+`SEE_POINTER_RE` in `core/codebase.ts`, matched per line (never on
+multi-line blobs), so surrounding prose, trailing notes, parentheses,
+block comments and YAML keys are invisible to the match (§2.2's tolerance
+contract), and trailing prose after a pointer never fails it.
+
+**Pipeline (select → extract → resolve → report):**
+
+1. **Select** — `collectSourceFiles(root, cfg)` walks `cfg.roots` (each
+   resolved from the PROJECT ROOT — the parent of the `cans/` workspace,
+   the same convention as `references.external_roots`; `"."` names the
+   whole project), keeps files matching any `include` glob and no
+   `exclude` glob (the `core/glob.ts` grammar, matched ANCHORED against
+   the project-root-relative `/`-separated path), and ALWAYS skips
+   everything inside the workspace root itself — corpus refs verify in
+   the refs engine, never twice (a `cans/**` path can never appear in
+   the scan set, whatever the globs say). Missing roots are an empty
+   result, never a throw; results are deterministic (sorted, deduplicated).
+2. **Extract** — `extractCodebasePointers(text)` per file, in document
+   order (line asc, then left-to-right; one pointer per occurrence on a
+   line). `raw` is the exact matched span; `targetFile`/`targetSlug` are
+   AS WRITTEN (the `cans/` prefix is resolved later, never rewritten).
+3. **Resolve** — `checkCodebaseRefs(root, cfg, corpus)`:
+   `<file>` resolves against the corpus keys the check already loaded —
+   exact match, else one optional leading `cans/` stripped; no match →
+   reason `FileNotFound`. `#<slug>` resolves with the SAME tolerant
+   anchor matching the corpus refs engine uses (`anchorMatches` →
+   `normalizeForAnchor`, §12) — never fuzzy; a near miss earns a
+   `did you mean` suggestion from `nearSlugMatches` (≥ 0.8) on the
+   finding, resolution never auto-heals; no match → reason
+   `AnchorNotFound`. YAML leaf anchors are NOT probed here (v1 scope is
+   spec nodes). Unreadable files surface as `warnings` (rule
+   `codebase.io`, level `warning`) — reported, never silently skipped.
+4. **Report** — the scan rides `cans check` (§22): broken pointers emit
+   as regular issues (category `refs`, rule `codebase.broken_reference`,
+   level per `codebase.severity`) and the additive top-level `codebase`
+   wire block carries the whole outcome.
+
+**Config surface — the `codebase` block (§18):** a PARAMETER block like
+`agent_guardrails` — absent/empty/null = the scanner is OFF and every
+pre-#66 config behaves byte-identically; it never joins the §18
+delete/override reconciliation (listing it can only ADD codebase
+findings, never flip an engine off). The one-run override is
+`cans check --codebase` (flag or config — either enables; the
+`--hints` convention; flag-on with no block runs the DEFAULTS). Members:
+`enabled` (master switch, inert unless true), `roots` (default `["."]`),
+`include` (default: the RFC §3 code-extension set — `**/*.rs`,
+`**/*.ts`, `**/*.js`, `**/*.py`, `**/*.go`, `**/*.c`, `**/*.cpp` — the
+verbatim list lives in `templates/_rules.yaml` and
+`defaultCodebaseRules` in `core/rules.ts`, kept in sync),
+`exclude` (default: the RFC §3 build-artifact set at any depth —
+`**/target/**`, `**/node_modules/**`, `**/.git/**`, `**/dist/**`),
+`severity` (`error` | `warning`, default `error` — the
+`forbidden_targets` spelling). Strictly validated (issue #56): a
+wrong-type member, an empty pattern, or a glob that does not compile is
+a line-numbered config error like every other §18 key.
+
+**Layering:** the engine is `core/codebase.ts` (dependency-free —
+`report.ts`/`slug.ts` are the model; portable across the Bun and Node
+runtimes); the CLI half is `cans check --codebase` (`commands/check.ts`)
+and `cans refs <node> --codebase` (`commands/refs.ts`); the wire lands
+in `core/report.ts` as the additive `codebase` block. Pipeline position:
+the codebase phase runs AFTER the corpus engines over the SAME loaded
+workspace (it consumes the corpus key set the check already built) and
+its findings join the report with the rest (§17 step 8) — a `severity:
+error` finding counts in `errorCount` and drives `ok`/`exitCode` like
+every band (exit 2; `warning` is the exit-1 band).
+
+**Wire shape** (additive — present ONLY when the phase ran, so
+plain-check JSON stays byte-identical to the pre-#66 format and the §35
+fixtures stay pinned):
+
+```ts
+codebase?: {
+  scanned: number;   // files scanned
+  pointers: number;  // pointers extracted, regardless of outcome
+  broken: number;    // findings
+  issues: Array<{ type: 'CodebaseBrokenReference'; file: string; line: number;
+                  raw: string; targetFile: string; targetSlug: string | null;
+                  reason: 'FileNotFound' | 'AnchorNotFound' }>;  // file asc, line asc
+}
+```
+
+Each entry rides `sections.refs` too (rule `codebase.broken_reference`),
+like every finding. The frozen cross-agent types are
+`CodebaseRules`/`CodebasePointer`/`CodebaseFinding`/`CodebaseScan`/
+`CodebaseIssueRecord`/`CodebaseOutcome`/`RefsResult` in `src/types.ts`;
+the e2e oracle is `test/fixtures/codebase-workspace/` (its README pins
+every pointer's verdict line-authoritatively) driven by
+`test/issue66-integration.test.ts`.
+
 ### Edge cases
 
 | Case | Behavior |
@@ -1313,6 +1418,26 @@ output:
 #   negative_invariants:
 #     required: true
 #     anchor: Negative Invariants
+# issue #66 — codebase (documented in §12): the codebase inbound-references
+# scanner over the project's source tree. OPT-IN — absent / empty /
+# enabled: false all leave the scanner OFF; the verbatim defaults:
+# codebase:
+#   enabled: true                # master switch — inert unless true
+#   roots: ["."]                 # scan roots, PROJECT-root-relative (parent of cans/)
+#   include:                     # the RFC §3 code-extension set, verbatim:
+#     - "**/*.rs"                # (YAML comments may spell **/ globs verbatim;
+#     - "**/*.ts"                #  quote VALUES — a plain scalar cannot start with *)
+#     - "**/*.js"
+#     - "**/*.py"
+#     - "**/*.go"
+#     - "**/*.c"
+#     - "**/*.cpp"
+#   exclude:                     # the RFC §3 build-artifact set, at any depth:
+#     - "**/target/**"
+#     - "**/node_modules/**"
+#     - "**/.git/**"
+#     - "**/dist/**"
+#   severity: error              # error | warning — band for ALL codebase findings
 ```
 
 `redundancy` parameter notes: `stopwords`/`synonyms` entries are coerced to strings at load time, so an unquoted numeric entry (`- 10` under `stopwords:`) filters the token `"10"` exactly like a quoted one — previously numeric entries were silently inert (issue #42). `fuzzy_max_distance` / `fuzzy_min_word_length` (issue #47) are parameters, not check switches: they tune layer 3 (max Levenshtein distance; minimum pairing word length) but keep their defaults (2 / 5) when deleted or omitted, and only `fuzzy` switches the layer off. Like every §18 parameter they count towards their section's coverage without ever being flipped OFF.
@@ -1347,6 +1472,27 @@ dangling "\\")`) is the line-numbered config error — exit 2,
 `references.forbidden_targets` (issue #62) is the layering / abstraction-leak guard: a list of per-source bans on pointer targets (§12). It is a PARAMETER list, not a check switch: absent/empty/null = the feature is OFF, it never participates in the delete/override reconciliation (a pre-#62 config reconciles byte-identically), and it never flips any engine off — listing it can only ADD findings. Member domains per entry: `source` (REQUIRED — a glob over the referrer's workspace-relative path, the `src/core/glob.ts` grammar with the leading-`cans/` stripping rule, §12), `pattern` (REQUIRED — a JavaScript regex over the target's candidate strings), `severity` (`"error"` | `"warning"`, default `error` — the same band idea as node_length's, with the #62 spelling), `message` (a string, reported verbatim), `except` (a list of globs, same base semantics as `source`, exempting source files from THIS rule). Strictly validated like every §18 key: an unknown member inside an entry, a missing `source`/`pattern`, an invalid regex, an invalid glob (an unclosed `[`), an invalid severity (`must be "error" or "warning"`), a non-mapping entry or a non-list `forbidden_targets` value is the same line-numbered config error (exit 2, `config.invalid`) — a ban can never be silently inert because its selector never compiled. The matching semantics (candidate strings, alias expansion, the external dual form, the checker contract) are §12.
 
 `structure.node_length` (issue #61) grows four optional members, measured, scoped and banded per §15: `unit` (`"chars"` | `"words"` | `"tokens"`, default `chars`), `scope` (`"title"` | `"body"` | `"total"`, default `title`), `strip_references` (boolean, default `false`), and `severity` (`"error"` | `"warn"` | `"off"`, default `warn`). A bare `{ min, max }` — the only form v0.10 and earlier accepted — is exactly the defaults, so every pre-#61 config stays legal; the one deliberate behavior change is the severity migration (over-max findings were hardcoded errors in v0.10 and are warnings under the default `warn` — restore fatal with `severity: error` or `cans check --structure=strict`, §20). `structure.multiline` (issue #61, new) is the wrapped-prose policy block of §15: absent, deleted or null (§18) → the whole policy is OFF; present, its members are `mode` (`"allow"` | `"forbid"` | `"fold"`, default `allow`), `max_lines` (a count — the §18 count domain, integers `>= 0`; null/absent → no cap), `indent_aligned` (boolean, default `false`) and `severity` (the same enum and meaning as node_length's, default `warn`). All of it is strictly validated like every §18 key — an unknown sub-key (a typo'd `severety`), a wrong type, or an unknown enum member is the line-numbered config error, and the `min > max` contradiction check covers the node_length range members unchanged.
+
+`codebase` (issue #66) is the codebase inbound-references scanner's config
+block (§12). It is a PARAMETER section, not a check section: absent/empty/null
+= the scanner is OFF, a pre-#66 config reconciles byte-identically, and listing
+it alone can only ADD codebase findings, never flip an engine off. The one-run
+override is `cans check --codebase` — flag or config, either enables, and the
+flag on with no block runs the documented defaults. Members: `enabled`
+(boolean, default `false` — the master switch), `roots` (a list of project-root-
+relative directories, default `["."]`; resolved from the PARENT of the cans/
+workspace — the `external_roots` convention — and the workspace itself is
+always skipped), `include`/`exclude` (lists of globs in the `core/glob.ts`
+grammar, matched anchored against the project-root-relative `/`-separated
+path; defaults are the RFC §3 code-extension and build-artifact sets spelled
+verbatim in the block above and in `templates/_rules.yaml` — keep the three
+in sync), and `severity` (`"error"` | `"warning"`, default `error` — the
+`forbidden_targets` spelling). Strictly validated like every §18 key: an
+unknown member (a typo'd `enabled2`), a non-boolean, a non-list, a
+non-string or empty glob member, or a glob that does not compile (an
+unclosed `[`, a dangling `\`) is the line-numbered config error — exit 2,
+`config.invalid` on `_rules.yaml`, the check does not run: a selector can
+never be silently inert.
 
 `token_budget` values are validated by the budget commands (§26): `default_limit` must be a non-negative integer (the same validation `--limit` applies), `estimate_chars_per_token` a positive number, `enabled` a boolean. `enabled: false` observably disables budget planning — `budget read` / `budget write` refuse with a §19 error (exit 1); deleted or omitted it keeps its default `true` (it is a planning switch, not a check switch, so "delete a key = check turns off" does not turn budget planning off). Invalid values are §19 user-correctable errors naming the key and the file.
 
@@ -1607,6 +1753,19 @@ exists but sits outside every loaded set (corpus, aux, plugin tier)
 refuses with a hint to add a `references.aliasing.include` glob, never a
 silently-empty run.
 
+**Codebase scan (issue #66):** when the `codebase` block enables it (§18)
+or `--codebase` is passed (flag or config — either enables; the flag with
+no block runs the defaults), a phase after the corpus engines scans the
+PROJECT's source tree for embedded `see:` pointers back into the corpus
+(select → extract → resolve → report, §12) — the workspace itself always
+skipped. Broken pointers are regular issues (category `refs`, rule
+`codebase.broken_reference`, level per `codebase.severity`: `error`
+counts in `errorCount` and drives exit 2, `warning` the exit-1 band) and
+the additive top-level `codebase` JSON block carries
+`{ scanned, pointers, broken, issues[] }` — present only when the phase
+ran, so plain-check JSON stays byte-identical to the pre-#66 wire format.
+The reverse query is §23c.
+
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits. (The one exception, gated behind `--fix --yes`: pure anchor-segment rewrites inside `see:` tokens — see the anchor-repair contract below. Node text is never touched.)
 
 **`--fix` honors the [file] filter (issue #11):** with a filter active,
@@ -1844,6 +2003,40 @@ Plain runs WRITE (the import/export migration-command pattern).
   results: Array<{ file, changed, usesRewritten, definitionsRemoved,
                     definitionsAdded, definitionsKept, charsSaved, problems: string[] }>,
   dryRun?: true, error?: string }
+```
+
+---
+
+## 23c. `cans refs <node> --codebase`
+
+The reverse-traceability query (issue #66): locates every codebase
+occurrence referencing a corpus file (or `file#slug`) — which source files
+point at this spec node. `core/codebase.ts` runs the SAME select → extract
+→ resolve pipeline as the check phase (§12) under the `codebase` config
+(`roots`/`include`/`exclude`; the workspace always skipped), then keeps the
+pointers whose resolved target matches the query: an anchored query
+(`01-auth.md#Sessions`) matches pointers resolving to exactly that file AND
+anchor (tolerant slug matching, so `#token_validation` is found by the
+`Token-validation` query); a file-level query (`01-auth.md`) matches every
+pointer into that file regardless of anchor. `--json` prints the `RefsResult`
+below; human mode prints one `file:line — <text as written>` line per match
+plus a summary line. A successful query is exit 0 whether or not matches
+exist — an empty answer is an answer (nothing references the node), never an
+error.
+
+**Refusals** (§37 — usage diagnosis, exit 2): without `--codebase` the
+command refuses with guidance naming the flag (§20 — a flag that silently
+does nothing is a typo hiding in plain sight; v1 surface is `--codebase`
+only); an unknown corpus file, an unknown anchor, or a malformed query
+(no `.md` file part) is refused with the resolution vocabulary of §12
+(the `did you mean` suggestion rides along when the fuzzy layer finds
+one). Requires a workspace.
+
+**JSON result:**
+```ts
+{ ok, command: 'refs', exitCode, node: string, scanned: number,
+  matches: Array<{ file: string; line: number; text: string }>,  // file asc, line asc
+  error?: string }
 ```
 
 ---
