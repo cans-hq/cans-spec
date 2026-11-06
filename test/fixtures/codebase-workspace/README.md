@@ -55,7 +55,7 @@ config block on, exactly the five `src/` files below are scanned.
 
 | line | written span | verdict |
 |---|---|---|
-| 2 | `see: cans/01-auth.md#Sessions` | VALID — `cans/`-prefixed spelling; one optional leading `cans/` is stripped, targetFile stays AS WRITTEN `cans/01-auth.md` |
+| 2 | `see: cans/01-auth.md#Sessions` | VALID — the `cans/`-prefixed spelling; `raw` keeps the written span verbatim, and the file resolves after ONE optional leading `cans/` is stripped (`01-auth.md` and `cans/01-auth.md` are the same target) |
 | 3 | `see: 03-storage.md#Qutas` | **BROKEN — AnchorNotFound.** File resolves; `Qutas` matches no node of `03-storage.md` (near miss of `Quotas`, similarity ≈ 0.83 ≥ the 0.8 suggestion floor → `did you mean` suggestion on the finding, resolution never auto-heals) |
 | 6 | `see: 01-auth.md#Sessions` | VALID — file+slug |
 
