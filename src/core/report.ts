@@ -218,6 +218,14 @@ const RE_ANCHOR_PARSE_ERROR = /^schematic parse error: (\S+)#(\S+) — (?:JSON|Y
 const RE_SLUG_HINT = /^non-obvious slug: "(.*)" → #(.+) \(contains (.+)\)$/;
 const RE_SLUG_HINT_MORE = /^non-obvious slug: (\d+) more in (\S+) \((\d+) total\)$/;
 const RE_STALE_BP = /^stale back-pointer: (\S+) no longer refs (\S+)$/;
+// Issue #66: the codebase scanner's families — broken embedded pointers
+// (`broken codebase ref: <src>:<line> — <raw> — <why>`) and unreadable
+// source files (reported, never silently skipped). Grouped like the anchor
+// family: one group per rule, one member item per finding (source location
+// → the raw pointer), suggestion riding the item when the fuzzy layer
+// found one.
+const RE_CODEBASE_BROKEN = /^broken codebase ref: (\S+):(\d+) — (.+)$/;
+const RE_CODEBASE_IO = /^unreadable source file: /;
 const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
 const RE_DEEP_HOP = /^DEEP HOP: (.+)$/;
@@ -341,6 +349,28 @@ function normalizeMessage(issue: IssueLike): Normalized {
         ...(issue.suggestion !== undefined && issue.suggestion !== '' ? { suggestion: issue.suggestion } : {}),
       },
     };
+  }
+  if ((mt = m.match(RE_CODEBASE_BROKEN)) !== null) {
+    // issue #66: one member per broken embedded pointer — the label is the
+    // source location → the raw pointer, the why-clause rides as detail, a
+    // did-you-mean suggestion rides the item (advice only — resolution
+    // never went fuzzy).
+    const detail = `${mt[1]}:${mt[2]} → ${mt[3]}`;
+    return {
+      rule: 'codebase.broken_reference',
+      pattern: 'broken codebase ref',
+      detail,
+      item: {
+        label: detail,
+        sort: 0,
+        ...(issue.suggestion !== undefined && issue.suggestion !== '' ? { suggestion: issue.suggestion } : {}),
+      },
+    };
+  }
+  if ((mt = m.match(RE_CODEBASE_IO)) !== null) {
+    // issue #66: one group per unreadable source file — the scan's pointer
+    // set for it is unknowable, which is what the warning is for.
+    return { rule: 'codebase.io', pattern: 'unreadable source file', key: issue.file, detail: m };
   }
   if ((mt = m.match(RE_ANCHOR_NO_TARGET)) !== null) {
     // Issue #49: anchored ref to a target with nothing addressable — advisory
