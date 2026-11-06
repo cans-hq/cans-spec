@@ -579,6 +579,31 @@ function printGroup(g: IssueGroup, expanded: boolean): void {
       }
       break;
     }
+    case 'codebase.broken_reference': {
+      // Issue #66: each member's label IS the diagnosis (source location →
+      // raw pointer → why-clause) and a did-you-mean suggestion rides the
+      // item — same compact/expanded budget as the anchor family above:
+      // the folded view keeps the first member's detail (+ the group hint,
+      // that same member's fix); the expanded view appends every member
+      // with its own fix.
+      const items = g.items ?? [];
+      const withFix = (it: { label: string; suggestion?: string }): string =>
+        it.suggestion !== undefined ? `${it.label} — ${it.suggestion}` : it.label;
+      const details = expanded
+        ? items.map(withFix)
+        : (g.detail !== undefined ? [g.detail] : items.slice(0, FOLD_OVERLAP_ITEMS).map(withFix));
+      for (const d of details) console.log(`      ${d}`);
+      break;
+    }
+    case 'codebase.io': {
+      // Issue #66: one group per unreadable source file — the detail IS the
+      // diagnosis (the OS error and its consequence); the location line
+      // would only repeat the file the pattern already names.
+      if (g.detail !== undefined) {
+        for (const line of wrapText(g.detail, WRAP_COLS, 6)) console.log(line);
+      }
+      break;
+    }
     default: {
       for (const line of wrapText(g.locations.join('  '), WRAP_COLS, 6)) console.log(line);
     }
