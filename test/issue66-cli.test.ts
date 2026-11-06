@@ -227,3 +227,74 @@ describe('issue #66 report — the additive codebase block mirrors the anchorFix
     expect('codebase' in json).toBe(false);
   });
 });
+
+// ── D: the refs command — §20 refusals (no scan engine needed) ──────────────
+
+describe('issue #66 D — cans refs refusals fire before any scan', () => {
+  test('D1: without --codebase the command refuses, naming the flag and what it does', () => {
+    const ws = baseProject('d1');
+    const r = runCli(['refs', '02-auth.md'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('"--codebase" is required');
+    expect(r.out).toContain('cans refs <node> --codebase');
+    const j = parseJsonOut(runCli(['refs', '02-auth.md', '--json'], ws.root).out);
+    expect(j.ok).toBe(false);
+    expect(j.exitCode).toBe(1);
+    expect(j.command).toBe('refs');
+    expect(j.node).toBe('02-auth.md');
+    expect(j.scanned).toBe(0);
+    expect(j.matches).toEqual([]);
+    expect(j.error).toContain('"--codebase" is required');
+  });
+
+  test('D2: a bare stem without .md is a malformed query — usage message, never a fuzzy match', () => {
+    const ws = baseProject('d2');
+    const r = runCli(['refs', '02-auth', '--codebase'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('malformed node "02-auth"');
+    expect(r.out).toContain('<file>.md or <file>.md#Slug');
+  });
+
+  test('D3: an empty slug (`#` with nothing after) is malformed, and so is trailing garbage', () => {
+    const ws = baseProject('d3');
+    for (const bad of ['02-auth.md#', '02-auth.md#Sessions#More']) {
+      const r = runCli(['refs', bad, '--codebase'], ws.root);
+      expect(r.exit).toBe(1);
+      expect(r.out).toContain(`malformed node "${bad}"`);
+    }
+  });
+
+  test('D4: no node at all is the usage refusal', () => {
+    const ws = baseProject('d4');
+    const r = runCli(['refs', '--codebase'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('no node given');
+  });
+
+  test('D5: a second positional is rejected — one query per invocation', () => {
+    const ws = baseProject('d5');
+    const r = runCli(['refs', '02-auth.md', '01-overview.md', '--codebase'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('unexpected argument "01-overview.md"');
+  });
+
+  test('D6: an unknown flag is a §20 user error (never silently ignored)', () => {
+    const ws = baseProject('d6');
+    const r = runCli(['refs', '02-auth.md', '--codebas'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('unknown flag "--codebas"');
+  });
+
+  test('D7: an unknown file refuses, naming it and the corpus boundary', () => {
+    const ws = baseProject('d7');
+    const r = runCli(['refs', '99-missing.md', '--codebase'], ws.root);
+    expect(r.exit).toBe(1);
+    expect(r.out).toContain('no spec file matches "99-missing.md"');
+    expect(r.out).toContain('workspace corpus');
+    // the cans/ spelling of a real file resolves; a cans/ spelling of a
+    // missing file refuses the same way
+    const r2 = runCli(['refs', 'cans/99-missing.md', '--codebase'], ws.root);
+    expect(r2.exit).toBe(1);
+    expect(r2.out).toContain('no spec file matches "cans/99-missing.md"');
+  });
+});

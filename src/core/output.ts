@@ -1,7 +1,7 @@
 import type {
   CommandResult, CheckResult, InitResult, NewResult, DoneResult, StatusResult,
   BudgetReadResult, BudgetWriteResult, ImportResult, ExportResult, SlugResult, VersionResult,
-  AliasResult,
+  AliasResult, RefsResult,
 } from '../types.ts';
 import {
   buildReport, topGroups, checkReportJson,
@@ -251,6 +251,31 @@ export function printHuman(result: CommandResult, refsOnly?: boolean, show?: Set
           for (const p of f.problems) console.log(`  ${p}`);
         }
       }
+      break;
+    }
+    case 'refs': {
+      // issue #66: `cans refs <node> --codebase` — the RFC §4.2 human shape:
+      // the query as written, then per match a two-space-indented
+      // `  <file>:<line>: <text>` line (file asc, line asc), then the scanned
+      // counter. Zero matches is an ANSWER (exit 0): the node line plus
+      // `no codebase references found`. Unreadable source files are not
+      // matches (no line/text exists) — they print as `  ? <file>: unreadable`
+      // lines, riding a NON-ENUMERABLE side field set by commands/refs.ts
+      // (JSON.stringify skips non-enumerable properties, so the --json wire
+      // keeps the frozen RefsResult shape byte-exactly). Refusals print the
+      // diagnosis like every other command's fail path.
+      const r = result as RefsResult;
+      if (!r.ok && r.error !== undefined) {
+        console.log(`✗ ${r.error}`);
+        break;
+      }
+      console.log(r.node);
+      for (const m of r.matches) console.log(`  ${m.file}:${m.line}: ${m.text}`);
+      for (const f of (result as unknown as { unreadableSources?: string[] }).unreadableSources ?? []) {
+        console.log(`  ? ${f}: unreadable`);
+      }
+      if (r.matches.length === 0) console.log('no codebase references found');
+      console.log(`scanned ${r.scanned} source file(s)`);
       break;
     }
     default: {
