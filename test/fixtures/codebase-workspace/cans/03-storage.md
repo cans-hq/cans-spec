@@ -2,7 +2,11 @@
   - Quotas
     - Hard limit enforced at write time
     - Soft limit warns at ninety percent
+    - Tracked per user and per bucket
+    - Resets on the first of the month
   - Blob retention
     - Cold tier after thirty days
     - Restore rehydrates on first read
+    - Deletes require a legal hold release
+    - Integrity verified by checksum
   - Index: see: 00-overview.md

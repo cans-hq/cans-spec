@@ -1,8 +1,12 @@
 - Network
   - Timeouts
-    - Default deadline of thirty seconds
+    - Default deadline is thirty seconds
     - Retries back off exponentially
+    - Idle connections reaped after a minute
+    - Deadlines propagate downstream
   - Circuit breaker
     - Opens after five consecutive failures
     - Half-open probes every ten seconds
+    - Reset requires three successes
+    - Trip events log the endpoint
   - Home: see: 00-overview.md

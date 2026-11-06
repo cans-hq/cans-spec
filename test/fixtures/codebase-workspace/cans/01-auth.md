@@ -2,7 +2,11 @@
   - Sessions
     - Expire after 24 hours of inactivity
     - Refresh requires an active grant
+    - Bounded per device and per user
+    - Revoked on credential rotation
   - Token validation
     - Signature checked before every use
     - Clock skew tolerated by 30 seconds
+    - Audience bound to the gateway
+    - Replay window of sixty seconds
   - Map: see: 00-overview.md
