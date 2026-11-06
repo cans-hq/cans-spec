@@ -49,6 +49,9 @@
 
 import type { CodebaseRules, CodebaseScan } from '../types.ts';
 import type { OutlineNode } from '../types.ts';
+import { readdirSync } from 'node:fs';
+import { dirname, join, relative, isAbsolute } from 'node:path';
+import { globToRegExp } from './glob.ts';
 
 /** §2.1 — the matching rule, verbatim from the RFC (character classes
  *  rewritten in explicit-range spelling; semantics identical):
@@ -119,7 +122,62 @@ export async function collectSourceFiles(
   root: string,
   cfg: CodebaseRules,
 ): Promise<string[]> {
-  throw new Error('issue #66: not implemented (engine layer)');
+  const projectRoot = dirname(root);
+  // The globs decide (defense-in-depth compile like discoverAliasingFiles:
+  // the §18 validator rejects malformed patterns before discovery runs, so a
+  // null here can never be the documented path — it simply never matches).
+  const include: RegExp[] = [];
+  for (const g of cfg.include) {
+    const re = globToRegExp(g);
+    if (re !== null) include.push(re);
+  }
+  const exclude: RegExp[] = [];
+  for (const g of cfg.exclude) {
+    const re = globToRegExp(g);
+    if (re !== null) exclude.push(re);
+  }
+  // TRUE when `candidate` IS `dir` or lives under it (the containment shape
+  // fs.ts's isInsideRoot uses, widened with equality: the workspace root
+  // itself counts as inside).
+  const inside = (dir: string, candidate: string): boolean => {
+    const rel = relative(dir, candidate);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  };
+  const found = new Set<string>();
+  for (const r of cfg.roots) {
+    // Each root resolves from the PROJECT root (dirname of the workspace —
+    // the references.external_roots convention); "." names the whole project.
+    const absRoot = join(projectRoot, r);
+    if (inside(root, absRoot)) continue; // the workspace itself: never scanned
+    walk(absRoot);
+  }
+  // Deterministic: ascending by project-relative path, duplicates from
+  // overlapping roots collapsed by the Set.
+  return [...found].sort();
+
+  function walk(dir: string): void {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // missing/unreadable root or subtree: empty, never a throw
+    }
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (inside(root, abs)) continue; // never descend into the workspace
+        walk(abs);
+      } else if (entry.isFile()) {
+        if (inside(root, abs)) continue; // corpus refs verify in the refs engine
+        // The matched spelling is the PROJECT-root-relative path with `/`
+        // separators (the glob grammar's own convention, on every runtime).
+        const rel = relative(projectRoot, abs).split('\\').join('/');
+        if (!include.some(re => re.test(rel))) continue;
+        if (exclude.some(re => re.test(rel))) continue;
+        found.add(rel);
+      }
+    }
+  }
 }
 
 /** §2.3 full validation pass: select files (collectSourceFiles), extract
