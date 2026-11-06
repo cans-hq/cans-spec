@@ -245,3 +245,113 @@ output:
 #   negative_invariants:
 #     required: true
 #     anchor: Negative Invariants
+
+# Issue #66 — codebase inbound references. Real implementations annotate
+# functions, types and logic with pointers back to canonical spec nodes —
+# `// see: 01-auth.md#Sessions` in Rust, `# see: 04-api.md#Routing` in
+# Python, block comments in Go, YAML keys — and until now those rotted
+# silently: no check failed when a spec node was renamed, and no query could
+# trace which source files reference a node (the reverse-traceability gap).
+# OPT-IN: the shipped template does NOT enable the block (the example below
+# is fully commented out — the scanner is OFF until you spell it). To opt
+# in, uncomment `codebase:` and the members you want; every omitted member
+# keeps its documented default (a partial block deep-merges over the
+# defaults), and an explicitly EMPTY `codebase:` is legal and means OFF.
+# The section is a PARAMETER section, not a check section: it never joins
+# the delete/override reconciliation (listing it can only ADD codebase
+# findings, never flip an engine off). The one-run override is
+# `cans check --codebase` (flag or config — either enables; the
+# output.slug_hints precedent).
+#
+# Keys and defaults (the CodebaseRules contract, src/types.ts):
+#   enabled   master switch — the whole block is inert unless true
+#             (default false)
+#   roots     directories to scan, resolved from the PROJECT ROOT — the
+#             parent of the cans/ workspace (the same convention as
+#             references.external_roots). "." names the whole project.
+#             The workspace itself is ALWAYS skipped: corpus refs verify
+#             in the refs engine, never twice. (default ["."])
+#   include   globs deciding which files join the scan, matched against
+#             the project-root-relative /-separated path in the
+#             core/glob.ts grammar: * any run except / (stays inside one
+#             segment), ** any run including / (crosses segments),
+#             ? exactly one character, [abc] a character class, \X the
+#             literal X; case-sensitive, anchored to the WHOLE path.
+#             Default — the RFC §3 code-extension set:
+#               **/*.rs   **/*.ts   **/*.js   **/*.py
+#               **/*.go   **/*.c    **/*.cpp
+#             (this block is YAML, so the double-star globs above are safe
+#             to spell verbatim here — a TS block comment cannot hold them,
+#             the `**/` star-slash would close it. Quote globs in VALUES:
+#             a YAML plain scalar cannot start with `*`.)
+#   exclude   globs matched AFTER include; a file matching any exclude
+#             never joins the scan. Default — the RFC §3 build-artifact
+#             set, at any depth:
+#               **/target/**   **/node_modules/**
+#               **/.git/**     **/dist/**
+#   severity  error | warning — the band codebase findings emit at:
+#             error fails the run (exit 2 — the CI gate), warning is
+#             advisory (exit 1 band). (default error)
+#
+# Validation semantics (what makes a pointer broken):
+#   - files are scanned purely as text — no ASTs, no toolchains, no
+#     language runtimes. A pointer is `see: <file>[#<slug>]` embedded in
+#     any surrounding text: leading prose, trailing notes, parentheses,
+#     block comments and YAML keys are all invisible to the match, and
+#     trailing prose after the pointer never fails it.
+#   - <file> resolves against the corpus keys (the spec files the
+#     workspace loaded): exact match, else one optional leading `cans/` is
+#     stripped — `01-auth.md` and `cans/01-auth.md` are the same target.
+#     No match → reason `FileNotFound`.
+#   - #<slug> resolves with the SAME tolerant anchor matching the corpus
+#     refs engine uses (case- and separator-insensitive; the `slug:`
+#     algorithm at the top of this file is the canonical spelling). Never
+#     fuzzy — a near miss earns a `did you mean` suggestion, resolution
+#     never auto-heals. No match → reason `AnchorNotFound`.
+#
+# Wire shape (--json, additive — plain-check JSON stays byte-identical to
+# the pre-#66 shape; present only when the phase ran, flag or config):
+#   codebase:
+#     scanned: 5            # files scanned
+#     pointers: 10          # pointers extracted
+#     broken: 2             # findings
+#     issues:               # every broken pointer, exactly:
+#       - type: CodebaseBrokenReference
+#         file: src/api/routes.ts
+#         line: 3
+#         raw: see: 03-storage.md#Qutas
+#         targetFile: 03-storage.md
+#         targetSlug: Qutas
+#         reason: AnchorNotFound
+#   Each issue ALSO rides sections.refs as rule codebase.broken_reference
+#   at the configured severity band, counted in error/warningCount like
+#   every finding.
+#
+# Reverse traceability: `cans refs "01-auth.md#Sessions" --codebase` lists
+# every scanned source file pointing at that node (file, line, the line
+# text as written), exit 0 whether or not matches exist. Without
+# --codebase the command refuses with guidance (a flag that silently does
+# nothing is a typo hiding in plain sight).
+#
+# CI usage: the scanner is deterministic (same tree → same findings, in
+# the same order), so `severity: error` turns silent pointer rot into a
+# non-zero exit — wire `cans check --codebase` into CI and a renamed spec
+# node fails the build until the pointers follow it.
+#
+# codebase:
+#   enabled: true
+#   roots: ["."]
+#   include:
+#     - "**/*.rs"
+#     - "**/*.ts"
+#     - "**/*.js"
+#     - "**/*.py"
+#     - "**/*.go"
+#     - "**/*.c"
+#     - "**/*.cpp"
+#   exclude:
+#     - "**/target/**"
+#     - "**/node_modules/**"
+#     - "**/.git/**"
+#     - "**/dist/**"
+#   severity: error
