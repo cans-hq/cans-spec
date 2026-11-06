@@ -141,6 +141,27 @@ export interface CheckResultLike {
    *  the backPointersUpdated* fields and anchorFixes then describe WOULD-BE
    *  writes. */
   dryRun?: boolean;
+  /** Issue #66: the codebase phase outcome — present ONLY when the phase ran
+   *  (`cans check --codebase` or `_rules.yaml` `codebase.enabled`), so
+   *  plain-check JSON shapes stay byte-identical to the pre-#66 wire format
+   *  (§35 fixtures stay pinned). The block is carried through VERBATIM as
+   *  the top-level `codebase` wire member (RFC §4.1: issues are
+   *  {type, file, line, raw, targetFile, targetSlug, reason} records).
+   *  Structural subset (the module stays zero-import — see file header). */
+  codebase?: {
+    scanned: number;
+    pointers: number;
+    broken: number;
+    issues: Array<{
+      type: 'CodebaseBrokenReference';
+      file: string;
+      line: number;
+      raw: string;
+      targetFile: string;
+      targetSlug: string | null;
+      reason: 'FileNotFound' | 'AnchorNotFound';
+    }>;
+  };
   rulesSummary?: string;
   issues: IssueLike[];
   /** checkFail diagnosis (usage / no-workspace / invalid rules) — carried
@@ -197,6 +218,14 @@ const RE_ANCHOR_PARSE_ERROR = /^schematic parse error: (\S+)#(\S+) — (?:JSON|Y
 const RE_SLUG_HINT = /^non-obvious slug: "(.*)" → #(.+) \(contains (.+)\)$/;
 const RE_SLUG_HINT_MORE = /^non-obvious slug: (\d+) more in (\S+) \((\d+) total\)$/;
 const RE_STALE_BP = /^stale back-pointer: (\S+) no longer refs (\S+)$/;
+// Issue #66: the codebase scanner's families — broken embedded pointers
+// (`broken codebase ref: <src>:<line> — <raw> — <why>`) and unreadable
+// source files (reported, never silently skipped). Grouped like the anchor
+// family: one group per rule, one member item per finding (source location
+// → the raw pointer), suggestion riding the item when the fuzzy layer
+// found one.
+const RE_CODEBASE_BROKEN = /^broken codebase ref: (\S+):(\d+) — (.+)$/;
+const RE_CODEBASE_IO = /^unreadable source file: /;
 const RE_SELF = /^self-reference: (\S+) → (\S+)$/;
 const RE_ORPHAN = /^orphan: (\S+) has no incoming or outgoing refs$/;
 const RE_DEEP_HOP = /^DEEP HOP: (.+)$/;
@@ -320,6 +349,28 @@ function normalizeMessage(issue: IssueLike): Normalized {
         ...(issue.suggestion !== undefined && issue.suggestion !== '' ? { suggestion: issue.suggestion } : {}),
       },
     };
+  }
+  if ((mt = m.match(RE_CODEBASE_BROKEN)) !== null) {
+    // issue #66: one member per broken embedded pointer — the label is the
+    // source location → the raw pointer, the why-clause rides as detail, a
+    // did-you-mean suggestion rides the item (advice only — resolution
+    // never went fuzzy).
+    const detail = `${mt[1]}:${mt[2]} → ${mt[3]}`;
+    return {
+      rule: 'codebase.broken_reference',
+      pattern: 'broken codebase ref',
+      detail,
+      item: {
+        label: detail,
+        sort: 0,
+        ...(issue.suggestion !== undefined && issue.suggestion !== '' ? { suggestion: issue.suggestion } : {}),
+      },
+    };
+  }
+  if ((mt = m.match(RE_CODEBASE_IO)) !== null) {
+    // issue #66: one group per unreadable source file — the scan's pointer
+    // set for it is unknowable, which is what the warning is for.
+    return { rule: 'codebase.io', pattern: 'unreadable source file', key: issue.file, detail: m };
   }
   if ((mt = m.match(RE_ANCHOR_NO_TARGET)) !== null) {
     // Issue #49: anchored ref to a target with nothing addressable — advisory
@@ -779,6 +830,12 @@ export function checkReportJson(result: CheckResultLike): unknown {
     // issue #11: name the files --fix actually rewrote (sorted, spec-relative).
     backPointersUpdatedFiles: result.backPointersUpdatedFiles,
   };
+  // Issue #66: additive codebase block — carried through VERBATIM only when
+  // the check set it (the phase ran: flag or config), positioned after
+  // backPointersUpdatedFiles and before the anchorFixes conditional, the
+  // additive-block convention. A plain run never has the key, so the
+  // pre-#66 wire shape stays byte-identical (§35 fixtures stay pinned).
+  if (result.codebase !== undefined) out.codebase = result.codebase;
   // issue #53 (Part 2.4): additive anchor-repair transaction fields — carried
   // through only when the check set them, so plain-check JSON shapes are
   // byte-identical to the pre-#53 wire format (§35 fixtures stay pinned).

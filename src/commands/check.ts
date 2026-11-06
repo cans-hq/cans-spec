@@ -1,6 +1,6 @@
 import { join, isAbsolute } from 'path';
 import type {
-  BackPointer, CheckResult, Issue, OutlineNode, Rules,
+  BackPointer, CheckResult, CodebaseOutcome, Issue, OutlineNode, Rules,
   MultilineRules, NodeLengthRules,
 } from '../types.ts';
 import { readText, writeText } from '../core/runtime.ts';
@@ -14,7 +14,8 @@ import {
   parseOutline, extractBackPointers, realNodes, flattenNodes, maxDepth as outlineMaxDepth,
   type ParseWarning,
 } from '../core/outline.ts';
-import { loadRules } from '../core/rules.ts';
+import { loadRules, defaultCodebaseRules } from '../core/rules.ts';
+import { checkCodebaseRefs } from '../core/codebase.ts';
 import {
   aliasDefinitionIssues, defaultAliasing, extractAliases, finishAliasChecks,
   resolveFileAliases, type AliasTable,
@@ -68,6 +69,15 @@ export interface CheckArgs {
    *  warning counts, findings) are identical either way. Optional: internal
    *  callers (done.ts's ZERO_CHECK_ARGS) never set it. */
   hints?: boolean;
+  /** issue #66: opt-in switch for the codebase inbound-references scanner
+   *  (`cans check --codebase`). Default off — a plain check never scans
+   *  source files — and either this flag or the `_rules.yaml` key
+   *  `codebase.enabled` enables the phase (the flag-or-config convention,
+   *  --hints precedent): the flag is the ONE-RUN override, forcing a scan
+   *  with the default codebase rules when the config block is absent.
+   *  Optional: internal callers (done.ts's ZERO_CHECK_ARGS) never set it —
+   *  undefined reads as false. */
+  codebase?: boolean;
   /** issue #61: the `--structure` execution gate — the exact mirror of
    *  refsOnly. `true` (bare `--structure`): run ONLY the structural lint
    *  cluster — checkStructure (incl. the structure.multiline policy) and
@@ -112,6 +122,11 @@ const CHECK_FLAGS: FlagSpec[] = [
   // value; default off in both the flag set and `_rules.yaml`
   // (output.slug_hints) — the band is opt-in only, never default-on.
   { name: 'hints', boolean: true },
+  // issue #66: opt-in switch for the codebase inbound-references scanner.
+  // Boolean, no value; default off in both the flag set and `_rules.yaml`
+  // (codebase.enabled) — the phase is opt-in only (the flag-or-config
+  // convention, --hints precedent); the flag is the one-run override.
+  { name: 'codebase', boolean: true },
 ];
 
 /** issue #41: user-facing --show targets. `all` unfolds every section. */
@@ -242,6 +257,8 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
     json: parsed.flags.has('json'),
     // issue #59: --hints opts the run into the slug-hint info band.
     hints: parsed.flags.has('hints'),
+    // issue #66: --codebase opts the run into the codebase scanner phase.
+    codebase: parsed.flags.has('codebase'),
     // issue #61: the structure gate (undefined = plain orchestration).
     structure,
     show,
@@ -1169,6 +1186,56 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     }
   }
 
+  // ── issue #66: the codebase inbound-references phase ──
+  // Embedded `see:` pointers in SOURCE files (Rust/Python/Go/…, outside the
+  // workspace) resolved against the loaded spec graph. Refs-layer findings:
+  // kept under --refs-only, suppressed under the --structure gate (this
+  // block sits behind !structureOnly, mirroring the refs cluster above).
+  // The flag-or-config opt-in (--hints convention): `cans check --codebase`
+  // forces ONE run on — with the DEFAULT codebase rules when the config
+  // block is absent — and `codebase.enabled: true` enables it for every
+  // run; the block's other knobs (roots/include/exclude/severity) apply
+  // either way. The corpus is the SAME final file set the ref graph built
+  // on (spec + promoted subfolder files + aux + the #65 plugin tier): a
+  // source pointer resolves against every key the checker would verify a
+  // corpus ref against. READ-ONLY by contract: the scan never writes a
+  // byte — the issues below and the additive CheckResult.codebase outcome
+  // are the only outputs. Severity banding is the ordinary band contract:
+  // 'error' findings count in errorCount (exit 2), 'warning' in the exit-1
+  // band; they ride sections.refs like every refs finding (rule
+  // codebase.broken_reference), never the refs.broken counter.
+  let codebaseOutcome: CodebaseOutcome | undefined;
+  if (!structureOnly && (opts.codebase === true || rules.codebase?.enabled === true)) {
+    const codebaseCfg = rules.codebase ?? defaultCodebaseRules();
+    const scan = await checkCodebaseRefs(root, codebaseCfg, allFiles);
+    for (const f of scan.findings) {
+      issues.push({
+        file: f.file, // project-root-relative source path, as the finding carries
+        line: f.line,
+        level: codebaseCfg.severity,
+        category: 'refs',
+        message: f.message,
+        ...(f.suggestion !== undefined ? { suggestion: f.suggestion } : {}),
+        rule: 'codebase.broken_reference',
+      });
+    }
+    issues.push(...scan.warnings); // codebase.io unreadable-source warnings, as-is
+    codebaseOutcome = {
+      scanned: scan.scanned,
+      pointers: scan.pointers,
+      broken: scan.findings.length,
+      issues: scan.findings.map(f => ({
+        type: 'CodebaseBrokenReference',
+        file: f.file,
+        line: f.line,
+        raw: f.raw,
+        targetFile: f.targetFile,
+        targetSlug: f.targetSlug,
+        reason: f.reason,
+      })),
+    };
+  }
+
   // ── issue #53 (Part 2.4): the --fix anchor-repair transaction ──
   // A broken anchor is repaired ONLY when the intended target is unambiguous:
   //   1. the target file exists and is parseable — the same resolution path
@@ -1626,6 +1693,12 @@ export async function checkWorkspace(root: string, opts: CheckArgs): Promise<Che
     // spec-relative). Empty without --fix or when nothing needed a write;
     // with a [file] filter only matching files can ever appear here.
     backPointersUpdatedFiles: [...backPointersUpdatedFiles].sort(),
+    // issue #66: the codebase phase outcome — present ONLY when the phase
+    // ran (the --codebase flag or codebase.enabled), so plain-check wires
+    // stay byte-identical to the pre-#66 shape (§35 fixtures stay pinned).
+    // Position mirrors the JSON convention: after backPointersUpdatedFiles,
+    // before the anchorFixes conditional.
+    ...(codebaseOutcome !== undefined ? { codebase: codebaseOutcome } : {}),
     // issue #53 (Part 2.4): the anchor-repair transaction report — present
     // only on --fix runs. Proposals (plain --fix, --dry-run) carry
     // applied:false; a --yes run's landed rewrites carry applied:true.
