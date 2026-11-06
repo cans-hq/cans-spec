@@ -68,6 +68,15 @@ export interface CheckArgs {
    *  warning counts, findings) are identical either way. Optional: internal
    *  callers (done.ts's ZERO_CHECK_ARGS) never set it. */
   hints?: boolean;
+  /** issue #66: opt-in switch for the codebase inbound-references scanner
+   *  (`cans check --codebase`). Default off — a plain check never scans
+   *  source files — and either this flag or the `_rules.yaml` key
+   *  `codebase.enabled` enables the phase (the flag-or-config convention,
+   *  --hints precedent): the flag is the ONE-RUN override, forcing a scan
+   *  with the default codebase rules when the config block is absent.
+   *  Optional: internal callers (done.ts's ZERO_CHECK_ARGS) never set it —
+   *  undefined reads as false. */
+  codebase?: boolean;
   /** issue #61: the `--structure` execution gate — the exact mirror of
    *  refsOnly. `true` (bare `--structure`): run ONLY the structural lint
    *  cluster — checkStructure (incl. the structure.multiline policy) and
@@ -112,6 +121,11 @@ const CHECK_FLAGS: FlagSpec[] = [
   // value; default off in both the flag set and `_rules.yaml`
   // (output.slug_hints) — the band is opt-in only, never default-on.
   { name: 'hints', boolean: true },
+  // issue #66: opt-in switch for the codebase inbound-references scanner.
+  // Boolean, no value; default off in both the flag set and `_rules.yaml`
+  // (codebase.enabled) — the phase is opt-in only (the flag-or-config
+  // convention, --hints precedent); the flag is the one-run override.
+  { name: 'codebase', boolean: true },
 ];
 
 /** issue #41: user-facing --show targets. `all` unfolds every section. */
@@ -242,6 +256,8 @@ export function parseCheckArgs(args: string[]): CheckArgs & { errors: string[] }
     json: parsed.flags.has('json'),
     // issue #59: --hints opts the run into the slug-hint info band.
     hints: parsed.flags.has('hints'),
+    // issue #66: --codebase opts the run into the codebase scanner phase.
+    codebase: parsed.flags.has('codebase'),
     // issue #61: the structure gate (undefined = plain orchestration).
     structure,
     show,

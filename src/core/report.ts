@@ -141,6 +141,27 @@ export interface CheckResultLike {
    *  the backPointersUpdated* fields and anchorFixes then describe WOULD-BE
    *  writes. */
   dryRun?: boolean;
+  /** Issue #66: the codebase phase outcome — present ONLY when the phase ran
+   *  (`cans check --codebase` or `_rules.yaml` `codebase.enabled`), so
+   *  plain-check JSON shapes stay byte-identical to the pre-#66 wire format
+   *  (§35 fixtures stay pinned). The block is carried through VERBATIM as
+   *  the top-level `codebase` wire member (RFC §4.1: issues are
+   *  {type, file, line, raw, targetFile, targetSlug, reason} records).
+   *  Structural subset (the module stays zero-import — see file header). */
+  codebase?: {
+    scanned: number;
+    pointers: number;
+    broken: number;
+    issues: Array<{
+      type: 'CodebaseBrokenReference';
+      file: string;
+      line: number;
+      raw: string;
+      targetFile: string;
+      targetSlug: string | null;
+      reason: 'FileNotFound' | 'AnchorNotFound';
+    }>;
+  };
   rulesSummary?: string;
   issues: IssueLike[];
   /** checkFail diagnosis (usage / no-workspace / invalid rules) — carried
@@ -779,6 +800,12 @@ export function checkReportJson(result: CheckResultLike): unknown {
     // issue #11: name the files --fix actually rewrote (sorted, spec-relative).
     backPointersUpdatedFiles: result.backPointersUpdatedFiles,
   };
+  // Issue #66: additive codebase block — carried through VERBATIM only when
+  // the check set it (the phase ran: flag or config), positioned after
+  // backPointersUpdatedFiles and before the anchorFixes conditional, the
+  // additive-block convention. A plain run never has the key, so the
+  // pre-#66 wire shape stays byte-identical (§35 fixtures stay pinned).
+  if (result.codebase !== undefined) out.codebase = result.codebase;
   // issue #53 (Part 2.4): additive anchor-repair transaction fields — carried
   // through only when the check set them, so plain-check JSON shapes are
   // byte-identical to the pre-#53 wire format (§35 fixtures stay pinned).
