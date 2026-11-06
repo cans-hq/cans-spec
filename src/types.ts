@@ -382,6 +382,109 @@ export interface AgentGuardrailsRules {
   };
 }
 
+/** Issue #66: the `codebase` block — the codebase inbound-references
+ *  scanner (embedded `see: <file>[#<slug>]` pointers in source files).
+ *  OPT-IN, a PARAMETER block like agent_guardrails: absent/empty/null = the
+ *  scanner is OFF and every pre-#66 config behaves byte-identically; it
+ *  never participates in the §18 delete/override reconciliation (listing it
+ *  can only ADD codebase findings, never flip an engine off). The one-run
+ *  override is `cans check --codebase` (flag or config — either enables,
+ *  the --hints precedent). Validated strictly (issue #56): a wrong-type
+ *  member, an empty pattern, or a glob that does not compile is a
+ *  line-numbered config error like every other §18 key. */
+export interface CodebaseRules {
+  /** Master switch: the whole block is inert unless true. The `cans check
+   *  --codebase` flag forces ONE run on with the DEFAULTS below when the
+   *  block is absent (the output.slug_hints flag-or-config convention). */
+  enabled: boolean;
+  /** Directories to scan, resolved from the PROJECT ROOT (the parent of the
+   *  cans/ workspace — the same convention as references.external_roots).
+   *  `"."` names the whole project; the workspace itself is ALWAYS excluded
+   *  (corpus refs verify in the refs engine, never twice). Default `["."]`. */
+  roots: string[];
+  /** Include globs (core/glob.ts grammar, matched against the
+   *  project-root-relative `/`-separated path). Default: the RFC §3
+   *  code-extension set — every `*.rs`, `*.ts`, `*.js`, `*.py`, `*.go`,
+   *  `*.c` and `*.cpp` file under any directory (double-star-prefixed
+   *  patterns; the verbatim list lives in templates/_rules.yaml and
+   *  defaultCodebaseRules in core/rules.ts — keep the three in sync). */
+  include: string[];
+  /** Exclude globs (same grammar), matched AFTER include. Default: the RFC
+   *  §3 build-artifact set — the `target`, `node_modules`, `.git` and
+   *  `dist` directories at any depth (verbatim list in
+   *  templates/_rules.yaml and defaultCodebaseRules). */
+  exclude: string[];
+  /** The band codebase findings emit at: 'error' (default — fails the run,
+   *  the RFC's CI gate) | 'warning' (advisory, exit 1 band — the
+   *  forbidden_targets spelling, matching Issue.level directly). */
+  severity: 'error' | 'warning';
+}
+
+/** One embedded `see:` pointer extracted from a source file (§2). `raw` is
+ *  the exact matched span; `targetFile`/`targetSlug` are AS WRITTEN (the
+ *  optional `cans/` prefix and slug normalization happen at resolution). */
+export interface CodebasePointer {
+  /** Project-root-relative source path, `/` separators. */
+  file: string;
+  /** 1-based line number. */
+  line: number;
+  /** The exact matched `see: …` span, no surrounding prose. */
+  raw: string;
+  /** The `<file>.md` part as written (with or without `cans/`). */
+  targetFile: string;
+  /** The anchor fragment as written after `#`, or null when absent. */
+  targetSlug: string | null;
+}
+
+/** Why a pointer failed to resolve (the RFC §4.1 JSON vocabulary). */
+export type CodebaseReason = 'FileNotFound' | 'AnchorNotFound';
+
+/** A pointer that FAILED resolution (§2.3): the resolution result rides the
+ *  pointer. `resolvedFile` is the corpus key it resolved to (null when the
+ *  file itself was not found); `message` is the human one-liner;
+ *  `suggestion` carries the nearSlugMatches `did you mean` when the fuzzy
+ *  layer finds one (suggestion-only — resolution itself never goes fuzzy). */
+export interface CodebaseFinding extends CodebasePointer {
+  resolvedFile: string | null;
+  reason: CodebaseReason;
+  message: string;
+  suggestion?: string;
+}
+
+/** One codebase scan's full outcome (engine → CLI contract): findings (the
+ *  failures), io warnings (unreadable files — reported, never skipped), and
+ *  the discoverability counters (`scanned` files, `pointers` extracted). */
+export interface CodebaseScan {
+  findings: CodebaseFinding[];
+  warnings: Issue[];
+  scanned: number;
+  pointers: number;
+}
+
+/** Issue #66: one entry of the additive `--json` `codebase.issues` block —
+ *  the RFC §4.1 wire shape, verbatim (type/file/line/raw/targetFile/
+ *  targetSlug/reason). These ALSO ride the regular sections.refs entries
+ *  (rule codebase.broken_reference) like every other finding. */
+export interface CodebaseIssueRecord {
+  type: 'CodebaseBrokenReference';
+  file: string;
+  line: number;
+  raw: string;
+  targetFile: string;
+  targetSlug: string | null;
+  reason: CodebaseReason;
+}
+
+/** Issue #66: the additive CheckResult block — present ONLY when the
+ *  codebase phase ran (flag or config), so plain-check JSON shapes stay
+ *  byte-identical to the pre-#66 wire format (§35 fixtures stay pinned). */
+export interface CodebaseOutcome {
+  scanned: number;
+  pointers: number;
+  broken: number;
+  issues: CodebaseIssueRecord[];
+}
+
 export interface Rules {
   structure: StructureRules;
   style: StyleRules;
@@ -399,6 +502,13 @@ export interface Rules {
    *  convention; never part of the §18 delete/override reconciliation).
    *  See AgentGuardrailsRules. */
   agent_guardrails?: AgentGuardrailsRules | null;
+  /** Issue #66: the codebase inbound-references scanner (the top-level
+   *  `codebase` block in `_rules.yaml`). A PARAMETER block, not a check
+   *  switch: absent/empty/null = the scanner is OFF and every pre-#66
+   *  config behaves byte-identically; never part of the §18 delete/override
+   *  reconciliation. The `cans check --codebase` flag is the one-run
+   *  override (either path enables). See CodebaseRules. */
+  codebase?: CodebaseRules | null;
 }
 
 // ── Command Results ──
@@ -465,6 +575,13 @@ export interface CheckResult extends CommandResult {
   elapsedMs: number;
   /** §22/§36: human-facing one-line summary of the active _rules.yaml limits (QA-02 F17). */
   rulesSummary?: string;
+  /** Issue #66: the codebase phase outcome — present ONLY when the phase
+   *  ran (`cans check --codebase` or `_rules.yaml` `codebase.enabled`), so
+   *  plain-check wires stay byte-identical to the pre-#66 shape. `broken`
+   *  findings are regular issues (category refs, rule
+   *  codebase.broken_reference, level per codebase.severity) — they count
+   *  in errorCount/warningCount and drive ok/exitCode like every band. */
+  codebase?: CodebaseOutcome;
 }
 
 export interface NewResult extends CommandResult {
@@ -639,6 +756,25 @@ export interface AliasResult extends CommandResult {
   /** §37: usage / no-workspace / invalid-rules / disabled-config diagnosis
    *  (ok:false, exitCode 2). Per-file refusals ride in results[].problems
    *  instead (ok:false, exitCode 1 — user-correctable file content). */
+  error?: string;
+}
+
+/** Issue #66: `cans refs <node> --codebase` — the reverse-traceability
+ *  query. Locates every codebase occurrence referencing the given corpus
+ *  file (or file#slug), scanned under the `codebase` config. v1 surface is
+ *  `--codebase` only: without the flag the command refuses with guidance
+ *  (§20 — a flag that silently does nothing is a typo hiding in plain
+ *  sight). A successful query is exit 0 whether or not matches exist. */
+export interface RefsResult extends CommandResult {
+  command: 'refs';
+  /** The query as written (`02-auth.md` or `02-auth.md#Sessions`). */
+  node: string;
+  /** Source files scanned under the codebase config. */
+  scanned: number;
+  /** Matching pointers, deterministic (file asc, line asc): the source
+   *  file, its 1-based line, and the full line text as written. */
+  matches: Array<{ file: string; line: number; text: string }>;
+  /** Refusal/error diagnosis (unknown node, codebase off, bad query). */
   error?: string;
 }
 
