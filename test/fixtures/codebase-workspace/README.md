@@ -1,4 +1,4 @@
-# codebase-workspace — the issue #66 e2e oracle (extended for issue #67)
+# codebase-workspace — the issue #66 e2e oracle (extended for issues #67 and #68)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
@@ -9,10 +9,10 @@ variants in `src/net.yaml` and `src/plugins/mounts.yaml` join the scan; the
 pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
 `severity: error`.
 
-This file is the human-readable oracle for `test/issue66-integration.test.ts`
-and `test/issue-67-contract.test.ts`: every embedded pointer, its line, and
-the outcome the real CLI must produce. Line numbers below are
-byte-authoritative for the files as committed.
+This file is the human-readable oracle for `test/issue66-integration.test.ts`,
+`test/issue-67-contract.test.ts` and `test/issue-68-contract.test.ts`: every
+embedded pointer, its line, and the outcome the real CLI must produce. Line
+numbers below are byte-authoritative for the files as committed.
 
 **The issue #67 extension** (the kelir-shaped repro): the four `src/plugins/`
 files and the two new spec files reproduce, at fixture scale, the 135 false
@@ -22,11 +22,39 @@ at `(`, `)`, `,`, `:`, `/`, `^` by the frozen #66 anchor class) and Bug 2
 because the matcher slugified the whole node line). Every pre-#67 file and
 its verdict is unchanged below; the extension only ADDS content.
 
+**The issue #68 extension** (the kelir-shaped repro, round two): the three
+`cans/plugins/*.md` spec files and the three `src/plugins/*.rs` sources
+reproduce the five remaining false "anchor not found" positives (0.16.0 on
+the kelir repo @ 6bc53d3) — the SAME defect class at a new seam: the 0.16.0
+cleaning pass is ONE-SIDED. The slug algorithm preserves every
+non-separator character verbatim, so a heading's own trailing `:` survives
+into its canonical anchor (`cans slug "SQLite UDS bridge mechanics:"` →
+`SQLite-UDS-bridge-mechanics:`) — that colon spelling is what the kelir
+code writes. The ANCHOR side is cleaned at extraction (the trailing run
+strips: `...(mux-0x0001):` → `...(mux-0x0001)`, `...mechanics:` →
+`...mechanics`), but the HEADING side is never cleaned at matching —
+cleaned vs uncleaned never matches. Post-#68 the matcher compares like
+with like (cleaned-vs-cleaned) and all five resolve; pre-#68 they were the
+five false AnchorNotFound findings. Every pre-#68 file and its verdict is
+unchanged below; the extension only ADDS content.
+
 ## The corpus (`cans/`)
 
 Workspace-relative keys (what `<file>` in a pointer resolves against):
 `00-overview.md`, `01-auth.md`, `03-storage.md`, `07-network.md`,
-`09-plugins.md`, `10-lifecycle.md`.
+`09-plugins.md`, `10-lifecycle.md` — plus the issue #68 PLUGIN TIER:
+`plugins/db-proxy.md`, `plugins/profile.md`, `plugins/wire-ingress.md`.
+Those three are NOT spec files (discovery takes root-level `.md` and
+`index.md` only); they join the checked set the way kelir's plugin specs do
+— through the issue #65 plugin tier: `cans/_rules.yaml` carries
+`references.aliasing.include: ["plugins/*.md"]` with aliasing enabled (the
+spelling the #65 refusal hint and kelir's own `_rules.yaml` use). The tier
+is refs-only — plugin files get no structure/style/redundancy checks, but
+their refs join the graph and they are RESOLVABLE corpus keys for the
+codebase scanner, which is exactly the precondition the kelir five assume:
+a broken pointer into `cans/plugins/db-proxy.md` is AnchorNotFound, never
+FileNotFound. The `cans/plugins/` glob never overlaps the spec corpus, so
+the tier can never double-load a file (the #65 exclude rule).
 
 Canonical anchor slugs (`cans slug "<node text>"`):
 
@@ -44,6 +72,9 @@ Canonical anchor slugs (`cans slug "<node text>"`):
 | 09-plugins.md   | L7 pgwire rewrite and 2PC commit (title before the `: see:` suffix) | `L7-pgwire-rewrite-and-2PC-commit` |
 | 09-plugins.md   | CoW swarm mesh federation (title before the `: see:` suffix) | `CoW-swarm-mesh-federation` |
 | 10-lifecycle.md | Native checkpoint plane (kelir-core::checkpoint) | `Native-checkpoint-plane-(kelir-core::checkpoint)` |
+| plugins/db-proxy.md (plugin tier) | SQLite UDS bridge mechanics: | `SQLite-UDS-bridge-mechanics:` — the trailing `:` IS the canonical slug, `cans slug` preserves it (issue #68) |
+| plugins/profile.md (plugin tier) | Inversion-of-Control configuration router: | `Inversion-of-Control-configuration-router:` |
+| plugins/wire-ingress.md (plugin tier) | Ingress stream framing on stream kind L4_FORWARD (mux 0x0001): | `Ingress-stream-framing-on-stream-kind-L4-FORWARD-(mux-0x0001):` |
 
 Matching is the corpus refs engine's tolerant rule (case- and
 separator-insensitive): `#token_validation` also resolves against node
@@ -80,7 +111,9 @@ Levenshtein 2, the issue #47 false-positive class). A warning there would
 muddy the exit-code bands this fixture isolates, so the §18 knobs carry
 `word_frequency_threshold: 5` (one notch of headroom; the layer stays
 armed) and `fuzzy: false` (the near-miss layer off). Every other check
-stays on; the corpus remains check-clean.
+stays on; the corpus remains check-clean. The issue #68 plugin-tier files
+add nothing here either way: the tier is refs-only, so their vocabulary
+never reaches the redundancy layers at all.
 
 ## The source tree (`src/`) — every pointer and its verdict
 

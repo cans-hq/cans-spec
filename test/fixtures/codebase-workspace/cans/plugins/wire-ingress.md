@@ -1,0 +1,28 @@
+- Wire ingress plugin
+  - Purpose
+    - Terminate ingress streams from the edge
+    - Normalize every stream kind onto the spine mux
+  - Stream kinds
+    - L4 raw passthrough carries opaque bytes
+    - L7 parsed streams enter after the header probe
+    - Control streams never carry payload
+  - Mux discipline
+    - Every stream rides a mux id
+    - The demux table drops unknown ids silently
+    - Window updates piggyback on data frames
+  - Framing rules
+    - Frames are length-prefixed, little endian
+    - A frame never spans a mux id boundary
+    - Zero-length frames are keepalives
+  - Backpressure
+    - Credit is per mux id, not per connection
+    - A stalled stream parks its credit
+    - Credit returns on frame ack
+  - Error handling
+    - Protocol errors tear down the whole connection
+  - Ingress stream framing on stream kind L4_FORWARD (mux 0x0001):
+    - L4_FORWARD streams carry opaque ip payloads
+    - The mux id 0x0001 is reserved for this kind
+    - Framing adds a sixteen byte header, nothing more
+    - The kind byte and the mux id travel together
+  - Map: see: 00-overview.md

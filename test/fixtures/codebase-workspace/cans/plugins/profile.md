@@ -1,0 +1,21 @@
+- Profile plugin
+  - Purpose
+    - One profile per workspace, resolved on demand
+    - Providers register capabilities, never addresses
+  - Provider contracts
+    - Each provider names its capability set
+    - Resolution order follows registration order
+    - A missing provider is an error, not a fallback
+  - Lifecycle
+    - Activation runs before the first request
+    - Deactivation drains in-flight work first
+    - Reload swaps the router under a lock
+  - Configuration sources
+    - File config wins over embedded defaults
+    - Env overrides win over file config
+    - Secrets never enter the profile tree
+  - Inversion-of-Control configuration router:
+    - Constructors receive their dependencies, never look them up
+    - The router wires providers by capability key
+    - Late binding retries after provider registration
+  - Map: see: 00-overview.md

@@ -8,6 +8,20 @@
 # the suite's exit codes isolate the codebase band.
 references:
   back_pointers: false
+  # Issue #68 (the kelir plugin tier): the three cans/plugins/*.md specs are
+  # NOT corpus files (discovery takes root-level .md and index.md only), so
+  # they join the checked set the way kelir's do — through the issue #65
+  # plugin tier: `references.aliasing.include` names them by workspace-
+  # relative glob (`plugins/*.md` — the spelling the #65 refusal hint and
+  # kelir's own _rules.yaml use), aliasing enabled gates the tier. The tier
+  # is refs-only (no structure/style/redundancy checks on plugin files) and
+  # their refs join the graph, exactly the preconditions the kelir five
+  # assume: `cans/plugins/db-proxy.md` is a RESOLVABLE key for the codebase
+  # scanner, so a broken pointer there is AnchorNotFound, never FileNotFound.
+  aliasing:
+    enabled: true
+    include:
+      - plugins/*.md
 
 # Issue #67 (the kelir-shaped extension): the extension is verbatim where
 # the issue is verbatim and the pre-#67 corpus is frozen, so the
