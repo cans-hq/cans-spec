@@ -16,16 +16,35 @@
  *    ok:false / exitCode 1 with a message naming the flag and what it does.
  *  - The first positional is the node query: `<file>.md` optionally
  *    `#Slug` — both `02-auth.md` (every pointer into the file) and
- *    `02-auth.md#Sessions` (the RFC's canonical example). The grammar
- *    mirrors SEE_POINTER_RE's character classes, anchored on both ends:
- *    anything else (a bare stem without `.md`, an empty slug, trailing
- *    garbage) is a usage refusal, never a fuzzy match.
- *  - The query file resolves against the DISCOVERED spec keys exactly the
- *    way the engine resolves pointer targets (exact key, else `cans/`
+ *    `02-auth.md#Sessions` (the RFC's canonical example) — and, since issue
+ *    #69, the ARTIFACT form `<file>.<ext>` optionally `#Slug` (both
+ *    `cans/artifacts/examples/multi-vm-swarm.rs#federate` and the
+ *    file-level `cans/artifacts/diagrams/host-runtime.txt`). The grammar
+ *    mirrors SEE_POINTER_RE's character classes through the SHARED
+ *    target-extension table (core/codebase.ts CODEBASE_TARGET_EXTS via
+ *    codebaseTargetExtAlt — a query must name everything a pointer can;
+ *    the two grammars are built from one source and cannot drift),
+ *    anchored on both ends: anything else (a bare stem without an
+ *    extension, an extension no anchor vocabulary can address, an empty
+ *    slug, trailing garbage) is a usage refusal, never a fuzzy match.
+ *  - A `.md` query file resolves against the DISCOVERED spec keys exactly
+ *    the way the engine resolves pointer targets (exact key, else `cans/`
  *    -stripped). v1 scope: discovered corpus keys only — the check engine's
  *    subfolder promotion and plugin tier are NOT reimplemented here, so a
- *    v1 query names corpus files. An unknown file refuses with the corpus
- *    boundary named.
+ *    v1 `.md` query names corpus files. An unknown spec file refuses with
+ *    the corpus boundary named.
+ *  - A non-`.md` query file (issue #69, the artifact tier) resolves against
+ *    the WORKSPACE FILESYSTEM: the optional `cans/` prefix strips, then
+ *    resolveSpecFile (the same containment-guarded resolver the corpus
+ *    refs engine uses for on-disk artifact targets — `artifacts/examples/
+ *    multi-vm-swarm.rs` and `cans/artifacts/examples/multi-vm-swarm.rs`
+ *    name one file). An unknown artifact file refuses with the same
+ *    family shape, the spec-or-artifact boundary named. Matching never
+ *    crosses the tiers: a `.md` query matches only corpus pointers (an
+ *    artifact target is never a corpus key) and an artifact query only
+ *    artifact pointers (resolveSpecFile of an `.md` target is an `.md`
+ *    path — the folder-index fallback only ever appends `index.md` — so it
+ *    can never equal a non-`.md` artifact path).
  *  - Matching is the tolerant contract, never fuzzy: a file-only query
  *    matches every pointer whose RESOLVED target file equals the query file;
  *    a slugged query compares `normalizeForAnchor(pointer.targetSlug)` with
@@ -54,13 +73,14 @@
 import { join, dirname } from 'path';
 import type { CodebaseRules, OutlineNode, RefsResult } from '../types.ts';
 import { readText } from '../core/runtime.ts';
-import { resolveWorkspaceRoot, discoverSpecFiles } from '../core/fs.ts';
+import { resolveWorkspaceRoot, discoverSpecFiles, resolveSpecFile } from '../core/fs.ts';
 import { parseOutline } from '../core/outline.ts';
 import { loadRules, defaultCodebaseRules } from '../core/rules.ts';
 import {
   collectSourceFiles,
   extractCodebasePointers,
   stripCodebaseAnchorPunct,
+  codebaseTargetExtAlt,
 } from '../core/codebase.ts';
 import { normalizeForAnchor } from '../core/slug.ts';
 import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args.ts';
@@ -72,16 +92,26 @@ const REFS_FLAGS: FlagSpec[] = [
   { name: 'codebase', boolean: true },
 ];
 
-/** The node query grammar: `<file>.md` optionally `#Slug`, anchored on both
- *  ends. Character classes mirror SEE_POINTER_RE (file: letters/digits/
+/** The node query grammar: `<file>.<ext>` optionally `#Slug`, anchored on
+ *  both ends. Character classes mirror SEE_POINTER_RE (file: letters/digits/
  *  underscore/dash/slash; slug: issue #67 — the FULL slug alphabet,
  *  whitespace/`#`-terminated, the same `[^\s#]+` shape the extractor
  *  captures), so anything a source pointer could express is queryable and
- *  nothing else parses. The captured query anchor is then cleaned with the
- *  extractor's own stripCodebaseAnchorPunct — the mirror runs BOTH ways, so
- *  a glued-closer spelling (`…#Invariants-and-policy-(transaction))` pasted
- *  from prose) resolves exactly like the captured pointer would. */
-const QUERY_RE = /^([A-Za-z0-9_\-/]+\.md)(?:#([^\s#]+))?$/;
+ *  nothing else parses. Issue #69: the extension alternation is built from
+ *  the SHARED table — codebaseTargetExtAlt(), the same longest-first source
+ *  the extractor's SEE_POINTER_RE file group builds from — so the query
+ *  grammar accepts exactly the target extensions pointers can carry (the
+ *  `.md` corpus tier plus the #58 schematic, #60 text-heading and #60
+ *  code-symbol vocabularies) and no others (`foo.csv#x` is malformed: no
+ *  anchor vocabulary could ever address a `.csv`, so accepting the query
+ *  could only ever answer an empty match set). The captured query anchor is
+ *  then cleaned with the extractor's own stripCodebaseAnchorPunct — the
+ *  mirror runs BOTH ways, so a glued-closer spelling (`…#Invariants-and-
+ *  policy-(transaction))` pasted from prose) resolves exactly like the
+ *  captured pointer would. */
+const QUERY_RE = new RegExp(
+  '^([A-Za-z0-9_\\-/]+\\.(?:' + codebaseTargetExtAlt() + '))(?:#([^\\s#]+))?$',
+);
 
 /** Resolve a written `<file>.md` target against the corpus keys the way the
  *  engine does (§2.3): exact key first, else the `cans/`-stripped spelling
@@ -91,6 +121,15 @@ function resolveCorpusKey(file: string, keys: ReadonlySet<string>): string | nul
   if (keys.has(file)) return file;
   const stripped = file.replace(/^cans\//, '');
   return stripped !== file && keys.has(stripped) ? stripped : null;
+}
+
+/** Strip the optional `cans/` workspace prefix from a written target — the
+ *  same spelling normalization checkCodebaseRefs applies before corpus-key
+ *  resolution, reused here (issue #69) for the artifact tier: a pointer's
+ *  `cans/artifacts/…` and a query's `artifacts/…` (and vice versa) must
+ *  name the same workspace file. */
+function cansStripped(file: string): string {
+  return file.startsWith('cans/') ? file.slice('cans/'.length) : file;
 }
 
 /** Full-line splitter mirroring the engine's line normalization (§45:
@@ -135,7 +174,7 @@ export async function run(args: string[]): Promise<RefsResult> {
   const query = nodeRaw.match(QUERY_RE);
   if (query === null) {
     return fail(
-      `malformed node "${nodeRaw}" — use <file>.md or <file>.md#Slug, e.g. 02-auth.md or 02-auth.md#Sessions`,
+      `malformed node "${nodeRaw}" — use <file>.md or <file>.md#Slug (spec files, e.g. 02-auth.md or 02-auth.md#Sessions), or <file>.<ext> or <file>.<ext>#Slug (artifact files, e.g. artifacts/examples/driver.rs or artifacts/diagrams/host-runtime.txt#driver-avf)`,
     );
   }
 
@@ -173,11 +212,31 @@ export async function run(args: string[]): Promise<RefsResult> {
   }
   const corpusKeys = new Set(corpus.keys());
 
-  const queryKey = resolveCorpusKey(query[1]!, corpusKeys);
-  if (queryKey === null) {
-    return fail(
-      `no spec file matches "${query[1]}" — refs --codebase resolves against the workspace corpus (cans/); run \`cans status\` to list the spec files`,
-    );
+  // Issue #69 — the query tier split. A `.md` query is the v1 corpus query
+  // (resolved against DISCOVERED keys only, unchanged); anything else in
+  // the shared extension table is an ARTIFACT query, resolved against the
+  // workspace filesystem through the containment-guarded resolveSpecFile
+  // — the same resolver the corpus refs engine uses for on-disk artifact
+  // targets, so `cans refs` and `cans check` answer over one target space.
+  // The two tiers never cross: the branches below keep corpus-key matching
+  // for `.md` queries and resolved-path matching for artifact queries.
+  const isArtifactQuery = !query[1]!.endsWith('.md');
+  let queryKey: string | null = null;
+  let queryArtifactPath: string | null = null;
+  if (isArtifactQuery) {
+    queryArtifactPath = resolveSpecFile(root, cansStripped(query[1]!));
+    if (queryArtifactPath === null) {
+      return fail(
+        `no spec or artifact file matches "${query[1]}" — refs --codebase resolves against the workspace corpus (cans/) and its artifact files; run \`cans status\` to list the spec files`,
+      );
+    }
+  } else {
+    queryKey = resolveCorpusKey(query[1]!, corpusKeys);
+    if (queryKey === null) {
+      return fail(
+        `no spec file matches "${query[1]}" — refs --codebase resolves against the workspace corpus (cans/); run \`cans status\` to list the spec files`,
+      );
+    }
   }
   // Issue #67: the query anchor is cleaned by the SAME pass the extractor
   // applies to captured pointers (the QUERY_RE mirror, both directions); an
@@ -207,7 +266,19 @@ export async function run(args: string[]): Promise<RefsResult> {
       continue;
     }
     for (const ptr of extractCodebasePointers(text)) {
-      if (resolveCorpusKey(ptr.targetFile, corpusKeys) !== queryKey) continue;
+      // Tier split (issue #69): an artifact query matches iff the pointer's
+      // target resolves to the SAME workspace file (resolved absolute-path
+      // equality — both spellings, `cans/`-prefixed or not, resolve through
+      // resolveSpecFile to one path); a `.md` query keeps the corpus-key
+      // comparison. A `.md` target's resolveSpecFile result always ends in
+      // `.md` (the folder-index fallback appends `index.md`), so it can
+      // never equal a non-`.md` artifact path — and a non-`.md` target is
+      // never a corpus key — so the tiers cannot cross-match.
+      if (queryArtifactPath !== null) {
+        if (resolveSpecFile(root, cansStripped(ptr.targetFile)) !== queryArtifactPath) continue;
+      } else {
+        if (resolveCorpusKey(ptr.targetFile, corpusKeys) !== queryKey) continue;
+      }
       if (querySlug !== null) {
         if (ptr.targetSlug === null) continue;
         if (normalizeForAnchor(ptr.targetSlug) !== normalizeForAnchor(querySlug)) continue;
