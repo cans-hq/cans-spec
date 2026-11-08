@@ -305,9 +305,12 @@ output:
 #     No match → reason `FileNotFound`.
 #   - #<slug> resolves with the SAME tolerant anchor matching the corpus
 #     refs engine uses (case- and separator-insensitive; the `slug:`
-#     algorithm at the top of this file is the canonical spelling). Never
-#     fuzzy — a near miss earns a `did you mean` suggestion, resolution
-#     never auto-heals. No match → reason `AnchorNotFound`.
+#     algorithm at the top of this file is the canonical spelling — and
+#     the anchor may carry that FULL alphabet: `(`, `,`, `:`, `/`, `^`
+#     are legal mid-anchor, and a node title ending in `: see: <target>`
+#     resolves by its bare title — issue #67). Never fuzzy — a near miss
+#     earns a `did you mean` suggestion, resolution never auto-heals.
+#     No match → reason `AnchorNotFound`.
 #
 # Wire shape (--json, additive — plain-check JSON stays byte-identical to
 # the pre-#66 shape; present only when the phase ran, flag or config):

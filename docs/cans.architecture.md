@@ -907,12 +907,38 @@ source tree (text-only — no ASTs, no toolchains, no language runtimes)
 that extracts embedded `see: <file>[#<slug>]` pointers, resolves them
 against the loaded corpus, and reports the broken ones; plus the
 `cans refs <node> --codebase` reverse-traceability query (§23c). The
-matching rule is §2.1 of the RFC, verbatim:
-`see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([a-zA-Z0-9_\-]+))?` —
+matching rule is §2.1 of the RFC as implemented (issue #67):
+`see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([^\s#]+))?` —
 `SEE_POINTER_RE` in `core/codebase.ts`, matched per line (never on
 multi-line blobs), so surrounding prose, trailing notes, parentheses,
 block comments and YAML keys are invisible to the match (§2.2's tolerance
 contract), and trailing prose after a pointer never fails it.
+
+**Anchor alphabet and cleaning (issue #67):** the anchor group runs to
+whitespace or `#` — the same token shape as the §11 ref parser's anchor
+— so a codebase anchor may carry the FULL slug-preserved alphabet (§23a,
+`_rules.yaml#slug.algorithm`): `(`, `)`, `,`, `:`, `/`, `^` … are legal
+mid-anchor, and `#Invariants-and-policy-(transaction)` addresses the
+node titled `Invariants and policy (transaction)`. The RFC §2.1 charset
+`[a-zA-Z0-9_\-]+` remains the grammar sketch; the implementation follows
+the slug contract — v0.15.0 read the sketch literally, truncated anchors
+at the first such character and minted false `AnchorNotFound` findings
+for headings that existed (127 of the issue's 135 false positives). After
+the match a trailing run of closers and sentence punctuation
+(`)]},.;:!?'"’”…`) is stripped, EXCEPT a closer backed by an unmatched
+opener of `()[]{}` is restored — the issue #48/#58 trailing-punctuation
+rules carried to the codebase side: `(see: 03-storage.md#Quotas)` mints
+`Quotas` (no opener backs the glued `)`), while
+`…#Invariants-and-policy-(transaction))` cleans to
+`Invariants-and-policy-(transaction)` — the title's `(` re-earns its
+`)`. An anchor that is empty after cleaning is treated as absent — a
+file-level pointer. At resolution (step 3 below) a node title is matched
+on BOTH its full text and the text with a trailing `: see: <token>`
+suffix stripped — the suffix is a reference, not part of the leaf title
+(the issue's other 8 false positives), so `- Connection parking on
+suspend: see: artifacts/examples/serverless-webhook.ts` answers
+`#Connection-parking-on-suspend`. Genuinely broken anchors are still
+reported — no fuzzy resolution; fuzzy stays suggestion-only, as before.
 
 **Pipeline (select → extract → resolve → report):**
 
@@ -935,7 +961,10 @@ contract), and trailing prose after a pointer never fails it.
    exact match, else one optional leading `cans/` stripped; no match →
    reason `FileNotFound`. `#<slug>` resolves with the SAME tolerant
    anchor matching the corpus refs engine uses (`anchorMatches` →
-   `normalizeForAnchor`, §12) — never fuzzy; a near miss earns a
+   `normalizeForAnchor`, §12), tried against BOTH the full node text and
+   the text with a trailing `: see: <token>` suffix stripped — the suffix
+   is a reference, not part of the leaf title (issue #67) — never fuzzy;
+   a near miss earns a
    `did you mean` suggestion from `nearSlugMatches` (≥ 0.8) on the
    finding, resolution never auto-heals; no match → reason
    `AnchorNotFound`. YAML leaf anchors are NOT probed here (v1 scope is
@@ -996,8 +1025,9 @@ like every finding. The frozen cross-agent types are
 `CodebaseRules`/`CodebasePointer`/`CodebaseFinding`/`CodebaseScan`/
 `CodebaseIssueRecord`/`CodebaseOutcome`/`RefsResult` in `src/types.ts`;
 the e2e oracle is `test/fixtures/codebase-workspace/` (its README pins
-every pointer's verdict line-authoritatively) driven by
-`test/issue66-integration.test.ts`.
+every pointer's verdict line-authoritatively; the fixture is extended
+with the issue #67 cases) driven by `test/issue66-integration.test.ts`
+and the issue #67 suites.
 
 ### Edge cases
 
