@@ -307,7 +307,12 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - Trailing-slash folder forms are equivalent spellings: `auth/` = `auth` = `auth/index.md` (issue #22) — never a broken ref on slash spelling alone.
 - Targets never resolve outside the workspace root: absolute and `../` targets are broken refs — `file not found in workspace` (issue #10, round 6).
 - If no anchor → file-level ref, resolved.
-- If anchor → find node by exact text match, then case-insensitive fallback.
+- If anchor → find node by exact text match, then case-insensitive
+  fallback, then the cleaned-vs-cleaned fallback (issue #68): heading and
+  anchor both get the trailing-punctuation cleaning pass
+  (`stripAnchorTrailingPunct`) before the normalized comparison — like
+  with like, so a heading's own slug-preserved trailing punctuation (the
+  trailing `:` a canonical `cans slug` anchor carries) resolves.
 - If anchor on a JSON/YAML/TOML target → the schematic anchor vocabulary
   below: dot paths down to leaves, one form identical across formats (issue #58).
 - If anchor on a `.txt`/`.text` or code-file target (`.ts`, `.js`, `.rs`,
@@ -508,7 +513,7 @@ authoritative.
   INLINE on the referenced node's bullet line — the §34 convention:
   `  - Sessions <!-- ref-by: 04-api.md -->`. The node is the first §12
   anchorMatches hit in document order (exact → case-insensitive →
-  hyphen/space normalization).
+  hyphen/space normalization → cleaned-vs-cleaned, issue #68).
 - A plain file-level ref (`see: 03-data.md`) earns the mark as a STANDALONE
   comment line right after the target's first root bullet (issue #6 form —
   never inside a code fence).
@@ -940,6 +945,31 @@ suspend: see: artifacts/examples/serverless-webhook.ts` answers
 `#Connection-parking-on-suspend`. Genuinely broken anchors are still
 reported — no fuzzy resolution; fuzzy stays suggestion-only, as before.
 
+**Symmetric cleaning — like with like (issue #68):** the #67 strip ran
+ONE-SIDED — the anchor was cleaned at extraction, the heading was not —
+and the slug contract preserves a heading's own trailing punctuation
+VERBATIM (§23a, `_rules.yaml#slug.algorithm`): the heading `SQLite UDS
+bridge mechanics:` has the canonical anchor `SQLite-UDS-bridge-mechanics:`
+(trailing colon included — exactly what `cans slug` prints). The cleaned
+anchor never matched the uncleaned heading, and v0.16.0 minted 5 false
+`anchor not found` positives on the kelir corpus (the db-proxy
+`#SQLite-UDS-bridge-mechanics:` pair among them) for anchors that WERE
+the canonical spelling. The fix compares like with like at the ONE
+shared matching seam: `anchorMatches` (`core/refs.ts`, used by BOTH the
+corpus refs engine and the codebase engine) gained a cleaned-vs-cleaned
+clause after its untouched exact and normalized clauses —
+`normalizeForAnchor(stripAnchorTrailingPunct(nodeText)) ===
+normalizeForAnchor(stripAnchorTrailingPunct(anchor))` — with the pass
+itself moved to `core/slug.ts` as `stripAnchorTrailingPunct`, the
+single shared implementation (`stripCodebaseAnchorPunct` delegates to
+it; the anchor-side strip at extraction is unchanged — what changed is
+the heading side at matching). An anchor that `cans slug` returns
+verbatim for its heading must resolve, and because the seam is shared
+the corpus refs engine gets the same comparison: a spec ref written
+with the canonical colon spelling resolves too. Strictly widening —
+everything that resolved still resolves; a genuine misspelling still
+fails.
+
 **Pipeline (select → extract → resolve → report):**
 
 1. **Select** — `collectSourceFiles(root, cfg)` walks `cfg.roots` (each
@@ -961,9 +991,10 @@ reported — no fuzzy resolution; fuzzy stays suggestion-only, as before.
    exact match, else one optional leading `cans/` stripped; no match →
    reason `FileNotFound`. `#<slug>` resolves with the SAME tolerant
    anchor matching the corpus refs engine uses (`anchorMatches` →
-   `normalizeForAnchor`, §12), tried against BOTH the full node text and
-   the text with a trailing `: see: <token>` suffix stripped — the suffix
-   is a reference, not part of the leaf title (issue #67) — never fuzzy;
+   `normalizeForAnchor` + the issue #68 cleaned-vs-cleaned clause, §12),
+   tried against BOTH the full node text and the text with a trailing
+   `: see: <token>` suffix stripped — the suffix is a reference, not
+   part of the leaf title (issue #67) — never fuzzy;
    a near miss earns a
    `did you mean` suggestion from `nearSlugMatches` (≥ 0.8) on the
    finding, resolution never auto-heals; no match → reason
