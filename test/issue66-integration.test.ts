@@ -12,11 +12,13 @@
  *             exit, the additive top-level `codebase` JSON block with
  *             issues[] entries carrying EXACTLY { type, file, line, raw,
  *             targetFile, targetSlug, reason }, and the broken counts
- *             matching the fixture oracle (issue #67 extended the fixture:
- *             9 scanned / 21 pointers / 2 broken: AnchorNotFound on the
- *             `#Qutas` typo, FileNotFound on the missing
- *             `09-observability.md` — every #67 kelir-shaped pointer is
- *             VALID; see test/issue-67-contract.test.ts)
+ *             matching the fixture oracle (issue #67 extended the fixture
+ *             and issue #68 extended it again: 12 scanned / 26 pointers /
+ *             2 broken: AnchorNotFound on the `#Qutas` typo, FileNotFound
+ *             on the missing `09-observability.md` — every #67 and #68
+ *             kelir-shaped pointer is VALID; see
+ *             test/issue-67-contract.test.ts and
+ *             test/issue-68-contract.test.ts)
  *   b ....... after fixing the broken pointers IN THE TMP COPY the same
  *             command exits 0 with `codebase.issues` empty — silent rot is
  *             a diff, not a life sentence
@@ -30,10 +32,12 @@
  *   e ....... scanner-OFF workspace (no `codebase` block, no flag): plain
  *             `check --json` has NO `codebase` key — the pre-#66 wire
  *             shape, byte-for-byte (the additive-block contract)
- *   f ....... flag-on with NO config block still scans (the defaults): the
- *             RFC §3 code-extension set only — 7 files / 19 pointers / the
- *             same 2 broken — proving both the default include list (no
- *             `*.yaml`) and that the scan itself needs no config
+ *   f ....... flag-on with NO codebase config block still scans (the
+ *             defaults): the RFC §3 code-extension set only — 10 files /
+ *             24 pointers / the same 2 broken — proving both the default
+ *             include list (no `*.yaml`) and that the scan itself needs no
+ *             config (the #68 plugin tier stays on in the variant so the
+ *             fixture's cans/plugins/*.md corpus keys keep resolving)
  *
  * DELIBERATE DEVIATION (the suite's one, by design): the RFC's example text
  * shows exit code 1 for a broken-pointer run; this repo's error-band
@@ -136,8 +140,8 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(9); // 5 pre-#67 + the 4 src/plugins/ files (issue #67); cans/ always skipped
-    expect(j.codebase.pointers).toBe(21); // 10 pre-#67 + the 11 kelir-shaped #67 pointers
+    expect(j.codebase.scanned).toBe(12); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68); cans/ always skipped
+    expect(j.codebase.pointers).toBe(26); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68)
     expect(j.codebase.broken).toBe(2);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
@@ -210,8 +214,8 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     expect(j.exitCode).toBe(0);
     // The phase ran (config-on) — the block is present with a clean outcome.
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(9);
-    expect(j.codebase.pointers).toBe(21);
+    expect(j.codebase.scanned).toBe(12);
+    expect(j.codebase.pointers).toBe(26);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -228,7 +232,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('01-auth.md#Sessions'); // the query AS WRITTEN
-    expect(j.scanned).toBe(9);
+    expect(j.scanned).toBe(12);
     // The `cans/`-prefixed spelling (routes.ts:2) resolves to the same
     // target, so it is among the hits. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -350,11 +354,25 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 7 files, 19 pointers, the same 2 broken, no yaml', () => {
+  test('f1: the RFC §3 default include list — 10 files, 24 pointers, the same 2 broken, no yaml', () => {
     const p = ws('f1');
+    // No CODEBASE block (the flag is the scan consent) — but the #68
+    // plugin-tier wiring stays, mirroring the fixture's committed rules:
+    // the aliasing block is corpus-side loading, not scan config, and
+    // without it the three cans/plugins/*.md keys would vanish and the
+    // #68 pointers would become FileNotFound — a different dimension than
+    // the include list this block isolates.
     writeFileSync(
       join(p, 'cans', '_rules.yaml'),
-      ['references:', '  back_pointers: false', ''].join('\n'),
+      [
+        'references:',
+        '  back_pointers: false',
+        '  aliasing:',
+        '    enabled: true',
+        '    include:',
+        '      - plugins/*.md',
+        '',
+      ].join('\n'),
       'utf8',
     );
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -363,9 +381,10 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     expect(j.codebase).toBeDefined();
     // The default code-extension set has no *.yaml: src/net.yaml and
     // src/plugins/mounts.yaml (and their pointers) stay out of the scan —
-    // the config-on run sees 9/21 instead.
-    expect(j.codebase.scanned).toBe(7);
-    expect(j.codebase.pointers).toBe(19);
+    // the config-on run sees 12/26 instead; the three #68 .rs sources are
+    // covered by the default *.rs include.
+    expect(j.codebase.scanned).toBe(10);
+    expect(j.codebase.pointers).toBe(24);
     expect(j.codebase.broken).toBe(2);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
