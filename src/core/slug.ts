@@ -29,7 +29,14 @@
  *  spelling that normalizes equal still resolves. `nearSlugMatches` is the
  *  fuzzy layer reserved for broken-anchor SUGGESTIONS and the gated
  *  `--fix` anchor repair (issue #53 Parts 1.3 and 2.4); resolution itself
- *  never goes fuzzy.
+ *  never goes fuzzy. Issue #68 added the SECOND matching half: the anchor
+ *  CLEANING pass runs symmetrically on both sides (`stripAnchorTrailingPunct`
+ *  below) — the algorithm above preserves a heading's own trailing sentence
+ *  punctuation verbatim (`:` is not a separator), while every ref-grammar
+ *  consumer cleans its CAPTURED anchor at parse time, so one-sided cleaning
+ *  could never match; the pass lives here, the anchor-matching single
+ *  source of truth, shared by every consumer that compares anchor against
+ *  node text.
  *
  *  Fully standalone and dependency-free by design (report.ts is the model):
  *  string/regex work only, portable across the Bun and Node runtimes. */
@@ -87,6 +94,99 @@ export function anchorSlug(text: string): string {
  *  every anchor that resolved before still resolves. */
 export function normalizeForAnchor(s: string): string {
   return s.toLowerCase().replace(SEPARATOR_RE, ' ').trim();
+}
+
+/** Issue #67 — the trailing-punctuation strip set for captured anchors:
+ *  closers and sentence punctuation — ASCII `)]},.;:!?'"` plus the
+ *  typographic closers `’ ” …` — one or more trailing occurrences, the
+ *  SAME set as outline.ts's #48 REF_TRAILING_PUNCT_RE (that one is frozen
+ *  #48/#57/#58 behavior, deliberately private to the refs engine; the SETS
+ *  must stay identical, so both cite each other here). Deliberately NOT
+ *  stripped: `-`, `_`, `/` (#48: a trailing dash is a legitimate slug
+ *  ending, a trailing slash a legitimate folder target) and openers `([{`.
+ *  Issue #68 moved this here from codebase.ts — the pass is no longer the
+ *  codebase extractor's private cleaning but the second half of anchor
+ *  MATCHING, shared by every consumer that compares an anchor against
+ *  node text (see stripAnchorTrailingPunct below). */
+const ANCHOR_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
+
+/** The repairable bracket pairs, opener-first: a stripped closer is only
+ *  restorable when an UNCLOSED opener of the SAME type backs it. */
+const ANCHOR_BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['(', ')'],
+  ['[', ']'],
+  ['{', '}'],
+];
+
+/** Count non-overlapping occurrences of a single character (the #58 loop
+ *  counted `]` via match(g) — generalized over three closer types without
+ *  minting three near-identical regex literals). */
+function countChar(s: string, ch: string): number {
+  return s.split(ch).length - 1;
+}
+
+/** Issue #67 — clean a captured anchor (moved from codebase.ts to here, the
+ *  anchor-matching single source of truth, by issue #68): outline.ts's
+ *  issue-#48 stripRefTrailingPunct (trailing prose punctuation) + issue-#58
+ *  bracket repair, generalized from the refs engine's `]`-only repair to
+ *  the full bracket family `()[]{}`:
+ *
+ *    a. Strip ONE trailing run of the closer/punctuation set above —
+ *       prose glue, exactly the defect that minted false `Audit-spine)`
+ *       anchors on the corpus side (`(see: x.md#Routing)` captured
+ *       `Routing)` once the alphabet widened).
+ *    b. Repair opener-backed closers: for each closer type, count the
+ *       closers the strip ATE (count in the original minus count after the
+ *       strip); while any remain, find the LAST opener of that type in the
+ *       working token; if none exists, or that opener is already closed
+ *       by a closer to its right, stop — a glued prose paren has nothing
+ *       backing it — else re-append the closer and decrement. A trailing
+ *       `)` that closes a real `(` in the anchor is STRUCTURAL and survives
+ *       verbatim (`Invariants-and-policy-(transaction)`, `Native-checkpoint-
+ *       plane-(kelir-core::checkpoint)`); a glued one does not (`Routing)`,
+ *       `Sessions);`); a wrapped-prose double keeps exactly its structural
+ *       half (`API-(v2))` → `API-(v2)`). The three passes are independent —
+ *       each repairs only its own closer type, and one type's closer can
+ *       never open or close another type's pair — so pass order cannot
+ *       matter.
+ *
+ *  Mid-token punctuation is NEVER touched: the strip is a TRAILING run
+ *  only, so `FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content`
+ *  passes through unchanged (the commas sit mid-token; the slug contract
+ *  preserves them verbatim). Returns '' when the whole fragment was glued
+ *  punctuation (`).`); extractCodebasePointers degrades that to a
+ *  file-level pointer (targetSlug null) exactly the way outline.ts's
+ *  matchAliasDefinition degrades an emptied anchor token.
+ *
+ *  Issue #68 — why the pass moved here and became shared: the slug
+ *  algorithm above preserves every non-separator character VERBATIM, so a
+ *  heading's OWN trailing sentence punctuation survives into its canonical
+ *  anchor (`SQLite UDS bridge mechanics:` → `SQLite-UDS-bridge-mechanics:`,
+ *  exactly what `cans slug` prints), while every ref-grammar consumer
+ *  cleans its captured anchor at parse time (codebase.ts's extractor here,
+ *  outline.ts's frozen stripRefTrailingPunct on the corpus side). That
+ *  asymmetry — cleaned anchor vs UNCLEANED heading — is what minted issue
+ *  #68's five false `anchor not found` positives on 0.16.0 (`cans slug`
+ *  returns each anchor verbatim, trailing `:` included, yet resolution
+ *  failed); refs.ts anchorMatches now cleans BOTH sides through this one
+ *  function, so this module owns the single implementation every consumer
+ *  shares. `raw` spans are NOT touched — the #48 convention: raw quotes
+ *  the written spelling (glued punctuation included), only the compared
+ *  tokens are cleaned. */
+export function stripAnchorTrailingPunct(anchor: string): string {
+  const stripped = anchor.replace(ANCHOR_TRAILING_PUNCT_RE, '');
+  let out = stripped;
+  for (const [open, close] of ANCHOR_BRACKET_PAIRS) {
+    let eaten = countChar(anchor, close) - countChar(stripped, close);
+    while (eaten > 0) {
+      const at = out.lastIndexOf(open);
+      if (at === -1) break; // no opener of this type left to repair
+      if (out.slice(at).includes(close)) break; // that opener already closes
+      out += close;
+      eaten--;
+    }
+  }
+  return out;
 }
 
 /** Classic two-row Levenshtein edit distance (O(n·m), no allocation churn).
