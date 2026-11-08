@@ -600,6 +600,12 @@ How resolution works:
   refs engine uses (case- and separator-insensitive — `#token_validation`
   finds `Token validation`); the `slug:` algorithm above is the canonical
   spelling.
+- Anchors carry the full slug alphabet (issue #67): `(`, `,`, `:`, `/`,
+  `^` … are all legal mid-anchor — `#Invariants-and-policy-(transaction)`
+  addresses the node `Invariants and policy (transaction)` — and a spec
+  node whose title carries its own pointer suffix (`- Connection parking
+  on suspend: see: …`) resolves by its bare title
+  `#Connection-parking-on-suspend`.
 - No fuzzy resolution — a near miss (`#Qutas`) is reported broken with a
   `did you mean` suggestion, never auto-healed.
 - Files are scanned as text: leading prose, trailing notes, block
