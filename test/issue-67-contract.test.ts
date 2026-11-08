@@ -147,10 +147,64 @@ const BROKEN_FILE = {
   reason: 'FileNotFound',
 };
 
-/** The two issues, in the contract's deterministic order (file asc, line asc):
- *  EVERY issue-#67 pointer — both bug classes — is VALID, so the broken set
- *  is EXACTLY the pre-#67 pair. */
-const ORACLE_ISSUES = [BROKEN_ANCHOR, BROKEN_FILE];
+/** artifact-wiring.rs:36 — the broken artifact code-symbol anchor, one of
+ *  issue #69's three DELIBERATE broken records (the fixture grew again for
+ *  the artifact-target tier; see test/issue-69-contract.test.ts). */
+const BROKEN_ARTIFACT_SYMBOL = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 36,
+  raw: 'see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope',
+  targetFile: 'cans/artifacts/examples/multi-vm-swarm.rs',
+  targetSlug: 'federateNope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:40 — the broken artifact text-heading anchor (#69). */
+const BROKEN_ARTIFACT_HEADING = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 40,
+  raw: 'see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope',
+  targetFile: 'cans/artifacts/diagrams/host-runtime.txt',
+  targetSlug: 'driver-avf-nope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:46 — the broken artifact FILE, the issue's exact
+ *  missing-artifact spelling (#69). */
+const BROKEN_ARTIFACT_FILE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 46,
+  raw: 'see: cans/artifacts/code/plugin-trait.rs#PluginError',
+  targetFile: 'cans/artifacts/code/plugin-trait.rs',
+  targetSlug: 'PluginError',
+  reason: 'FileNotFound',
+};
+
+/** The five issues, in the contract's deterministic order (file asc, line
+ *  asc): EVERY issue-#67 pointer — both bug classes — is VALID, so the
+ *  broken set is the pre-#67 pair plus (since the #69 extension) the three
+ *  deliberate artifact records. */
+const ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
+
+/** The four source files carrying the #67 pointers — none may appear in
+ *  the issues (the a1 no-false-positive pin, re-scoped by #69: the new
+ *  artifact-wiring.rs source DOES carry deliberate broken records, so the
+ *  file-level `src/plugins/` prefix guard no longer holds). */
+const S67_SOURCE_FILES = [
+  'src/plugins/transaction.rs',
+  'src/plugins/checkpoint.go',
+  'src/plugins/ingress.py',
+  'src/plugins/mounts.yaml',
+];
 
 // The fixture's line-authoritative texts (README oracle), reused by the
 // reverse-query assertions below.
@@ -188,39 +242,43 @@ const RULES_NO_CODEBASE = [
 // ── a: the check scan — zero broken refs for every new anchor ──────────────
 
 describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
-  test('a1: config-on — 12 scanned / 26 pointers / EXACTLY the 2 pre-#67 broken (both bug classes clean)', () => {
+  test('a1: config-on — 13 scanned / 32 pointers / EXACTLY the 5 broken (both #67 bug classes clean)', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (2 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (5 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(12); // 9 pre-#68 + the three #68 .rs sources
-    expect(j.codebase.pointers).toBe(26); // 21 pre-#68 + the kelir five (#68)
-    expect(j.codebase.broken).toBe(2);
-    // THE pin: the broken set is byte-exactly the pre-#67 pair — none of the
-    // 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
+    expect(j.codebase.scanned).toBe(13); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69)
+    expect(j.codebase.pointers).toBe(32); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69)
+    expect(j.codebase.broken).toBe(5);
+    // THE pin: the broken set is byte-exactly the five records above — none
+    // of the 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
     // checkpoint.go incl. both glued-closer cases, 3 Bug-2 suffix targets in
     // ingress.py, 1 yaml comma anchor) is reported broken; the issue #68
     // extension's five colon-anchor pointers (db-proxy.rs, profile.rs,
-    // wire-ingress.rs) are in the census too and resolve post-#68.
+    // wire-ingress.rs) are in the census too and resolve post-#68. The three
+    // #69 records are DELIBERATE breaks (issue #69's own repro — the
+    // artifact-wiring.rs source), not regressions, hence the re-scoped
+    // file guard below (the old `src/plugins/` prefix guard no longer holds).
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
-    expect((j.codebase.issues as any[]).every((i) => !i.file.startsWith('src/plugins/'))).toBe(true);
+    expect((j.codebase.issues as any[]).every((i) => !S67_SOURCE_FILES.includes(i.file))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 10 files / 24 pointers / the same 2 broken, yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 11 files / 30 pointers / the same 5 broken, yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
-    // src/plugins/mounts.yaml stay out — 10 files, 24 pointers, and the same
-    // two broken records (every non-yaml #67 pointer still resolves; the
-    // #68 plugin tier stays on in the variant, so the kelir five are in
-    // scope and resolve post-#68).
-    expect(j.codebase.scanned).toBe(10);
-    expect(j.codebase.pointers).toBe(24);
-    expect(j.codebase.broken).toBe(2);
+    // src/plugins/mounts.yaml stay out — 11 files, 30 pointers, and the
+    // same five broken records (every non-yaml #67 pointer still resolves;
+    // the #68 plugin tier stays on in the variant, so the kelir five are in
+    // scope and resolve post-#68; the six #69 artifact pointers live in the
+    // .rs source, covered by the default *.rs include).
+    expect(j.codebase.scanned).toBe(11);
+    expect(j.codebase.pointers).toBe(30);
+    expect(j.codebase.broken).toBe(5);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
@@ -236,7 +294,7 @@ describe('issue #67 b — refs <node> --codebase finds the punctuation anchors',
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(true);
     expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
-    expect(j.scanned).toBe(12);
+    expect(j.scanned).toBe(13); // 12 pre-#69 + the artifact-wiring .rs source (#69)
     // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
     // anchor, so both pointers answer. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -308,7 +366,7 @@ describe('issue #67 c — the : see:-suffixed spec nodes resolve by their bare t
   test('c1: none of the three suffix-targeting pointers is reported broken (the a1 pin, made explicit)', () => {
     const p = ws('c1');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
-    expect(j.codebase.broken).toBe(2);
+    expect(j.codebase.broken).toBe(5); // the 2 true + the 3 deliberate #69 artifact records
     const suffixRaws = [
       'see: cans/09-plugins.md#Connection-parking-on-suspend',
       'see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit',
@@ -405,8 +463,8 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(28); // 26 + the two appended
-    expect(j.codebase.broken).toBe(4); // the 2 true + the 2 near misses
+    expect(j.codebase.pointers).toBe(34); // 32 + the two appended
+    expect(j.codebase.broken).toBe(7); // the 5 fixture broken + the 2 near misses
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
     expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
       [11, 'Invariants-and-policy-(transakshun)', 'AnchorNotFound'],

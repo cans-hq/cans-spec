@@ -51,13 +51,15 @@
  * integration harness pattern; the fixture is driven from a fresh tmp copy):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             12 scanned / 26 pointers / EXACTLY the 2 pre-existing true
- *             broken records — ZERO findings from the three new
- *             src/plugins/*.rs sources, the heart of the issue (a2 repeats
- *             it under the pure-default include list with the plugin tier
- *             kept on: 10 files / 24 pointers / the same 2 broken — the
- *             three new files are .rs, covered by the default rs glob;
- *             only the yaml-extra variant differs)
+ *             13 scanned / 32 pointers / EXACTLY the five-record oracle —
+ *             the 2 pre-existing TRUE broken records plus the 3 DELIBERATE
+ *             issue-#69 artifact ones (the fixture grew again for #69; see
+ *             test/issue-69-contract.test.ts) — and ZERO findings from the
+ *             three new src/plugins/*.rs sources, the heart of the issue
+ *             (a2 repeats it under the pure-default include list with the
+ *             plugin tier kept on: 11 files / 30 pointers / the same five
+ *             records — the three #68 files are .rs, covered by the default
+ *             rs glob; only the yaml-extra variant differs)
  *   b ....... the reverse path, honestly split at the v1 boundary:
  *             b1 the refs COMMAND resolves its node query against
  *             DISCOVERED spec keys only (its own header: the check
@@ -188,10 +190,54 @@ const BROKEN_FILE = {
   reason: 'FileNotFound',
 };
 
-/** The two TRUE broken records, in the contract's deterministic order
- *  (file asc, line asc): every issue-#68 pointer is VALID post-fix, so the
- *  broken set is EXACTLY the pre-#67 pair. */
-const ORACLE_ISSUES = [BROKEN_ANCHOR, BROKEN_FILE];
+/** artifact-wiring.rs:36 — the broken artifact code-symbol anchor, one of
+ *  issue #69's three DELIBERATE broken records (the fixture grew again for
+ *  the artifact-target tier; see test/issue-69-contract.test.ts). */
+const BROKEN_ARTIFACT_SYMBOL = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 36,
+  raw: 'see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope',
+  targetFile: 'cans/artifacts/examples/multi-vm-swarm.rs',
+  targetSlug: 'federateNope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:40 — the broken artifact text-heading anchor (#69). */
+const BROKEN_ARTIFACT_HEADING = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 40,
+  raw: 'see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope',
+  targetFile: 'cans/artifacts/diagrams/host-runtime.txt',
+  targetSlug: 'driver-avf-nope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:46 — the broken artifact FILE, the issue's exact
+ *  missing-artifact spelling (#69). */
+const BROKEN_ARTIFACT_FILE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 46,
+  raw: 'see: cans/artifacts/code/plugin-trait.rs#PluginError',
+  targetFile: 'cans/artifacts/code/plugin-trait.rs',
+  targetSlug: 'PluginError',
+  reason: 'FileNotFound',
+};
+
+/** The five issues, in the contract's deterministic order (file asc, line
+ *  asc): every issue-#68 pointer is VALID post-fix, so the broken set is
+ *  the pre-#67 pair plus — since the #69 fixture extension — the three
+ *  DELIBERATE artifact records (issue #69's own repro, pinned by the #69
+ *  suite; listed here because the #68 oracle pins the FULL broken set). */
+const ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
 
 /** The three issue-#68 sources (the kelir plugin crates at fixture scale). */
 const NEW_SOURCES = [
@@ -237,18 +283,19 @@ const RULES_PLAIN_HOPS2 = RULES_NO_CODEBASE.replace(
 // ── a: the check scan — zero broken refs for the kelir five ─────────────────
 
 describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
-  test('a1: config-on — 12 scanned / 26 pointers / EXACTLY the 2 true broken, zero findings from the new sources', () => {
+  test('a1: config-on — 13 scanned / 32 pointers / EXACTLY the 5 broken, zero findings from the new sources', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (2 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (5 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(12); // 9 pre-#68 + the three new .rs sources
-    expect(j.codebase.pointers).toBe(26); // 21 pre-#68 + the kelir five
-    expect(j.codebase.broken).toBe(2);
-    // THE pin: the broken set is byte-exactly the pre-existing true pair —
-    // none of the five kelir colon-anchor pointers (db-proxy.rs:42+141,
-    // profile.rs:21, wire-ingress.rs:18+85) is reported broken.
+    expect(j.codebase.scanned).toBe(13); // 9 pre-#68 + the three new .rs sources + the artifact-wiring .rs source (#69)
+    expect(j.codebase.pointers).toBe(32); // 21 pre-#68 + the kelir five + the six artifact pointers (#69)
+    expect(j.codebase.broken).toBe(5);
+    // THE pin: the broken set is byte-exactly the five records — the 2 true
+    // pre-existing plus the 3 DELIBERATE #69 artifact ones — and none of the
+    // five kelir colon-anchor pointers (db-proxy.rs:42+141, profile.rs:21,
+    // wire-ingress.rs:18+85) is reported broken.
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     // And made explicit — the heart of the issue: ZERO findings from the
     // three new src/plugins/*.rs files (pre-fix they carried all five
@@ -260,7 +307,7 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     }
   });
 
-  test('a2: pure defaults (no codebase block, tier kept on) — 10 files / 24 pointers / the same 2 broken', () => {
+  test('a2: pure defaults (no codebase block, tier kept on) — 11 files / 30 pointers / the same 5 broken', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -269,11 +316,11 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
     // src/plugins/mounts.yaml stay out — but the three new sources are .rs
     // (covered by the default *.rs include) and the plugin tier is corpus-side
-    // wiring, so the five kelir pointers still resolve: 10 files, 24
-    // pointers, the same two true broken records.
-    expect(j.codebase.scanned).toBe(10);
-    expect(j.codebase.pointers).toBe(24);
-    expect(j.codebase.broken).toBe(2);
+    // wiring, so the five kelir pointers still resolve: 11 files, 30
+    // pointers, the same five broken records (2 true + 3 deliberate #69).
+    expect(j.codebase.scanned).toBe(11);
+    expect(j.codebase.pointers).toBe(30);
+    expect(j.codebase.broken).toBe(5);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
@@ -374,11 +421,11 @@ describe('issue #68 b — reverse queries: the plugin-tier boundary and the both
       'utf8',
     );
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // still the 2 true findings
+    expect(r.exit).toBe(2); // still the 5 fixture findings
     const j = parseJsonOut(r.out);
-    expect(j.codebase.scanned).toBe(12);
-    expect(j.codebase.pointers).toBe(27); // 26 + the appended colon-less spelling
-    expect(j.codebase.broken).toBe(2);
+    expect(j.codebase.scanned).toBe(13);
+    expect(j.codebase.pointers).toBe(33); // 32 + the appended colon-less spelling
+    expect(j.codebase.broken).toBe(5);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
 });
@@ -434,11 +481,14 @@ describe('issue #68 c — the three plugin specs join the corpus (clean, wired, 
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.scanned).toBe(12);
-    expect(j.codebase.pointers).toBe(26);
-    expect(j.codebase.broken).toBe(7); // the 2 true + the five FileNotFound
+    expect(j.codebase.scanned).toBe(13);
+    expect(j.codebase.pointers).toBe(32);
+    expect(j.codebase.broken).toBe(10); // the 2 true + the five FileNotFound + the 3 #69 artifact broken
     expect((j.codebase.issues as any[]).map((i) => [i.file, i.line, i.reason])).toEqual([
       ['src/api/routes.ts', 3, 'AnchorNotFound'],
+      ['src/plugins/artifact-wiring.rs', 36, 'AnchorNotFound'],
+      ['src/plugins/artifact-wiring.rs', 40, 'AnchorNotFound'],
+      ['src/plugins/artifact-wiring.rs', 46, 'FileNotFound'],
       ['src/plugins/db-proxy.rs', 42, 'FileNotFound'],
       ['src/plugins/db-proxy.rs', 141, 'FileNotFound'],
       ['src/plugins/profile.rs', 21, 'FileNotFound'],
@@ -487,8 +537,8 @@ describe('issue #68 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(27); // 26 + the misspell
-    expect(j.codebase.broken).toBe(3); // the 2 true + the misspell, no more
+    expect(j.codebase.pointers).toBe(33); // 32 + the misspell
+    expect(j.codebase.broken).toBe(6); // the 5 fixture broken + the misspell, no more
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/db-proxy.rs');
     expect(near.length).toBe(1);
     expect(near[0]).toEqual({
