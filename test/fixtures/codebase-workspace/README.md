@@ -1,21 +1,32 @@
-# codebase-workspace — the issue #66 e2e oracle
+# codebase-workspace — the issue #66 e2e oracle (extended for issue #67)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
 (issue #66) targets. `cans/_rules.yaml` enables the `codebase` block
 (`roots: ["."]`, the RFC §3 default include/exclude lists spelled out
 verbatim **plus one deliberate extra `**/*.yaml`** so the YAML-comment
-variant in `src/net.yaml` joins the scan; the pure default set covers only
-`*.rs *.ts *.js *.py *.go *.c *.cpp`), `severity: error`.
+variants in `src/net.yaml` and `src/plugins/mounts.yaml` join the scan; the
+pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
+`severity: error`.
 
-This file is the human-readable oracle for `test/issue66-integration.test.ts`:
-every embedded pointer, its line, and the outcome the real CLI must produce.
-Line numbers below are byte-authoritative for the files as committed.
+This file is the human-readable oracle for `test/issue66-integration.test.ts`
+and `test/issue-67-contract.test.ts`: every embedded pointer, its line, and
+the outcome the real CLI must produce. Line numbers below are
+byte-authoritative for the files as committed.
+
+**The issue #67 extension** (the kelir-shaped repro): the four `src/plugins/`
+files and the two new spec files reproduce, at fixture scale, the 135 false
+"anchor not found" positives the kelir repo hit — Bug 1 (anchors truncated
+at `(`, `)`, `,`, `:`, `/`, `^` by the frozen #66 anchor class) and Bug 2
+(spec nodes whose `see:` pointer rides as a TITLE SUFFIX never resolve,
+because the matcher slugified the whole node line). Every pre-#67 file and
+its verdict is unchanged below; the extension only ADDS content.
 
 ## The corpus (`cans/`)
 
 Workspace-relative keys (what `<file>` in a pointer resolves against):
-`00-overview.md`, `01-auth.md`, `03-storage.md`, `07-network.md`.
+`00-overview.md`, `01-auth.md`, `03-storage.md`, `07-network.md`,
+`09-plugins.md`, `10-lifecycle.md`.
 
 Canonical anchor slugs (`cans slug "<node text>"`):
 
@@ -25,6 +36,14 @@ Canonical anchor slugs (`cans slug "<node text>"`):
 | 01-auth.md      | Token validation   | `Token-validation` |
 | 03-storage.md   | Quotas             | `Quotas`           |
 | 07-network.md   | Timeouts           | `Timeouts`         |
+| 09-plugins.md   | Invariants and policy (transaction) | `Invariants-and-policy-(transaction)` |
+| 09-plugins.md   | FsInodeAttr carries full mode, uid, gid, size, content | `FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content` |
+| 09-plugins.md   | UID/GID mapping isolation | `UID/GID-mapping-isolation` |
+| 09-plugins.md   | Dynamic W^X JIT execution mediation | `Dynamic-W^X-JIT-execution-mediation` |
+| 09-plugins.md   | Connection parking on suspend (title before the `: see:` suffix) | `Connection-parking-on-suspend` |
+| 09-plugins.md   | L7 pgwire rewrite and 2PC commit (title before the `: see:` suffix) | `L7-pgwire-rewrite-and-2PC-commit` |
+| 09-plugins.md   | CoW swarm mesh federation (title before the `: see:` suffix) | `CoW-swarm-mesh-federation` |
+| 10-lifecycle.md | Native checkpoint plane (kelir-core::checkpoint) | `Native-checkpoint-plane-(kelir-core::checkpoint)` |
 
 Matching is the corpus refs engine's tolerant rule (case- and
 separator-insensitive): `#token_validation` also resolves against node
@@ -34,10 +53,34 @@ orphan-relief hub, no deep hops) and `references.back_pointers: false`
 keeps the corpus check-clean, so the suite's exit codes isolate the
 codebase band.
 
+The three `: see:`-suffixed nodes of `09-plugins.md` (verbatim from the
+issue) point at NON-SPEC artifact targets — `artifacts/examples/
+serverless-webhook.ts`, `db-backed-runtime.py`, `multi-vm-swarm.rs`. Those
+three files exist under `cans/artifacts/examples/` (the corpus ref engine
+resolves `see:` targets against the workspace root), where they are plain
+non-spec content: never discovered as spec files (no `index.md` above
+them, not root-level `.md`) and never scanned by the codebase phase
+(everything inside `cans/` is always skipped — they are the living proof
+of that skip rule, since `**/*.ts`/`**/*.rs`/`**/*.py` would otherwise
+match them). They are terminal file-level targets (issues #44/#60).
+
 `cans/` itself is ALWAYS skipped by the scanner (corpus refs verify in the
 refs engine, never twice) — note `cans/_rules.yaml` matches the
 `**/*.yaml` include glob and must therefore prove the skip rule: with the
-config block on, exactly the five `src/` files below are scanned.
+config block on, exactly the nine `src/` files below are scanned.
+
+### The redundancy knobs in `cans/_rules.yaml` (issue #67)
+
+The extension is verbatim where the issue is verbatim, and the pre-#67
+corpus is frozen — so the mini-corpus reuses function words and near-form
+words by construction: the kelir headings alone push `on` to four nodes
+(`parking on suspend` + three pre-existing) and collide at exactly the
+typo layer's default distance (`native`↔`active`, `rewrite`↔`write` —
+Levenshtein 2, the issue #47 false-positive class). A warning there would
+muddy the exit-code bands this fixture isolates, so the §18 knobs carry
+`word_frequency_threshold: 5` (one notch of headroom; the layer stays
+armed) and `fuzzy: false` (the near-miss layer off). Every other check
+stays on; the corpus remains check-clean.
 
 ## The source tree (`src/`) — every pointer and its verdict
 
@@ -88,16 +131,68 @@ config block on, exactly the five `src/` files below are scanned.
 `cans check --codebase` flag with no config block) this file does NOT join
 the scan and its pointer is invisible.
 
-## Expected scanner outcomes (the numbers the suite pins)
+### `src/plugins/transaction.rs` — Rust line comments; the punctuation anchors (issue #67, Bug 1)
+
+Anchors as written in the kelir source, full punctuation spellings:
+
+| line | written span | verdict |
+|---|---|---|
+| 2 | `see: cans/09-plugins.md#Invariants-and-policy-(transaction)` | VALID — the PAREN anchor, `cans/`-prefixed kelir spelling; the heading `Invariants and policy (transaction)` exists verbatim as a spec node |
+| 3 | `see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content` | VALID — the COMMA-LIST anchor (heading verbatim in `09-plugins.md`) |
+| 4 | `see: 09-plugins.md#UID/GID-mapping-isolation` | VALID — the SLASH anchor |
+| 5 | `see: 09-plugins.md#Dynamic-W^X-JIT-execution-mediation` | VALID — the CARET anchor |
+
+4 pointers, 0 broken (post-#67). Pre-#67 the frozen anchor class
+`[A-Za-z0-9_-]+` truncated every one of them at the first `(` / `,` / `/`
+/ `^` — `Invariants-and-policy-`, `FsInodeAttr-carries-full-mode`, `UID`,
+`Dynamic-W` — four false AnchorNotFound findings, the Bug 1 repro.
+
+### `src/plugins/checkpoint.go` — Go block + line comments; the `::` anchor and the glued closers (issue #67, Bug 1)
+
+| line | written span | verdict |
+|---|---|---|
+| 7 | `see: cans/10-lifecycle.md#Native-checkpoint-plane-(kelir-core::checkpoint)` | VALID — the `::`-CONTAINING anchor inside a block comment; the closer `)` is backed by the unmatched `(` and stays part of the anchor |
+| 11 | `see: cans/09-plugins.md#Invariants-and-policy-(transaction))` | VALID — the GLUED-CLOSER case inside `/* (see: …)) */`: `raw` keeps the verbatim matched span (double `)`), while the captured anchor strips the trailing closer run and RESTORES the one `)` backed by the unmatched `(` → `Invariants-and-policy-(transaction)` |
+| 14 | `see: 09-plugins.md#UID/GID-mapping-isolation);` | VALID — GLUED PROSE CLOSERS `);` with no unmatched opener: they strip fully from the anchor (→ `UID/GID-mapping-isolation`), `raw` keeps them verbatim |
+
+3 pointers, 0 broken (post-#67). Pre-#67: lines 7/11 truncated at `(` and
+line 14 at `/` — three false AnchorNotFound findings.
+
+### `src/plugins/ingress.py` — Python comments; the suffix-node targets (issue #67, Bug 2)
+
+Code points at the BARE titles of the `: see:`-suffixed spec nodes:
+
+| line | written span | verdict |
+|---|---|---|
+| 3 | `see: cans/09-plugins.md#Connection-parking-on-suspend` | VALID — the node `Connection parking on suspend: see: artifacts/examples/serverless-webhook.ts` resolves by its title with the trailing `: see: <token>` suffix stripped |
+| 7 | `see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit` | VALID — same class, node `L7 pgwire rewrite and 2PC commit: see: artifacts/examples/db-backed-runtime.py` |
+| 11 | `see: cans/09-plugins.md#CoW-swarm-mesh-federation` | VALID — same class, node `CoW swarm mesh federation: see: artifacts/examples/multi-vm-swarm.rs` |
+
+3 pointers, 0 broken (post-#67). Pre-#67 the anchors extracted whole, but
+node-title matching slugified the ENTIRE node line (suffix included), so
+all three were false AnchorNotFound findings — the Bug 2 repro.
+
+### `src/plugins/mounts.yaml` — the YAML-comment variant, punctuation anchor (joins ONLY via the extra `**/*.yaml`)
+
+| line | written span | verdict |
+|---|---|---|
+| 2 | `see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content` | VALID — the comma-list anchor via the YAML trailing-comment variant; leading `fsinode_mode: full` prose invisible |
+
+1 pointer, 0 broken (post-#67; pre-#67 truncated at `,`). Like
+`src/net.yaml`, this file joins ONLY through the config's extra
+`**/*.yaml` — under the pure default include list it is invisible.
+
+## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 5 (`src/session.rs`, `src/api/routes.ts`, `src/worker/sweep.go`, `src/storage/quota.py`, `src/net.yaml`) | 10 | 2 |
-| flag on, no config block (pure defaults) | 4 (same minus `src/net.yaml`) | 9 | 2 |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`) | 5 | 10 | 0 |
+| config block on (this `_rules.yaml`) | 9 (`src/session.rs`, `src/api/routes.ts`, `src/worker/sweep.go`, `src/storage/quota.py`, `src/net.yaml`, `src/plugins/transaction.rs`, `src/plugins/checkpoint.go`, `src/plugins/ingress.py`, `src/plugins/mounts.yaml`) | 21 | 2 |
+| flag on, no config block (pure defaults) | 7 (same minus `src/net.yaml` and `src/plugins/mounts.yaml`) | 19 | 2 |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`) | 9 | 21 | 0 |
 
-Broken-pointer wire records (exact 7-key shape, deterministic order — file
-asc, line asc):
+The 2 broken are exactly the PRE-#67 pair — every issue-#67 pointer
+(both bug classes) is VALID. Broken-pointer wire records (exact 7-key
+shape, deterministic order — file asc, line asc):
 
 ```json
 [
@@ -122,3 +217,13 @@ Reverse traceability (`cans refs <node> --codebase`, exit 0 either way):
 | `01-auth.md#Sessions` | `src/api/routes.ts:2`, `src/api/routes.ts:6`, `src/session.rs:2` |
 | `01-auth.md` (file-level) | `src/api/routes.ts:2`, `src/api/routes.ts:6`, `src/session.rs:2`, `src/session.rs:6`, `src/session.rs:11` |
 | `03-storage.md#Timeouts` (no such pointer) | none |
+| `09-plugins.md#Invariants-and-policy-(transaction)` | `src/plugins/checkpoint.go:11`, `src/plugins/transaction.rs:2` |
+| `09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content` | `src/plugins/mounts.yaml:2`, `src/plugins/transaction.rs:3` |
+| `09-plugins.md#UID/GID-mapping-isolation` | `src/plugins/checkpoint.go:14`, `src/plugins/transaction.rs:4` |
+| `09-plugins.md#Dynamic-W^X-JIT-execution-mediation` | `src/plugins/transaction.rs:5` |
+| `10-lifecycle.md#Native-checkpoint-plane-(kelir-core::checkpoint)` | `src/plugins/checkpoint.go:7` |
+| `09-plugins.md#Connection-parking-on-suspend` | `src/plugins/ingress.py:3` |
+| `09-plugins.md#L7-pgwire-rewrite-and-2PC-commit` | `src/plugins/ingress.py:7` |
+| `09-plugins.md#CoW-swarm-mesh-federation` | `src/plugins/ingress.py:11` |
+| `09-plugins.md` (file-level) | all ten into `09-plugins.md`: `src/plugins/checkpoint.go:11`, `src/plugins/checkpoint.go:14`, `src/plugins/ingress.py:3`, `src/plugins/ingress.py:7`, `src/plugins/ingress.py:11`, `src/plugins/mounts.yaml:2`, `src/plugins/transaction.rs:2`, `src/plugins/transaction.rs:3`, `src/plugins/transaction.rs:4`, `src/plugins/transaction.rs:5` |
+| `09-plugins.md#Invariants-and-policy` (truncated spelling — no fuzzy healing) | none |

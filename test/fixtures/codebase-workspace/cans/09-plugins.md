@@ -1,0 +1,25 @@
+- Plugins
+  - Invariants and policy (transaction)
+    - Begin, commit, and rollback are the only transitions
+    - All writes ride an explicit handle
+    - Rollback restores the pre-call inode image
+    - Nested scopes flatten to the outermost frame
+  - FsInodeAttr carries full mode, uid, gid, size, content
+    - Mode bits pass through bind mounts unchanged
+    - Both ids map through the guest lookup table
+    - Size tracks exact bytes, never a block count
+    - Content hashes verify at each rehydrate
+  - UID/GID mapping isolation
+    - Each container gets a disjoint uid range
+    - Group ids translate per namespace
+    - Unmapped ids fail closed with EOVERFLOW
+    - Hosts audit the allocated ranges
+  - Dynamic W^X JIT execution mediation
+    - Code pages flip writable only during emission
+    - Executable pages are sealed before entry
+    - Mediation hooks reject dual mappings outright
+    - Violations trip the sandbox audit channel
+  - Connection parking on suspend: see: artifacts/examples/serverless-webhook.ts
+  - L7 pgwire rewrite and 2PC commit: see: artifacts/examples/db-backed-runtime.py
+  - CoW swarm mesh federation: see: artifacts/examples/multi-vm-swarm.rs
+  - Legend: see: 00-overview.md

@@ -1,0 +1,7 @@
+- Lifecycle
+  - Native checkpoint plane (kelir-core::checkpoint)
+    - The host coordinator drives both pause and restore
+    - Guest memory lands in swap before hands-off
+    - CRIU images stream through the checkpoint socket
+    - Resume replays the saved clock skew
+  - Guide: see: 00-overview.md
