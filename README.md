@@ -280,7 +280,7 @@ That's the entire agent instruction surface. No 12 skills. No 30 adapters. No sl
 |---|---|
 | **Structure** | Node length (unit/scope/severity, issue #61), wrapped-prose multiline policy (issue #61), depth, sibling count, single-child collapse, empty nodes |
 | **Style** | Sibling vs nested grouping, shared prefix detection |
-| **References** | Broken `see:`, broken anchors (schematic leaf paths in JSON/YAML/TOML — issue #58; text headings and code symbols — issue #60), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are terminal, 0-hop — issues #44/#60), self-refs, orphans, stale back-pointers |
+| **References** | Broken `see:`, broken anchors (schematic leaf paths in JSON/YAML/TOML — issue #58; text headings and code symbols — issue #60), deep hops (A→B→C; refs to on-disk non-spec files like `artifacts/*.ts` are terminal, 0-hop — issues #44/#60), self-refs, orphans, stale back-pointers; the opt-in `--codebase` phase validates `see:` pointers embedded in source files — spec targets against the corpus, artifact targets against the workspace (issues #66, #69) |
 | **Redundancy** | Word frequency, phrase overlap, fuzzy typos, cross-file duplication |
 
 Configure in `cans/_rules.yaml`. Delete a key to disable that check. No
@@ -537,9 +537,15 @@ strict validation: §18 — in `docs/cans.architecture.md`.
 Your spec doesn't rot alone: real implementations annotate functions,
 types and logic with pointers back to canonical spec nodes — `// see:
 01-auth.md#Sessions` in Rust, `# see: 04-api.md#Routing` in Python, block
-comments in Go, YAML keys. Until now those rotted silently (rename a node
+comments in Go, YAML keys. Until #66 those rotted silently (rename a node
 and nothing fails), and nothing could trace which source files reference
-a node. The `codebase` scanner closes both gaps. Opt-in:
+a node. And the pointers do not stop at spec files: the cans layout puts
+field layouts, schemas, wire formats, pipeline diagrams and example code
+under `cans/artifacts/` — code points at those too (`// see:
+cans/artifacts/code/plugin-trait.rs#PluginError`, `// see:
+cans/artifacts/diagrams/host-runtime.txt#driver-avf`, a key under
+`cans/_rules.yaml`) — and until #69 that whole pointer class was silently
+unvalidated. The `codebase` scanner closes all of it. Opt-in:
 
 ```yaml
 # cans/_rules.yaml
@@ -589,17 +595,43 @@ rename a spec node, CI fails until the pointers follow.
 `file:line` plus the line text as written and exits 0 whether or not
 matches exist (a successful query is a successful query); without
 `--codebase` the command refuses with guidance — a flag that silently
-does nothing is a typo hiding in plain sight.
+does nothing is a typo hiding in plain sight. The query grammar names
+spec and artifact files alike (issue #69): `cans refs
+"cans/artifacts/diagrams/host-runtime.txt#driver-avf" --codebase` is a
+legal query too — the query grammar builds from the same
+target-extension table the extractor does, so a query can name
+everything a pointer can name and the two grammars can never drift;
+the query file resolves against the workspace and pointers match by
+resolved path, the same anchor-insensitive comparison as `.md` queries.
 
 How resolution works:
 
-- `<file>` resolves against the corpus keys (the spec files the workspace
-  loaded); one optional leading `cans/` is stripped, so `01-auth.md` and
-  `cans/01-auth.md` are the same target.
-- `#<slug>` resolves with the same tolerant anchor matching the corpus
-  refs engine uses (case- and separator-insensitive — `#token_validation`
-  finds `Token validation`); the `slug:` algorithm above is the canonical
-  spelling.
+- A `.md` target resolves against the corpus keys (the spec files the
+  workspace loaded); one optional leading `cans/` is stripped, so
+  `01-auth.md` and `cans/01-auth.md` are the same target.
+- An artifact target (issue #69) resolves against the WORKSPACE
+  filesystem instead: the file must exist under `cans/` (containment —
+  `../` and absolute spellings never resolve, issue #10) and the anchor
+  resolves against that file's addressable vocabulary — the same
+  vocabularies the References engine verifies artifact refs with (the
+  anchor sections above): schematic dot paths for
+  `.json`/`.yaml`/`.yml`/`.toml` (issue #58), section headings for
+  `.txt`/`.text`, top-level symbols for code files (issue #60). A
+  missing file is reason `FileNotFound`; a broken, ambiguous or
+  unparseable anchor is reason `AnchorNotFound` with the specific why
+  in the message plus a `did you mean` suggestion; an artifact with
+  nothing addressable carrying an anchor is a warning
+  (`codebase.anchor.no-target`), never a finding.
+- The target-extension table is exactly the union of those addressable
+  vocabularies plus `.md` — the grammar's over-capture guard: a file
+  type no vocabulary can address (`.c`, `.cpp`, `.csv`, a versioned
+  `v1.2`) is deliberately not a pointer target, because capturing it
+  could only ever mint unresolvable noise, never a verified pointer
+  (the #67 narrow-classes lesson, applied to the target side).
+- `#<slug>` on a spec target resolves with the same tolerant anchor
+  matching the corpus refs engine uses (case- and separator-insensitive —
+  `#token_validation` finds `Token validation`); the `slug:` algorithm
+  above is the canonical spelling.
 - Anchors carry the full slug alphabet (issue #67): `(`, `,`, `:`, `/`,
   `^` … are all legal mid-anchor — `#Invariants-and-policy-(transaction)`
   addresses the node `Invariants and policy (transaction)` — and a spec
@@ -618,8 +650,11 @@ How resolution works:
 - Files are scanned as text: leading prose, trailing notes, block
   comments and YAML keys are invisible to the match; trailing prose after
   the pointer never fails it.
-- The `cans/` workspace itself is always skipped — corpus refs verify in
-  the refs engine, never twice.
+- The `cans/` workspace itself is always skipped by the scan — corpus
+  refs verify in the refs engine, never twice. An artifact target is
+  read and parsed only when its pointer carries an anchor into it (a
+  file-level artifact pointer verifies existence and nothing more) —
+  artifact files are resolution inputs, never scan inputs.
 
 ### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
 

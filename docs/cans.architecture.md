@@ -910,9 +910,12 @@ could trace which source files reference a node. Issue #66 adds the
 codebase inbound-references scanner: an OUTBOUND pass over the project's
 source tree (text-only — no ASTs, no toolchains, no language runtimes)
 that extracts embedded `see: <file>[#<slug>]` pointers, resolves them
-against the loaded corpus, and reports the broken ones; plus the
-`cans refs <node> --codebase` reverse-traceability query (§23c). The
-matching rule is §2.1 of the RFC as implemented (issue #67):
+against the loaded corpus (spec targets) or the workspace filesystem
+(artifact targets — issue #69, below), and reports the broken ones; plus
+the `cans refs <node> --codebase` reverse-traceability query (§23c). The
+matching rule is §2.1 of the RFC as implemented (issue #67; since #69 the
+`.md` literal in the file group is the longest-first target-extension
+alternation built from `CODEBASE_TARGET_EXTS`, below):
 `see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([^\s#]+))?` —
 `SEE_POINTER_RE` in `core/codebase.ts`, matched per line (never on
 multi-line blobs), so surrounding prose, trailing notes, parentheses,
@@ -970,6 +973,65 @@ with the canonical colon spelling resolves too. Strictly widening —
 everything that resolved still resolves; a genuine misspelling still
 fails.
 
+**Artifact targets — the second resolution tier (issue #69):** `.md`
+was never the only thing code points at. The cans layout puts field
+layouts, schemas, wire formats, pipeline diagrams and example code
+under `cans/artifacts/` — and implementations point at those too (`//
+see: cans/artifacts/code/plugin-trait.rs#PluginError`, `// see:
+cans/artifacts/diagrams/host-runtime.txt#driver-avf`, a YAML key under
+`cans/_rules.yaml`). Until #69 the extractor's file group captured
+`.md` targets only, so `check --codebase` silently skipped that whole
+pointer class — zero findings for genuinely broken targets — and
+`cans refs` refused its queries as malformed: the exact silent-skip
+failure mode #66 was filed against, one tier wide. The grammar widens
+by TABLE, not by `.anything-goes`: the file group accepts exactly the
+extensions the artifact anchor machinery can address —
+`CODEBASE_TARGET_EXTS` (`core/codebase.ts`), `.md` (the corpus tier)
+plus the union of the §12 vocabularies: schematic
+`.json`/`.yaml`/`.yml`/`.toml` (issue #58), text headings
+`.txt`/`.text` and code symbols
+`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.rs`/`.py`/`.go`
+(issue #60). A file type NO vocabulary can address (`.c`, `.cpp`,
+`.csv`, a versioned `v1.2`) is deliberately not a pointer target —
+capturing it could only mint unresolvable-anchor noise, never a
+verified pointer: the extension table is the grammar's over-capture
+guard, the target-side twin of #67's narrow-classes lesson. The
+alternation is built LONGEST-FIRST (`codebaseTargetExtAlt()` — `tsx`
+starts with `ts`, and a first-match alternation in table order would
+capture `driver.tsx#A` as `driver.ts` and strand the `x`); both
+consumers of the table — the extractor's `SEE_POINTER_RE` (this
+module) and the `cans refs` query grammar (§23c) — build through the
+same function, so a query can name everything a pointer can name and
+the two grammars can never drift.
+
+Resolution splits by TIER: a `.md` target resolves against the loaded
+spec corpus exactly as above (issues #66/#67/#68, unchanged); an
+artifact target resolves against the WORKSPACE filesystem — the file
+must exist under `cans/` (`resolveSpecFile` containment, issue #10 —
+`../` and absolute spellings never resolve; one optional leading
+`cans/` is stripped, the corpus spelling rule) and the anchor resolves
+through `checkArtifactAnchor` — the SAME shared verdict function the
+corpus refs engine uses for its on-disk artifact refs (issues
+#58/#49/#60, §12) — riding the #68 cleaned-vs-cleaned `anchorMatches`
+seam. The refs engine's parse-error/ambiguous rules fold into the
+frozen codebase reason union (the wire's `'FileNotFound' |
+'AnchorNotFound'` is the frozen RFC §4.1 shape — the why rides in the
+message): a missing file → reason `FileNotFound` (`artifact target
+not found in the cans workspace`); a broken, ambiguous or unparseable
+anchor → reason `AnchorNotFound` with the specific why in the message
+plus the `did you mean` suggestion. An artifact that has NOTHING
+addressable while its pointer carries an anchor is a WARNING, never a
+finding — rule `codebase.anchor.no-target`, the §12
+`refs.anchor.no-target` advisory downgrade carried to the codebase
+side: an anchor nobody could have resolved is advice to drop the
+anchor, not a broken pointer. Laziness carries over (§12 contract 7):
+an artifact file is READ and PARSED only when a pointer actually
+carries an anchor into it — a file-level artifact pointer verifies
+existence and nothing more, so no workspace-wide artifact parsing ever
+runs, and the scan itself still never enters the workspace (step 1's
+skip is untouched; artifact files are resolution inputs, never scan
+inputs).
+
 **Pipeline (select → extract → resolve → report):**
 
 1. **Select** — `collectSourceFiles(root, cfg)` walks `cfg.roots` (each
@@ -987,9 +1049,12 @@ fails.
    line). `raw` is the exact matched span; `targetFile`/`targetSlug` are
    AS WRITTEN (the `cans/` prefix is resolved later, never rewritten).
 3. **Resolve** — `checkCodebaseRefs(root, cfg, corpus)`:
-   `<file>` resolves against the corpus keys the check already loaded —
-   exact match, else one optional leading `cans/` stripped; no match →
-   reason `FileNotFound`. `#<slug>` resolves with the SAME tolerant
+   a `.md` target resolves against the corpus keys the check already
+   loaded — exact match, else one optional leading `cans/` stripped;
+   no match → reason `FileNotFound`. An artifact-extension target
+   (issue #69, the table above) resolves against the workspace
+   filesystem instead — the two-tier split of the artifact-target
+   paragraph. `#<slug>` resolves with the SAME tolerant
    anchor matching the corpus refs engine uses (`anchorMatches` →
    `normalizeForAnchor` + the issue #68 cleaned-vs-cleaned clause, §12),
    tried against BOTH the full node text and the text with a trailing
@@ -2072,7 +2137,17 @@ Plain runs WRITE (the import/export migration-command pattern).
 
 The reverse-traceability query (issue #66): locates every codebase
 occurrence referencing a corpus file (or `file#slug`) — which source files
-point at this spec node. `core/codebase.ts` runs the SAME select → extract
+point at this spec node. Since issue #69 the query grammar names ARTIFACT
+files too: the `<file>` part accepts every extension of the shared
+target-extension table (`CODEBASE_TARGET_EXTS`, §12) — `cans refs
+"cans/artifacts/diagrams/host-runtime.txt#driver-avf" --codebase` is a
+legal query — and the pointer and query grammars build from the same
+table through `codebaseTargetExtAlt()`, so a query can name everything a
+pointer can name and the two can never drift. An artifact query resolves
+its file against the workspace (containment, issue #10) and matches
+pointers by resolved-path equality with the same anchor-insensitive
+comparison as a corpus query. In both tiers `core/codebase.ts` runs
+the SAME select → extract
 → resolve pipeline as the check phase (§12) under the `codebase` config
 (`roots`/`include`/`exclude`; the workspace always skipped), then keeps the
 pointers whose resolved target matches the query: an anchored query
@@ -2089,7 +2164,8 @@ error.
 command refuses with guidance naming the flag (§20 — a flag that silently
 does nothing is a typo hiding in plain sight; v1 surface is `--codebase`
 only); an unknown corpus file, an unknown anchor, or a malformed query
-(no `.md` file part) is refused with the resolution vocabulary of §12
+(no file part carrying a target-table extension — §12) is refused with
+the resolution vocabulary of §12
 (the `did you mean` suggestion rides along when the fuzzy layer finds
 one). Requires a workspace.
 
