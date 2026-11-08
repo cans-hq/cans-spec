@@ -39,11 +39,12 @@
  * copy exactly like test/issue66-integration.test.ts):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             9 scanned / 21 pointers / EXACTLY the 2 pre-#67 broken —
+ *             12 scanned / 26 pointers / EXACTLY the 2 pre-#67 broken —
  *             zero broken refs for every new kelir-shaped anchor, both
  *             bug classes (a2 repeats it under the pure-default include
- *             list: 7 files / 19 pointers / same 2 broken — the yaml
- *             pointer invisible)
+ *             list: 10 files / 24 pointers / same 2 broken — the yaml
+ *             pointer invisible; the #68 extension keeps the plugin tier
+ *             on in the variant so its five pointers stay in scope)
  *   b ....... Bug 1 on the REVERSE path: `cans refs <node> --codebase`
  *             finds every punctuation-bearing anchor, including the
  *             glued-closer spellings (pre-fix these queries refuse as
@@ -166,10 +167,18 @@ const RS_L5 = '// JIT gate: see: 09-plugins.md#Dynamic-W^X-JIT-execution-mediati
 
 /** The e1-shaped rules (no codebase block) + the fixture's own redundancy
  *  knobs — the corpus-clean shape the #66 suite pins, extended with the
- *  knobs the README documents for the kelir-shaped extension. */
+ *  knobs the README documents for the kelir-shaped extension, and (issue
+ *  #68) the fixture's plugin-tier wiring so the three cans/plugins/*.md
+ *  specs stay loaded: without it the #68 pointers would be FileNotFound in
+ *  this variant, a different failure than the include-list dimension a2
+ *  isolates. */
 const RULES_NO_CODEBASE = [
   'references:',
   '  back_pointers: false',
+  '  aliasing:', // the issue #68 plugin tier (the fixture's own wiring)
+  '    enabled: true',
+  '    include:',
+  '      - plugins/*.md',
   'redundancy:',
   '  word_frequency_threshold: 5',
   '  fuzzy: false',
@@ -179,34 +188,38 @@ const RULES_NO_CODEBASE = [
 // ── a: the check scan — zero broken refs for every new anchor ──────────────
 
 describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
-  test('a1: config-on — 9 scanned / 21 pointers / EXACTLY the 2 pre-#67 broken (both bug classes clean)', () => {
+  test('a1: config-on — 12 scanned / 26 pointers / EXACTLY the 2 pre-#67 broken (both bug classes clean)', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (2 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(9);
-    expect(j.codebase.pointers).toBe(21);
+    expect(j.codebase.scanned).toBe(12); // 9 pre-#68 + the three #68 .rs sources
+    expect(j.codebase.pointers).toBe(26); // 21 pre-#68 + the kelir five (#68)
     expect(j.codebase.broken).toBe(2);
     // THE pin: the broken set is byte-exactly the pre-#67 pair — none of the
     // 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
     // checkpoint.go incl. both glued-closer cases, 3 Bug-2 suffix targets in
-    // ingress.py, 1 yaml comma anchor) is reported broken.
+    // ingress.py, 1 yaml comma anchor) is reported broken; the issue #68
+    // extension's five colon-anchor pointers (db-proxy.rs, profile.rs,
+    // wire-ingress.rs) are in the census too and resolve post-#68.
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).every((i) => !i.file.startsWith('src/plugins/'))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 7 files / 19 pointers / the same 2 broken, yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 10 files / 24 pointers / the same 2 broken, yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
-    // src/plugins/mounts.yaml stay out — 7 files, 19 pointers, and the same
-    // two broken records (every non-yaml #67 pointer still resolves).
-    expect(j.codebase.scanned).toBe(7);
-    expect(j.codebase.pointers).toBe(19);
+    // src/plugins/mounts.yaml stay out — 10 files, 24 pointers, and the same
+    // two broken records (every non-yaml #67 pointer still resolves; the
+    // #68 plugin tier stays on in the variant, so the kelir five are in
+    // scope and resolve post-#68).
+    expect(j.codebase.scanned).toBe(10);
+    expect(j.codebase.pointers).toBe(24);
     expect(j.codebase.broken).toBe(2);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
@@ -223,7 +236,7 @@ describe('issue #67 b — refs <node> --codebase finds the punctuation anchors',
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(true);
     expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
-    expect(j.scanned).toBe(9);
+    expect(j.scanned).toBe(12);
     // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
     // anchor, so both pointers answer. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -392,7 +405,7 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(23); // 21 + the two appended
+    expect(j.codebase.pointers).toBe(28); // 26 + the two appended
     expect(j.codebase.broken).toBe(4); // the 2 true + the 2 near misses
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
     expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
@@ -414,7 +427,9 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const p = ws('d5');
     // No codebase block, no flag: the plain pre-#66 check over the corpus
     // with the extension (two new spec files, three artifact refs, the
-    // suffix nodes) — exit 0, no codebase key.
+    // suffix nodes, and — #68 — the three plugin-tier specs with their hub
+    // refs, loaded through the variant's aliasing block) — exit 0, no
+    // codebase key.
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--json'], p);
     expect(r.exit).toBe(0);

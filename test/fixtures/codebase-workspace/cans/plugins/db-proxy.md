@@ -1,0 +1,24 @@
+- Db proxy plugin
+  - Purpose
+    - One socket per workspace, postgres wire protocol at the front
+    - Sqlite is the only durable backing store
+  - Connection lifecycle
+    - Handshake completes before any statement is queued
+    - Idle connections park on the suspend event
+    - Teardown flushes the wal on last close
+  - Statement routing
+    - Reads fan out to readonly handles
+    - Writes serialize on the single writer handle
+    - Prepared statements cache per connection
+  - Failure policy
+    - Busy returns SQLITE_BUSY to the caller verbatim
+    - Corruption halts the plane, never half-serves
+    - Backpressure propagates as pause frames
+  - Bridge invariants
+    - The socket directory is created before bind, mode 0770
+  - SQLite UDS bridge mechanics:
+    - The bridge binds a unix domain socket under the runtime dir
+    - One length-prefixed frame carries each statement id
+    - Responses stream back over the same socket, in order
+    - A malformed frame closes the connection without a reply
+  - Map: see: 00-overview.md
