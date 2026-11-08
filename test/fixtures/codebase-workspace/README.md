@@ -98,7 +98,7 @@ match them). They are terminal file-level targets (issues #44/#60).
 `cans/` itself is ALWAYS skipped by the scanner (corpus refs verify in the
 refs engine, never twice) — note `cans/_rules.yaml` matches the
 `**/*.yaml` include glob and must therefore prove the skip rule: with the
-config block on, exactly the nine `src/` files below are scanned.
+config block on, exactly the twelve `src/` files below are scanned.
 
 ### The redundancy knobs in `cans/_rules.yaml` (issue #67)
 
@@ -215,17 +215,58 @@ all three were false AnchorNotFound findings — the Bug 2 repro.
 `src/net.yaml`, this file joins ONLY through the config's extra
 `**/*.yaml` — under the pure default include list it is invisible.
 
+### `src/plugins/db-proxy.rs` — Rust line comments; the colon-titled heading anchor, twice (issue #68)
+
+Anchors as written in the kelir source — the CANONICAL colon spellings
+(`cans slug "SQLite UDS bridge mechanics:"` returns the colon verbatim):
+
+| line | written span | verdict |
+|---|---|---|
+| 42 | `see: cans/plugins/db-proxy.md#SQLite-UDS-bridge-mechanics:` | VALID (post-#68) — the COLON anchor at the kelir line; `cans/plugins/db-proxy.md` resolves through the issue #65 plugin tier (AnchorNotFound territory, never FileNotFound), the heading `SQLite UDS bridge mechanics:` exists verbatim at `cans/plugins/db-proxy.md:19` |
+| 141 | `see: cans/plugins/db-proxy.md#SQLite-UDS-bridge-mechanics:` | VALID (post-#68) — the SAME spelling again in the test module (the kelir double occurrence) |
+
+2 pointers, 0 broken (post-#68). Pre-#68: the anchor side is cleaned at
+extraction (`...mechanics:` → `...mechanics`) while the heading side
+keeps its own trailing `:` — cleaned vs uncleaned never matched — two
+false AnchorNotFound findings, the one-sided-cleaning repro.
+
+### `src/plugins/profile.rs` — Rust line comments; the hyphen-chained colon anchor (issue #68)
+
+| line | written span | verdict |
+|---|---|---|
+| 21 | `see: cans/plugins/profile.md#Inversion-of-Control-configuration-router:` | VALID (post-#68) — the colon anchor over the heading `Inversion-of-Control configuration router:` at `cans/plugins/profile.md:17`; note the heading hyphenates `Inversion-of-Control` while the anchor hyphenates every separator — both normalize equal |
+
+1 pointer, 0 broken (post-#68). Pre-#68: one false AnchorNotFound
+finding — the same cleaned-vs-uncleaned seam.
+
+### `src/plugins/wire-ingress.rs` — Rust line comments; the colon-over-bracket anchor, twice (issue #68)
+
+| line | written span | verdict |
+|---|---|---|
+| 18 | `see: cans/plugins/wire-ingress.md#Ingress-stream-framing-on-stream-kind-L4-FORWARD-(mux-0x0001):` | VALID (post-#68) — the kelir spelling with the trailing `):` run: the extraction cleaning strips the run and RESTORES the opener-backed `)` → targetSlug `Ingress-stream-framing-on-stream-kind-L4-FORWARD-(mux-0x0001)`; the heading `Ingress stream framing on stream kind L4_FORWARD (mux 0x0001):` sits verbatim at `cans/plugins/wire-ingress.md:23` (its `L4_FORWARD` underscore and the anchor's `L4-FORWARD` hyphen normalize equal) |
+| 85 | `see: cans/plugins/wire-ingress.md#Ingress-stream-framing-on-stream-kind-L4-FORWARD-(mux-0x0001):` | VALID (post-#68) — the same spelling at the second kelir occurrence, in the encoder's contract comment |
+
+2 pointers, 0 broken (post-#68). Pre-#68: two false AnchorNotFound
+findings — the heading's own `):` is slug-preserved and was never cleaned
+on the matching side.
+
 ## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 9 (`src/session.rs`, `src/api/routes.ts`, `src/worker/sweep.go`, `src/storage/quota.py`, `src/net.yaml`, `src/plugins/transaction.rs`, `src/plugins/checkpoint.go`, `src/plugins/ingress.py`, `src/plugins/mounts.yaml`) | 21 | 2 |
-| flag on, no config block (pure defaults) | 7 (same minus `src/net.yaml` and `src/plugins/mounts.yaml`) | 19 | 2 |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`) | 9 | 21 | 0 |
+| config block on (this `_rules.yaml`) | 12 (the 9 pre-#68 files plus `src/plugins/db-proxy.rs`, `src/plugins/profile.rs`, `src/plugins/wire-ingress.rs`) | 26 | 2 |
+| flag on, no config block (pure defaults, plugin tier kept on) | 10 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the three new files are `.rs`, covered by the default `**/*.rs`) | 24 | 2 |
+| aliasing include dropped (tier off, config block kept) | 12 | 26 | 7 — the 2 true plus the five #68 pointers as FileNotFound (the tier is what makes `cans/plugins/*.md` resolvable) |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`) | 12 | 26 | 0 |
 
 The 2 broken are exactly the PRE-#67 pair — every issue-#67 pointer
-(both bug classes) is VALID. Broken-pointer wire records (exact 7-key
-shape, deterministic order — file asc, line asc):
+(both bug classes) AND every issue-#68 pointer is VALID post-#68.
+Pre-#68 the broken count is 7: the 2 true plus the five false
+AnchorNotFound findings of the one-sided cleaning (db-proxy.rs:42/141,
+profile.rs:21, wire-ingress.rs:18/85 — each earns a `did you mean
+cans/plugins/…#<colon spelling>:?` suggestion, the fuzzy layer already
+knew the answer). Broken-pointer wire records (exact 7-key shape,
+deterministic order — file asc, line asc):
 
 ```json
 [
@@ -243,7 +284,20 @@ exits **2** (the repo error-band convention; the RFC's example text shows 1
 — that one-number difference is the integration suite's one deliberate
 deviation, documented in its header).
 
-Reverse traceability (`cans refs <node> --codebase`, exit 0 either way):
+Reverse traceability (`cans refs <node> --codebase`, exit 0 either way).
+The #68 plugin-tier files are OUTSIDE the v1 query corpus: `cans refs`
+resolves its node query against DISCOVERED spec keys only (root-level
+`.md` + `index.md` — the command's header documents that the check
+engine's promotion loop and plugin tier are deliberately not
+reimplemented there), so a query naming `cans/plugins/db-proxy.md` (or
+its workspace-relative spelling, with or without the colon anchor)
+REFUSES: `ok:false`, exit 1, `no spec file matches "cans/plugins/
+…" — refs --codebase resolves against the workspace corpus (cans/)`.
+That refusal — not a silent empty answer — is the pinned v1 boundary;
+the corpus-side colon resolution the #68 matcher widening delivers is
+pinned instead through a transient plugin-file `see:` (both spellings,
+colon and colon-less, resolve post-#68; pre-#68 both were broken anchors
+— the same one-sided seam on the corpus refs engine).
 
 | query | matches (file asc, line asc) |
 |---|---|
