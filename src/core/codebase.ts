@@ -5,7 +5,19 @@
  *  reporter's corpus): the extraction anchor group now captures the FULL
  *  slug alphabet with a #48/#58-style cleaning pass (bug 1, 127/135), and
  *  resolution also matches spec nodes by their title with a trailing
- *  `: see:` suffix stripped (bug 2, 8/135).
+ *  `: see:` suffix stripped (bug 2, 8/135). Issue #68 — the cleaning pass
+ *  goes SYMMETRIC at the shared matching seam: the five false positives
+ *  0.16.0 still minted on the kelir corpus (all anchors correct per
+ *  `cans slug`, all five headings carrying their own trailing `:` — which
+ *  the slug contract preserves verbatim into the canonical anchor) were
+ *  ONE-SIDED cleaning — the anchor side is cleaned at extraction (here and
+ *  outline.ts) while the heading side never was, so a canonical colon
+ *  anchor (`SQLite-UDS-bridge-mechanics:`) could never match its heading
+ *  (`SQLite UDS bridge mechanics:`). The fix lives in refs.ts
+ *  anchorMatches — cleaned-vs-cleaned on BOTH sides — over the pass MOVED
+ *  to core/slug.ts as the single shared implementation
+ *  (stripAnchorTrailingPunct); stripCodebaseAnchorPunct below is now a
+ *  thin delegate that keeps this module's #67 export seam frozen.
  *
  *  CANS enforces graph integrity inside the markdown corpus (the cans/
  *  workspace). Real implementations annotate functions, types and logic
@@ -59,7 +71,11 @@
  *  runtimes. The #66 contract commit froze the exported signatures below
  *  as the cross-agent seam (engine ↔ CLI ↔ docs); issue #67 extends that
  *  seam ADDITIVELY with stripCodebaseAnchorPunct and stripSeeRefSuffix —
- *  no #66 signature moved, so the layers built against it keep compiling. */
+ *  no #66 signature moved, so the layers built against it keep compiling.
+ *  Issue #68 kept the seam byte-identical: the cleaning implementation
+ *  moved to slug.ts, and this module's export delegates (same name, same
+ *  signature, same module — test/issue-67-engine.test.ts and
+ *  src/commands/refs.ts keep importing it from HERE). */
 
 import type { CodebaseRules, CodebaseScan } from '../types.ts';
 import type { CodebaseFinding, Issue, OutlineNode } from '../types.ts';
@@ -69,7 +85,7 @@ import { globToRegExp } from './glob.ts';
 import { readText } from './runtime.ts';
 import { flattenNodes } from './outline.ts';
 import { anchorMatches } from './refs.ts';
-import { anchorSlug, nearSlugMatches } from './slug.ts';
+import { anchorSlug, nearSlugMatches, stripAnchorTrailingPunct } from './slug.ts';
 
 /** §2.1 — the matching rule. The RFC #66 §2.1 pattern is the pointer-GRAMMAR
  *  sketch; per issue #67 the ANCHOR group captures the full slug alphabet:
@@ -107,80 +123,28 @@ export const SEE_POINTER_RE: RegExp =
  */
 // export interface CodebasePointer — see src/types.ts (frozen contract).
 
-/** Issue #67 — the trailing-punctuation strip set for captured codebase
- *  anchors: closers and sentence punctuation — ASCII `)]},.;:!?'"` plus
- *  the typographic closers `’ ” …` — one or more trailing occurrences, the
- *  SAME set as outline.ts's #48 REF_TRAILING_PUNCT_RE (kept as a local
- *  twin because that one is deliberately private to the refs engine;
- *  the SETS must stay identical, so both cite each other here). Deliberately
- *  NOT stripped: `-`, `_`, `/` (#48: a trailing dash is a legitimate slug
- *  ending, a trailing slash a legitimate folder target) and openers `([{`. */
-const ANCHOR_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
-
-/** The repairable bracket pairs, opener-first: a stripped closer is only
- *  restorable when an UNCLOSED opener of the SAME type backs it. */
-const ANCHOR_BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [
-  ['(', ')'],
-  ['[', ']'],
-  ['{', '}'],
-];
-
-/** Count non-overlapping occurrences of a single character (the #58 loop
- *  counted `]` via match(g) — generalized over three closer types without
- *  minting three near-identical regex literals). */
-function countChar(s: string, ch: string): number {
-  return s.split(ch).length - 1;
-}
-
 /** Issue #67 — clean a captured codebase anchor: outline.ts's issue-#48
  *  stripRefTrailingPunct (trailing prose punctuation) + issue-#58 bracket
- *  repair, generalized from the refs engine's `]`-only repair to the full
- *  bracket family `()[]{}`:
+ *  repair, generalized to the full bracket family `()[]{}` (strip ONE
+ *  trailing run of closer/sentence punctuation, then repair opener-backed
+ *  closers; mid-token punctuation never touched; a trailing `-` `_` `/`
+ *  and openers `([{` never stripped).
  *
- *    a. Strip ONE trailing run of the #48 closer/punctuation set above —
- *       prose glue, exactly the defect that minted false `Audit-spine)`
- *       anchors on the corpus side (`(see: x.md#Routing)` captured
- *       `Routing)` once the alphabet widened).
- *    b. Repair opener-backed closers: for each closer type, count the
- *       closers the strip ATE (count in the original minus count after the
- *       strip); while any remain, find the LAST opener of that type in the
- *       working token; if none exists, or that opener is already closed
- *       by a closer to its right, stop — a glued prose paren has nothing
- *       backing it — else re-append the closer and decrement. A trailing
- *       `)` that closes a real `(` in the anchor is STRUCTURAL and survives
- *       verbatim (`Invariants-and-policy-(transaction)`, `Native-checkpoint-
- *       plane-(kelir-core::checkpoint)`); a glued one does not (`Routing)`,
- *       `Sessions);`); a wrapped-prose double keeps exactly its structural
- *       half (`API-(v2))` → `API-(v2)`). The three passes are independent —
- *       each repairs only its own closer type, and one type's closer can
- *       never open or close another type's pair — so pass order cannot
- *       matter.
- *
- *  Mid-token punctuation is NEVER touched: the strip is a TRAILING run
- *  only, so `FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content`
- *  passes through unchanged (the commas sit mid-token; the slug contract
- *  preserves them verbatim). Returns '' when the whole fragment was glued
- *  punctuation (`).`); the caller degrades that to a file-level pointer
- *  (targetSlug null) exactly the way outline.ts's matchAliasDefinition
- *  degrades an emptied anchor token.
- *
- *  `raw` is NOT touched — the #48 convention: raw quotes the written
- *  spelling (glued punctuation included), only the resolved tokens are
- *  cleaned. Exported for the issue-#67 engine suite. */
+ *  Issue #68: the IMPLEMENTATION now lives in core/slug.ts —
+ *  stripAnchorTrailingPunct, the single shared source — because the pass
+ *  stopped being this extractor's private cleaning: refs.ts anchorMatches
+ *  cleans BOTH sides of the comparison through it (the heading's own
+ *  trailing sentence punctuation is slug-preserved, so the canonical
+ *  anchor carrying it — `SQLite-UDS-bridge-mechanics:`, exactly what
+ *  `cans slug` prints — must resolve; one-sided cleaning minted 0.16.0's
+ *  five kelir false positives). This delegate keeps the frozen #67
+ *  cross-agent seam: same name, same signature, same module — the
+ *  issue-#67 engine suite and src/commands/refs.ts import it from HERE.
+ *  The strip set, the bracket pairs and the full a/b semantics (including
+ *  idempotence on structural endings like `API-(v2)` and the empty-after-
+ *  strip degradation) are documented at the slug.ts source. */
 export function stripCodebaseAnchorPunct(anchor: string): string {
-  const stripped = anchor.replace(ANCHOR_TRAILING_PUNCT_RE, '');
-  let out = stripped;
-  for (const [open, close] of ANCHOR_BRACKET_PAIRS) {
-    let eaten = countChar(anchor, close) - countChar(stripped, close);
-    while (eaten > 0) {
-      const at = out.lastIndexOf(open);
-      if (at === -1) break; // no opener of this type left to repair
-      if (out.slice(at).includes(close)) break; // that opener already closes
-      out += close;
-      eaten--;
-    }
-  }
-  return out;
+  return stripAnchorTrailingPunct(anchor);
 }
 
 /** Extract every embedded pointer from ONE source file's text, in document

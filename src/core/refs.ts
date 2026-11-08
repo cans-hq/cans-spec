@@ -3,7 +3,7 @@ import { join, dirname, resolve, relative, isAbsolute } from 'path';
 import type { OutlineNode, RefTarget, BackPointer, Issue, ForbiddenTargetRule } from '../types.ts';
 import { flattenNodes, parseOutline } from './outline.ts';
 import { resolveSpecFile, toRelative, isFile, dirExists, exists } from './fs.ts';
-import { anchorSlug, nearSlugMatches, normalizeForAnchor } from './slug.ts';
+import { anchorSlug, nearSlugMatches, normalizeForAnchor, stripAnchorTrailingPunct } from './slug.ts';
 import { globToRegExp } from './glob.ts';
 import {
   parseSchematic, schematicFormatFor, resolveSchematicAnchor, schematicAddresses,
@@ -78,10 +78,44 @@ function loadedKeyFor(files: Map<string, OutlineNode[]>, root: string, name: str
  *  truth, shared with the canonical `anchorSlug` algorithm) and folds the
  *  FULL dash family (U+2010–U+2015, U+2043, U+2212, U+FE58, U+FE63,
  *  U+FF0D) — a strict superset of the issue #50 class, so every anchor
- *  that resolved before still resolves. */
+ *  that resolved before still resolves.
+ *
+ *  Issue #68 — clause 3, the cleaning pass goes SYMMETRIC (cleaned-vs-
+ *  cleaned on both sides). The slug contract (`_rules.yaml#slug.algorithm`,
+ *  core/slug.ts) preserves every non-separator character VERBATIM, so a
+ *  heading's OWN trailing sentence punctuation survives into its canonical
+ *  anchor: `SQLite UDS bridge mechanics:` → `SQLite-UDS-bridge-mechanics:`,
+ *  exactly what `cans slug` prints. But every ref-grammar consumer CLEANED
+ *  its captured anchor at parse time (codebase.ts stripCodebaseAnchorPunct
+ *  on the codebase side, outline.ts stripRefTrailingPunct on the corpus
+ *  side) while the heading side was never cleaned HERE — one-sided
+ *  cleaning, cleaned anchor vs uncleaned heading, which minted 0.16.0's
+ *  five false `anchor not found` positives on the kelir repo (issue #68:
+ *  `cans slug` returns each anchor verbatim, trailing `:` included, yet
+ *  resolution failed). Clause 3 compares like with like: both sides through
+ *  stripAnchorTrailingPunct (slug.ts, the single shared implementation —
+ *  the #48 strip + #58 opener-aware repair over `()[]{}`), so the canonical
+ *  colon anchor AND the colon-stripped spelling both resolve, while
+ *  mid-token punctuation still never moves and genuine misspellings
+ *  (`#Qutas` vs `Quotas`, `#Invariants-and-policy-(transakshun)`) still
+ *  fail — clauses 1-2 are untouched, so the fix is strictly widening.
+ *
+ *  This is the ONE shared matching seam, so the symmetry covers BOTH
+ *  engines at once: the codebase engine (codebase.ts checkCodebaseRefs)
+ *  AND the corpus refs engine (checkRefs below → checkArtifactAnchor) —
+ *  the same latent class existed there: a corpus ref written with the
+ *  canonical colon spelling `see: plugins/db-proxy.md#
+ *  SQLite-UDS-bridge-mechanics:` has its anchor token colon-stripped at
+ *  outline parse while the heading keeps its colon; it must resolve too. */
 export function anchorMatches(nodeText: string, anchor: string): boolean {
   if (nodeText === anchor) return true;
-  return normalizeForAnchor(nodeText) === normalizeForAnchor(anchor);
+  if (normalizeForAnchor(nodeText) === normalizeForAnchor(anchor)) return true;
+  // Issue #68 — clause 3: cleaned-vs-cleaned. Both sides through the SAME
+  // pass the extractors already ran on the anchor token alone, so the
+  // heading's own slug-preserved trailing punctuation can no longer block
+  // the match (see the doc comment above for the #68 story).
+  return normalizeForAnchor(stripAnchorTrailingPunct(nodeText))
+    === normalizeForAnchor(stripAnchorTrailingPunct(anchor));
 }
 
 /** Does an UNRESOLVED ref target look like an intended spec reference
