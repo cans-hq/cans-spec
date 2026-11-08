@@ -1,6 +1,11 @@
 /** Issue #66 — the codebase inbound-references scanner (RFC: "Codebase
  *  Inbound References: Extract and Validate Embedded `see:` Pointers in
- *  Source Files").
+ *  Source Files"). Issue #67 — two false-positive repairs to the ENGINE
+ *  (135 false `anchor not found` positives over 748 valid pointers on the
+ *  reporter's corpus): the extraction anchor group now captures the FULL
+ *  slug alphabet with a #48/#58-style cleaning pass (bug 1, 127/135), and
+ *  resolution also matches spec nodes by their title with a trailing
+ *  `: see:` suffix stripped (bug 2, 8/135).
  *
  *  CANS enforces graph integrity inside the markdown corpus (the cans/
  *  workspace). Real implementations annotate functions, types and logic
@@ -17,17 +22,25 @@
  *       text — no ASTs, no toolchains, no language runtimes (acceptance 1).
  *       SEE_POINTER_RE finds embedded `see: <file>[#<slug>]` pointers
  *       regardless of surrounding prose, trailing notes, parentheses or
- *       block-comment context (acceptance 2). NOTE for maintainers: a
- *       literal double-star glob can never be written inside a block
- *       comment — the star-slash in it closes the comment (this file's
- *       history is the proof).
+ *       block-comment context (acceptance 2). Issue #67: the anchor group
+ *       is `([^\s#]+)` — the FULL slug alphabet, whitespace/`#`-terminated
+ *       (the §11 REF_RE shape) — and the captured anchor is cleaned by
+ *       stripCodebaseAnchorPunct (glued trailing punctuation stripped,
+ *       opener-backed closers repaired) before it is stored as
+ *       `targetSlug`; `raw` stays the verbatim written span. NOTE for
+ *       maintainers: a literal double-star glob can never be written
+ *       inside a block comment — the star-slash in it closes the comment
+ *       (this file's history is the proof).
  *    2. RESOLUTION (§2.3): `<file>` resolves against the loaded spec-graph
  *       keys (the optional `cans/` prefix is stripped; both `01-spec.md` and
  *       `cans/01-spec.md` spellings resolve to the same corpus file).
  *       `#<slug>` resolves with the SAME tolerant anchor matching the corpus
  *       refs engine uses (anchorMatches → normalizeForAnchor, the
  *       `_rules.yaml#slug.algorithm` contract) — never fuzzy (acceptance 3;
- *       fuzzy stays a suggestion-only layer via nearSlugMatches).
+ *       fuzzy stays a suggestion-only layer via nearSlugMatches). Issue
+ *       #67: a node matches on its full text OR on its title with a
+ *       trailing `: see:` suffix stripped (spec nodes routinely carry their
+ *       own pointer as a suffix; the code points at the bare leaf title).
  *    3. FILE SELECTION (§3): the `codebase` block of `_rules.yaml` decides
  *       which trees to scan (roots, resolved from the PROJECT root — the
  *       parent of the workspace, the same convention as
@@ -43,9 +56,10 @@
  *
  *  Dependency-free by design (report.ts/slug.ts are the model): string/
  *  regex work + node:fs walking only, portable across the Bun and Node
- *  runtimes. THIS COMMIT IS THE FROZEN CROSS-AGENT CONTRACT: the exported
- *  signatures below are the seam the engine, CLI and docs layers build
- *  against and MUST NOT drift; the bodies land with the engine layer. */
+ *  runtimes. The #66 contract commit froze the exported signatures below
+ *  as the cross-agent seam (engine ↔ CLI ↔ docs); issue #67 extends that
+ *  seam ADDITIVELY with stripCodebaseAnchorPunct and stripSeeRefSuffix —
+ *  no #66 signature moved, so the layers built against it keep compiling. */
 
 import type { CodebaseRules, CodebaseScan } from '../types.ts';
 import type { CodebaseFinding, Issue, OutlineNode } from '../types.ts';
@@ -57,26 +71,117 @@ import { flattenNodes } from './outline.ts';
 import { anchorMatches } from './refs.ts';
 import { anchorSlug, nearSlugMatches } from './slug.ts';
 
-/** §2.1 — the matching rule, verbatim from the RFC (character classes
- *  rewritten in explicit-range spelling; semantics identical):
+/** §2.1 — the matching rule. The RFC #66 §2.1 pattern is the pointer-GRAMMAR
+ *  sketch; per issue #67 the ANCHOR group captures the full slug alphabet:
  *
- *      see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([a-zA-Z0-9_\-]+))?
+ *      see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([^\s#]+))?
  *
  *  Group 1 = the target file (`01-protocol.md`, `sub/dir/spec.md`, with an
  *  optional `cans/` workspace-qualified spelling), group 2 = the optional
- *  `#slug` anchor fragment. Surrounding prose ("Initial handshake logic;",
- *  trailing " - fails with ENOSPC when exceeded", `/* block comments *​/`,
- *  YAML keys) is invisible to the pattern — §2.2's tolerance contract.
- *  GLOBAL: consumers match per-line (fresh string per line ⇒ fresh lastIndex
- *  state), never on multi-line blobs. */
+ *  `#slug` anchor fragment — whitespace- or `#`-terminated, the EXACT shape
+ *  of the spec side's §11 REF_RE anchor group (core/outline.ts). Why the
+ *  wide class: the slug contract (`_rules.yaml#slug.algorithm`, core/
+ *  slug.ts) preserves every non-separator character VERBATIM — `(`, `)`,
+ *  `,`, `:`, `/`, `^` … all survive into real anchors — so the RFC's narrow
+ *  `[a-zA-Z0-9_\-]+` sketch truncated at the first such character and
+ *  minted 127 false `anchor not found` positives on the reporter's corpus
+ *  (`#UID/GID-mapping-isolation` read as `#UID`, `#Dynamic-W^X-JIT-
+ *  execution-mediation` as `#Dynamic-W`). The #48 lesson, again: narrow
+ *  classes both over- and under-capture; glued prose punctuation is a
+ *  CLEANING problem (stripCodebaseAnchorPunct below), never a capture
+ *  problem. Surrounding prose ("Initial handshake logic;", trailing " -
+ *  fails with ENOSPC when exceeded", block comments, YAML keys) is
+ *  invisible to the pattern — §2.2's tolerance contract. GLOBAL: consumers
+ *  match per-line (fresh string per line ⇒ fresh lastIndex state), never
+ *  on multi-line blobs. */
 export const SEE_POINTER_RE: RegExp =
-  /see:\s+(?:cans\/)?([A-Za-z0-9_\-/]+\.md)(?:#([A-Za-z0-9_\-]+))?/g;
+  /see:\s+(?:cans\/)?([A-Za-z0-9_\-/]+\.md)(?:#([^\s#]+))?/g;
 
 /** One embedded pointer extracted from a source file (§2). `raw` is the
- *  exact matched span (no surrounding prose), `targetFile`/`targetSlug` are
- *  AS WRITTEN — the optional `cans/` prefix and slug normalization happen at
- *  resolution time, so `refs --codebase` can echo the written spelling. */
+ *  exact matched span (no surrounding prose) and `targetFile` is AS
+ *  WRITTEN — the optional `cans/` prefix and slug normalization happen at
+ *  resolution time, so `refs --codebase` can echo the written spelling.
+ *  `targetSlug` is the written anchor AFTER the issue-#67 cleaning pass
+ *  (stripCodebaseAnchorPunct): glued trailing punctuation is gone, the
+ *  slug-contract characters themselves are preserved verbatim.
+ */
 // export interface CodebasePointer — see src/types.ts (frozen contract).
+
+/** Issue #67 — the trailing-punctuation strip set for captured codebase
+ *  anchors: closers and sentence punctuation — ASCII `)]},.;:!?'"` plus
+ *  the typographic closers `’ ” …` — one or more trailing occurrences, the
+ *  SAME set as outline.ts's #48 REF_TRAILING_PUNCT_RE (kept as a local
+ *  twin because that one is deliberately private to the refs engine;
+ *  the SETS must stay identical, so both cite each other here). Deliberately
+ *  NOT stripped: `-`, `_`, `/` (#48: a trailing dash is a legitimate slug
+ *  ending, a trailing slash a legitimate folder target) and openers `([{`. */
+const ANCHOR_TRAILING_PUNCT_RE = /[)\]},.;:!?'"’”…]+$/;
+
+/** The repairable bracket pairs, opener-first: a stripped closer is only
+ *  restorable when an UNCLOSED opener of the SAME type backs it. */
+const ANCHOR_BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['(', ')'],
+  ['[', ']'],
+  ['{', '}'],
+];
+
+/** Count non-overlapping occurrences of a single character (the #58 loop
+ *  counted `]` via match(g) — generalized over three closer types without
+ *  minting three near-identical regex literals). */
+function countChar(s: string, ch: string): number {
+  return s.split(ch).length - 1;
+}
+
+/** Issue #67 — clean a captured codebase anchor: outline.ts's issue-#48
+ *  stripRefTrailingPunct (trailing prose punctuation) + issue-#58 bracket
+ *  repair, generalized from the refs engine's `]`-only repair to the full
+ *  bracket family `()[]{}`:
+ *
+ *    a. Strip ONE trailing run of the #48 closer/punctuation set above —
+ *       prose glue, exactly the defect that minted false `Audit-spine)`
+ *       anchors on the corpus side (`(see: x.md#Routing)` captured
+ *       `Routing)` once the alphabet widened).
+ *    b. Repair opener-backed closers: for each closer type, count the
+ *       closers the strip ATE (count in the original minus count after the
+ *       strip); while any remain, find the LAST opener of that type in the
+ *       working token; if none exists, or that opener is already closed
+ *       by a closer to its right, stop — a glued prose paren has nothing
+ *       backing it — else re-append the closer and decrement. A trailing
+ *       `)` that closes a real `(` in the anchor is STRUCTURAL and survives
+ *       verbatim (`Invariants-and-policy-(transaction)`, `Native-checkpoint-
+ *       plane-(kelir-core::checkpoint)`); a glued one does not (`Routing)`,
+ *       `Sessions);`); a wrapped-prose double keeps exactly its structural
+ *       half (`API-(v2))` → `API-(v2)`). The three passes are independent —
+ *       each repairs only its own closer type, and one type's closer can
+ *       never open or close another type's pair — so pass order cannot
+ *       matter.
+ *
+ *  Mid-token punctuation is NEVER touched: the strip is a TRAILING run
+ *  only, so `FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content`
+ *  passes through unchanged (the commas sit mid-token; the slug contract
+ *  preserves them verbatim). Returns '' when the whole fragment was glued
+ *  punctuation (`).`); the caller degrades that to a file-level pointer
+ *  (targetSlug null) exactly the way outline.ts's matchAliasDefinition
+ *  degrades an emptied anchor token.
+ *
+ *  `raw` is NOT touched — the #48 convention: raw quotes the written
+ *  spelling (glued punctuation included), only the resolved tokens are
+ *  cleaned. Exported for the issue-#67 engine suite. */
+export function stripCodebaseAnchorPunct(anchor: string): string {
+  const stripped = anchor.replace(ANCHOR_TRAILING_PUNCT_RE, '');
+  let out = stripped;
+  for (const [open, close] of ANCHOR_BRACKET_PAIRS) {
+    let eaten = countChar(anchor, close) - countChar(stripped, close);
+    while (eaten > 0) {
+      const at = out.lastIndexOf(open);
+      if (at === -1) break; // no opener of this type left to repair
+      if (out.slice(at).includes(close)) break; // that opener already closes
+      out += close;
+      eaten--;
+    }
+  }
+  return out;
+}
 
 /** Extract every embedded pointer from ONE source file's text, in document
  *  order (line asc, then left-to-right). Lines are 1-based. Trailing prose
@@ -103,11 +208,19 @@ export function extractCodebasePointers(
       // written spelling when the span carries it — resolution strips it
       // again, `refs --codebase` echoes it.
       const targetFile = /^see:\s+cans\//.test(m[0]) ? `cans/${m[1]}` : m[1]!;
+      // Issue #67: the anchor is CLEANED before storage — the full-alphabet
+      // capture (SEE_POINTER_RE above) means the written fragment can carry
+      // glued prose punctuation (`Sessions);`), which is not a resolvable
+      // slug. `raw` above stays the verbatim span (the #48 convention); an
+      // anchor that cleans to empty (`#).`) degrades to a file-level
+      // pointer: the file target is real, exactly how outline.ts's
+      // matchAliasDefinition degrades emptied anchor tokens.
+      const anchor = m[2] === undefined ? '' : stripCodebaseAnchorPunct(m[2]!);
       out.push({
         line: i + 1,
         raw: m[0],
         targetFile,
-        targetSlug: m[2] ?? null,
+        targetSlug: anchor === '' ? null : anchor,
       });
     }
   }
@@ -184,6 +297,37 @@ export async function collectSourceFiles(
   }
 }
 
+/** Issue #67 bug 2 — strip a trailing `: see: <token>` reference suffix
+ *  from a spec node's text. Spec nodes routinely carry their own pointer
+ *  as a suffix (`- Connection parking on suspend: see:
+ *  artifacts/examples/serverless-webhook.ts`) while the code points at
+ *  the BARE leaf title (`// see: cans/plugins/wire-ingress.md#
+ *  Connection-parking-on-suspend` — `cans slug "Connection parking on
+ *  suspend"` is exactly that anchor); slugifying the whole node line
+ *  matched nothing, which minted 8 false `anchor not found` positives on
+ *  the reporter's corpus.
+ *
+ *  The suffix shape: the SEPARATOR colon before `see` — the split marker
+ *  between title and pointer; a bare `- see: x.md` node has no colon
+ *  before the keyword and is left alone — then the §11 REF_RE keyword
+ *  tolerance (`see:` with optional space, or `see ` with required
+ *  whitespace), then ONE `\S+` target token at end of text (any spelling
+ *  the ref grammar can write, `#anchor` included) plus trailing
+ *  whitespace. A ref that is NOT trailing (`Title: see: a.md and notes`)
+ *  is not a suffix and never matches. Returns the trimmed remainder;
+ *  text without such a suffix is returned UNCHANGED — not even trimmed,
+ *  the no-suffix/no-edit rule. Consumers: checkCodebaseRefs (matches on
+ *  the full text OR the stripped title) and anchorSuggestion (candidates
+ *  use the stripped title so a `did you mean` proposes the leaf title's
+ *  canonical anchorSlug, never the suffixed line's). */
+const SEE_SUFFIX_RE = /:\s*see(?::\s*|\s+)\S+\s*$/;
+
+export function stripSeeRefSuffix(nodeText: string): string {
+  const m = nodeText.match(SEE_SUFFIX_RE);
+  if (m === null) return nodeText;
+  return nodeText.slice(0, m.index).trim();
+}
+
 /** §2.3 full validation pass: select files (collectSourceFiles), extract
  *  pointers, resolve each against the loaded spec graph:
  *    - corpus keys = `corpus` (the workspace-relative key set check.ts
@@ -257,9 +401,21 @@ export async function checkCodebaseRefs(
       // uses (anchorMatches → normalizeForAnchor) over the key's node titles
       // — exact after normalization, NEVER fuzzy (the fuzzy layer is
       // suggestion-only, below). YAML leaf anchors are not probed: v1 scope
-      // is spec nodes.
+      // is spec nodes. Issue #67 bug 2: the node matches on its FULL text
+      // or on its title with a trailing `: see:` suffix stripped — spec
+      // nodes routinely carry their pointer as a suffix while the code
+      // points at the bare leaf title. stripSeeRefSuffix is a no-op on
+      // suffix-free texts, so the first clause alone already carried every
+      // pre-#67 resolution.
       const nodes = flattenNodes(corpus.get(key)!);
-      if (nodes.some(n => anchorMatches(n.text, p.targetSlug!))) continue;
+      if (
+        nodes.some(
+          n =>
+            anchorMatches(n.text, p.targetSlug!) ||
+            anchorMatches(stripSeeRefSuffix(n.text), p.targetSlug!),
+        )
+      )
+        continue;
       const finding: CodebaseFinding = {
         ...pointer,
         resolvedFile: key,
@@ -277,9 +433,10 @@ export async function checkCodebaseRefs(
 /** The `did you mean` layer for a failing codebase anchor — the shape of
  *  brokenAnchorSuggestion in refs.ts, scoped to this engine's suggestion-only
  *  contract: nearSlugMatches ranks the target's real node titles (synthetic
- *  parser placeholders excluded, issue #8) at or above the suggestion
- *  threshold (SLUG_SUGGEST_THRESHOLD); candidates collapse to their canonical
- *  anchorSlug and dedupe.
+ *  parser placeholders excluded, issue #8; `: see:` suffixes stripped,
+ *  issue #67, so the proposal is the leaf title's canonical anchorSlug) at
+ *  or above the suggestion threshold (SLUG_SUGGEST_THRESHOLD); candidates
+ *  collapse to their canonical anchorSlug and dedupe.
  *  ONE near candidate → a pure ref-anchor fix proposal; two or more → the
  *  ambiguity surfaced (top 3, the rest folded into `…`); none → null, and
  *  the finding simply carries no suggestion (resolution itself never went
@@ -292,7 +449,11 @@ function anchorSuggestion(
 ): string | null {
   const candidates: string[] = [];
   for (const n of nodes) {
-    if (n.synthetic !== true) candidates.push(n.text);
+    // Issue #67: candidates use the suffix-stripped title — proposing the
+    // suffixed line's slug (`Connection-parking-on-suspend-see-artifacts-…`)
+    // would suggest an anchor nobody can resolve. Suffix-free texts pass
+    // through stripSeeRefSuffix unchanged, so nothing else moves.
+    if (n.synthetic !== true) candidates.push(stripSeeRefSuffix(n.text));
   }
   const slugs = [...new Set(nearSlugMatches(candidates, anchor).map(m => anchorSlug(m.text)))]
     .filter(s => s !== '');

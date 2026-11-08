@@ -12,8 +12,8 @@
  *             raw, as-written targets (cans/ prefix kept), no-anchor
  *             pointers, multi-occurrence lines, punctuation padding, folder
  *             targets, document order, 1-based CRLF lines, the frozen
- *             pattern's negatives (no space, case-sensitive, slug stops at
- *             the first foreign char)
+ *             pattern's negatives (no space, case-sensitive; issue #67:
+ *             the anchor runs to whitespace/#, glued punctuation cleans)
  *   b1-b9 .. file selection (§3): project-root resolution, include/exclude,
  *             workspace subtree ALWAYS skipped, overlapping-roots dedupe,
  *             deterministic sort, missing roots empty, single-star stays in
@@ -167,7 +167,13 @@ describe('issue #66 engine — extraction (§2.2 variants)', () => {
   test('a9: punctuation-padded pointers survive', () => {
     const out = extractCodebasePointers('verify(x); /* (see: 02-auth.md#Sessions); */');
     expect(out.length).toBe(1);
-    expect(out[0]!.raw).toBe('see: 02-auth.md#Sessions');
+    // issue #67: the full-alphabet anchor group now captures the glued `);`
+    // into the span — raw quotes the WRITTEN spelling verbatim (the #48
+    // convention) — and the stripCodebaseAnchorPunct pass cleans targetSlug
+    // back to the bare title, so the pointer still resolves.
+    expect(out[0]!.raw).toBe('see: 02-auth.md#Sessions);');
+    expect(out[0]!.targetFile).toBe('02-auth.md');
+    expect(out[0]!.targetSlug).toBe('Sessions');
   });
 
   test('a10: document order across lines, 1-based line numbers', () => {
@@ -200,17 +206,20 @@ describe('issue #66 engine — extraction (§2.2 variants)', () => {
     expect(out[1]!.line).toBe(3);
   });
 
-  test('a13: the frozen pattern\'s negatives — no space, case-sensitive, slug stops at foreign chars, folder targets', () => {
+  test('a13: the frozen pattern\'s negatives — no space, case-sensitive; issue #67: the anchor runs to whitespace/#, mid-token punctuation survives', () => {
     // `see:` without whitespace never matches (§2.1 requires \s+).
     expect(extractCodebasePointers('// see:02-auth.md')).toEqual([]);
     // The pattern is case-sensitive: `See:` is prose, not a pointer.
     expect(extractCodebasePointers('// See: 02-auth.md')).toEqual([]);
-    // Slug characters are [A-Za-z0-9_-]: the fragment stops at the first
-    // foreign char (the frozen regex — no post-hoc trimming).
+    // issue #67: the anchor group is ([^\s#]+) — the §11 REF_RE shape — so
+    // a MID-TOKEN dot is part of the anchor: the slug contract preserves it
+    // (`cans slug "Session.v2"` = Session.v2), and cleaning strips only
+    // TRAILING runs, never mid-token characters. Pre-#67 the narrow class
+    // truncated at the dot (targetSlug `Session`).
     const dot = extractCodebasePointers('// see: 02-auth.md#Session.v2');
     expect(dot.length).toBe(1);
-    expect(dot[0]!.raw).toBe('see: 02-auth.md#Session');
-    expect(dot[0]!.targetSlug).toBe('Session');
+    expect(dot[0]!.raw).toBe('see: 02-auth.md#Session.v2');
+    expect(dot[0]!.targetSlug).toBe('Session.v2');
     // Folder-layout targets keep their path as written.
     const sub = extractCodebasePointers('// see: plugins/deep/spec.md#Leaf');
     expect(sub.length).toBe(1);
