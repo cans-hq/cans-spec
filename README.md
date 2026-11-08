@@ -606,6 +606,13 @@ How resolution works:
   node whose title carries its own pointer suffix (`- Connection parking
   on suspend: see: …`) resolves by its bare title
   `#Connection-parking-on-suspend`.
+- Matching is cleaned-vs-cleaned (issue #68): the trailing-punctuation
+  cleaning pass runs on BOTH sides — glued prose punctuation is still
+  ignored, and a heading's own trailing punctuation is slug-preserved,
+  so the canonical anchor `cans slug` prints (trailing `:` included —
+  `#SQLite-UDS-bridge-mechanics:` for the node `SQLite UDS bridge
+  mechanics:`) resolves; v0.16.0 cleaned only the anchor side and
+  minted false `anchor not found` errors for exactly those spellings.
 - No fuzzy resolution — a near miss (`#Qutas`) is reported broken with a
   `did you mean` suggestion, never auto-healed.
 - Files are scanned as text: leading prose, trailing notes, block
