@@ -1,4 +1,4 @@
-# codebase-workspace — the issue #66 e2e oracle (extended for issues #67 and #68)
+# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68 and #69)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
@@ -10,9 +10,10 @@ pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
 `severity: error`.
 
 This file is the human-readable oracle for `test/issue66-integration.test.ts`,
-`test/issue-67-contract.test.ts` and `test/issue-68-contract.test.ts`: every
-embedded pointer, its line, and the outcome the real CLI must produce. Line
-numbers below are byte-authoritative for the files as committed.
+`test/issue-67-contract.test.ts`, `test/issue-68-contract.test.ts` and
+`test/issue-69-contract.test.ts`: every embedded pointer, its line, and the
+outcome the real CLI must produce. Line numbers below are byte-authoritative
+for the files as committed.
 
 **The issue #67 extension** (the kelir-shaped repro): the four `src/plugins/`
 files and the two new spec files reproduce, at fixture scale, the 135 false
@@ -37,6 +38,27 @@ cleaned vs uncleaned never matches. Post-#68 the matcher compares like
 with like (cleaned-vs-cleaned) and all five resolve; pre-#68 they were the
 five false AnchorNotFound findings. Every pre-#68 file and its verdict is
 unchanged below; the extension only ADDS content.
+
+**The issue #69 extension** (the artifact-target tier): the cans layout
+breeds a second pointer class the corpus-only grammar could not even see —
+code pointing at the workspace's NON-SPEC artifact files (`// see:
+cans/artifacts/code/plugin-trait.rs#PluginError`, a YAML key under
+`cans/_rules.yaml`, a diagram heading). On the reporter's repo 114 of 1523
+codebase `see:` pointers target non-`.md` files (25 distinct: `.rs`, `.ts`,
+`.py`, `.yaml`, `.txt`, plus `cans/_rules.yaml`) — all silently unvalidated:
+`check --codebase` skipped them and `cans refs` refused their queries as
+malformed, the issue's exact repro. The extension adds the artifact target
+`cans/artifacts/diagrams/host-runtime.txt` (underlined `driver-avf` /
+`driver-virtio` section headings — the #60 text-heading vocabulary) and the
+scanned source `src/plugins/artifact-wiring.rs` carrying six pointers, one
+per comment line: three VALID (one per anchor tier — a #60 code symbol, a
+#60 text heading, a #58 schematic dot path into `cans/_rules.yaml`) and
+three BROKEN (the issue's own spellings). Every pre-#69 file and its
+verdict is unchanged below; the extension only ADDS content, and it adds
+NO new corpus files: the artifact targets are WORKSPACE files, never
+scanned (the scan never enters `cans/`) and never corpus — `cans refs`
+reaches them through the artifact query tier (issue #69), but discovery
+never loads them.
 
 ## The corpus (`cans/`)
 
@@ -93,12 +115,17 @@ non-spec content: never discovered as spec files (no `index.md` above
 them, not root-level `.md`) and never scanned by the codebase phase
 (everything inside `cans/` is always skipped — they are the living proof
 of that skip rule, since `**/*.ts`/`**/*.rs`/`**/*.py` would otherwise
-match them). They are terminal file-level targets (issues #44/#60).
+match them). They are terminal file-level targets (issues #44/#60). The
+issue #69 extension adds one more artifact in the same class:
+`cans/artifacts/diagrams/host-runtime.txt`, a plain-text diagram whose
+underlined section headings (`driver-avf`, `driver-virtio`) make it an
+ANCHORED target (the #60 text-heading vocabulary) — same rules, never
+spec, never scanned.
 
 `cans/` itself is ALWAYS skipped by the scanner (corpus refs verify in the
 refs engine, never twice) — note `cans/_rules.yaml` matches the
 `**/*.yaml` include glob and must therefore prove the skip rule: with the
-config block on, exactly the twelve `src/` files below are scanned.
+config block on, exactly the thirteen `src/` files below are scanned.
 
 ### The redundancy knobs in `cans/_rules.yaml` (issue #67)
 
@@ -250,22 +277,43 @@ finding — the same cleaned-vs-uncleaned seam.
 findings — the heading's own `):` is slug-preserved and was never cleaned
 on the matching side.
 
+### `src/plugins/artifact-wiring.rs` — Rust line comments; the artifact-target pointers (issue #69)
+
+The issue's pointer class at fixture scale: six `see:` pointers at
+non-`.md` workspace targets, one per comment line. Post-#69 the artifact
+tier validates them (file via the workspace filesystem, anchor via the
+shared artifact vocabularies); pre-#69 (0.17.0) all six were invisible —
+`check --codebase` counted 26 pointers, not 32, and reported none of the
+broken ones.
+
+| line | written span | verdict |
+|---|---|---|
+| 14 | `see: cans/artifacts/examples/multi-vm-swarm.rs#federate` | VALID — the CODE-SYMBOL anchor: the artifact exists under the workspace (`pub fn federate` sits at `cans/artifacts/examples/multi-vm-swarm.rs:7`), and the symbol resolves through the #60 code vocabulary |
+| 21 | `see: cans/artifacts/diagrams/host-runtime.txt#driver-avf` | VALID — the TEXT-HEADING anchor: the artifact's underlined `driver-avf` section heading (the #60 text vocabulary) |
+| 28 | `see: cans/_rules.yaml#codebase.enabled` | VALID — the SCHEMATIC anchor: the fixture's own rules file parses with the #58 YAML subset parser and the dot path resolves to a scalar leaf (verified: no fallback config file needed) |
+| 36 | `see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope` | **BROKEN — AnchorNotFound.** File resolves; `federateNope` matches no symbol of the artifact (near miss of `federate` → `did you mean` suggestion, resolution never auto-heals) |
+| 40 | `see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope` | **BROKEN — AnchorNotFound.** File resolves; `driver-avf-nope` matches no heading |
+| 46 | `see: cans/artifacts/code/plugin-trait.rs#PluginError` | **BROKEN — FileNotFound.** The issue's exact spelling: no `cans/artifacts/code/` directory exists on this fixture (the example code lives under `artifacts/examples/`) — the artifact target is missing from the cans workspace |
+
+6 pointers, 3 broken (post-#69). The three VALID pointers produce no
+findings; the three BROKEN ones are the issue's own repro, kept broken on
+purpose.
+
 ## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 12 (the 9 pre-#68 files plus `src/plugins/db-proxy.rs`, `src/plugins/profile.rs`, `src/plugins/wire-ingress.rs`) | 26 | 2 |
-| flag on, no config block (pure defaults, plugin tier kept on) | 10 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the three new files are `.rs`, covered by the default `**/*.rs`) | 24 | 2 |
-| aliasing include dropped (tier off, config block kept) | 12 | 26 | 7 — the 2 true plus the five #68 pointers as FileNotFound (the tier is what makes `cans/plugins/*.md` resolvable) |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`) | 12 | 26 | 0 |
+| config block on (this `_rules.yaml`) | 13 (the 12 pre-#69 files plus `src/plugins/artifact-wiring.rs`) | 32 | 5 |
+| flag on, no config block (pure defaults, plugin tier kept on) | 11 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 30 | 6 — the 5 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence |
+| aliasing include dropped (tier off, config block kept) | 13 | 32 | 10 — the 2 true, the five #68 pointers as FileNotFound, and the 3 #69 artifact broken (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of them; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves) |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`) | 13 | 32 | 0 |
 
-The 2 broken are exactly the PRE-#67 pair — every issue-#67 pointer
-(both bug classes) AND every issue-#68 pointer is VALID post-#68.
-Pre-#68 the broken count is 7: the 2 true plus the five false
-AnchorNotFound findings of the one-sided cleaning (db-proxy.rs:42/141,
-profile.rs:21, wire-ingress.rs:18/85 — each earns a `did you mean
-cans/plugins/…#<colon spelling>:?` suggestion, the fuzzy layer already
-knew the answer). Broken-pointer wire records (exact 7-key shape,
+The 5 broken are the pre-#67 pair PLUS the three deliberate issue-#69
+records — every issue-#67 pointer (both bug classes), every issue-#68
+pointer and the three VALID issue-#69 pointers resolve post-#69.
+Pre-#69 the census counts 26 pointers and 2 broken: the six artifact
+targets never parsed as pointers at all (the silent-skip half of the
+issue). Broken-pointer wire records (exact 7-key shape,
 deterministic order — file asc, line asc):
 
 ```json
@@ -273,13 +321,25 @@ deterministic order — file asc, line asc):
   { "type": "CodebaseBrokenReference", "file": "src/api/routes.ts", "line": 3,
     "raw": "see: 03-storage.md#Qutas", "targetFile": "03-storage.md",
     "targetSlug": "Qutas", "reason": "AnchorNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/plugins/artifact-wiring.rs", "line": 36,
+    "raw": "see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope",
+    "targetFile": "cans/artifacts/examples/multi-vm-swarm.rs",
+    "targetSlug": "federateNope", "reason": "AnchorNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/plugins/artifact-wiring.rs", "line": 40,
+    "raw": "see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope",
+    "targetFile": "cans/artifacts/diagrams/host-runtime.txt",
+    "targetSlug": "driver-avf-nope", "reason": "AnchorNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/plugins/artifact-wiring.rs", "line": 46,
+    "raw": "see: cans/artifacts/code/plugin-trait.rs#PluginError",
+    "targetFile": "cans/artifacts/code/plugin-trait.rs",
+    "targetSlug": "PluginError", "reason": "FileNotFound" },
   { "type": "CodebaseBrokenReference", "file": "src/storage/quota.py", "line": 7,
     "raw": "see: 09-observability.md", "targetFile": "09-observability.md",
     "targetSlug": null, "reason": "FileNotFound" }
 ]
 ```
 
-`severity: error` → both findings are errors → `cans check --codebase`
+`severity: error` → all five findings are errors → `cans check --codebase`
 exits **2** (the repo error-band convention; the RFC's example text shows 1
 — that one-number difference is the integration suite's one deliberate
 deviation, documented in its header).
@@ -299,6 +359,21 @@ pinned instead through a transient plugin-file `see:` (both spellings,
 colon and colon-less, resolve post-#68; pre-#68 both were broken anchors
 — the same one-sided seam on the corpus refs engine).
 
+Issue #69 widens the query grammar symmetrically with the pointer grammar
+(both build their extension alternation from the shared
+CODEBASE_TARGET_EXTS table): an ARTIFACT query — `<file>.<ext>` with any
+extension a pointer can carry, optionally `#Slug` — resolves against the
+workspace FILESYSTEM through the same containment-guarded resolveSpecFile
+the corpus refs engine uses for on-disk targets (both `cans/…` and
+`cans/`-less spellings name one file), and matching never crosses the
+tiers: a `.md` query answers corpus pointers only, an artifact query
+artifact pointers only. An unknown artifact file refuses — `ok:false`,
+exit 1, `no spec or artifact file matches "…" — refs --codebase resolves
+against the workspace corpus (cans/) and its artifact files` — and a
+query whose extension no anchor vocabulary can address (`foo.csv#x`), a
+bare stem, an empty slug or trailing garbage all refuse with the
+`malformed node` usage family.
+
 | query | matches (file asc, line asc) |
 |---|---|
 | `01-auth.md#Sessions` | `src/api/routes.ts:2`, `src/api/routes.ts:6`, `src/session.rs:2` |
@@ -314,3 +389,8 @@ colon and colon-less, resolve post-#68; pre-#68 both were broken anchors
 | `09-plugins.md#CoW-swarm-mesh-federation` | `src/plugins/ingress.py:11` |
 | `09-plugins.md` (file-level) | all ten into `09-plugins.md`: `src/plugins/checkpoint.go:11`, `src/plugins/checkpoint.go:14`, `src/plugins/ingress.py:3`, `src/plugins/ingress.py:7`, `src/plugins/ingress.py:11`, `src/plugins/mounts.yaml:2`, `src/plugins/transaction.rs:2`, `src/plugins/transaction.rs:3`, `src/plugins/transaction.rs:4`, `src/plugins/transaction.rs:5` |
 | `09-plugins.md#Invariants-and-policy` (truncated spelling — no fuzzy healing) | none |
+| `cans/artifacts/examples/multi-vm-swarm.rs#federate` (artifact, anchored) | `src/plugins/artifact-wiring.rs:14` — the `#federateNope` spelling does NOT answer (the anchor comparison is never fuzzy) |
+| `cans/artifacts/examples/multi-vm-swarm.rs#federateNope` (artifact, the broken spelling) | `src/plugins/artifact-wiring.rs:36` — the reverse path answers for broken pointers too (a query, not a verdict) |
+| `cans/artifacts/examples/multi-vm-swarm.rs` (artifact, file-level) | `src/plugins/artifact-wiring.rs:14`, `src/plugins/artifact-wiring.rs:36` |
+| `cans/artifacts/diagrams/host-runtime.txt` (artifact, file-level) | `src/plugins/artifact-wiring.rs:21`, `src/plugins/artifact-wiring.rs:40` |
+| `cans/_rules.yaml#codebase.enabled` (artifact, schematic dot-path anchor) | `src/plugins/artifact-wiring.rs:28` |

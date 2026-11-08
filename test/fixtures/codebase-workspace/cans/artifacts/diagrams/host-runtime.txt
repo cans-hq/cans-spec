@@ -1,0 +1,18 @@
+Host runtime — the driver topology of the cans host.
+
+Issue #69 fixture artifact: a plain-text diagram under the workspace, the
+class of file the cans layout breeds beside the specs (field layouts,
+schemas, wire formats, pipeline diagrams, example code) and the class the
+reporter's source tree points at. It is a WORKSPACE file, never a spec
+(discovery takes root-level .md and index.md only) and never scanned by the
+codebase phase (everything inside cans/ is always skipped); the text-heading
+vocabulary (issue #60) makes its underlined section lines addressable
+anchors, which is what the src/ pointers below rely on.
+
+driver-avf
+----------
+  host pci ----> avf ----> vm[0].net0
+
+driver-virtio
+-------------
+  host mmio --> virtio-pci --> vm[1].net0

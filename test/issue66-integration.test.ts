@@ -12,16 +12,20 @@
  *             exit, the additive top-level `codebase` JSON block with
  *             issues[] entries carrying EXACTLY { type, file, line, raw,
  *             targetFile, targetSlug, reason }, and the broken counts
- *             matching the fixture oracle (issue #67 extended the fixture
- *             and issue #68 extended it again: 12 scanned / 26 pointers /
- *             2 broken: AnchorNotFound on the `#Qutas` typo, FileNotFound
- *             on the missing `09-observability.md` — every #67 and #68
- *             kelir-shaped pointer is VALID; see
- *             test/issue-67-contract.test.ts and
- *             test/issue-68-contract.test.ts)
- *   b ....... after fixing the broken pointers IN THE TMP COPY the same
- *             command exits 0 with `codebase.issues` empty — silent rot is
- *             a diff, not a life sentence
+ *             matching the fixture oracle (issue #67 extended the fixture,
+ *             issue #68 extended it again, and issue #69 extended it a
+ *             third time with the artifact-target tier: 13 scanned /
+ *             32 pointers / 5 broken: AnchorNotFound on the `#Qutas` typo,
+ *             FileNotFound on the missing `09-observability.md`, plus the
+ *             three deliberate #69 artifact records — two broken artifact
+ *             anchors and the issue's missing-artifact spelling; every
+ *             #67/#68 pointer AND the three valid #69 artifact pointers
+ *             is VALID; see the issue-67/-68/-69 contract suites)
+ *   b ....... after fixing the broken pointers IN THE TMP COPY (all five
+ *             since #69: the two pre-existing plus the three deliberate
+ *             artifact ones) the same command exits 0 with
+ *             `codebase.issues` empty — silent rot is a diff, not a life
+ *             sentence
  *   c ....... `refs "<file>#<slug>" --codebase` lists the exact fixture
  *             hits (file asc, line asc, the line text as written) and exits
  *             0; a file-level query answers every anchor; a no-match query
@@ -33,11 +37,17 @@
  *             `check --json` has NO `codebase` key — the pre-#66 wire
  *             shape, byte-for-byte (the additive-block contract)
  *   f ....... flag-on with NO codebase config block still scans (the
- *             defaults): the RFC §3 code-extension set only — 10 files /
- *             24 pointers / the same 2 broken — proving both the default
- *             include list (no `*.yaml`) and that the scan itself needs no
- *             config (the #68 plugin tier stays on in the variant so the
- *             fixture's cans/plugins/*.md corpus keys keep resolving)
+ *             defaults): the RFC §3 code-extension set only — 11 files /
+ *             30 pointers / 6 broken (the 5 + the `cans/_rules.yaml#
+ *             codebase.enabled` pointer, which breaks HERE because the
+ *             variant's own rules rewrite drops the codebase block the
+ *             anchor names — the artifact tier validates the file's
+ *             CURRENT content) — proving both the default include list
+ *             (no `*.yaml`) and that the scan itself needs no config (the
+ *             #68 plugin tier stays on in the variant so the fixture's
+ *             cans/plugins/*.md corpus keys keep resolving; the #69
+ *             artifact pointers live in the .rs source, covered by the
+ *             default *.rs include)
  *
  * DELIBERATE DEVIATION (the suite's one, by design): the RFC's example text
  * shows exit code 1 for a broken-pointer run; this repo's error-band
@@ -121,8 +131,85 @@ const BROKEN_FILE = {
   reason: 'FileNotFound',
 };
 
-/** The two issues, in the contract's deterministic order (file asc, line asc). */
-const ORACLE_ISSUES = [BROKEN_ANCHOR, BROKEN_FILE];
+/** artifact-wiring.rs:36 — the broken artifact code-symbol anchor (issue
+ *  #69's deliberate near-miss spelling): the target FILE exists under the
+ *  workspace, `federateNope` matches no symbol of it. */
+const BROKEN_ARTIFACT_SYMBOL = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 36,
+  raw: 'see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope',
+  targetFile: 'cans/artifacts/examples/multi-vm-swarm.rs',
+  targetSlug: 'federateNope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:40 — the broken artifact text-heading anchor (issue
+ *  #69's deliberate misspelled diagram heading). */
+const BROKEN_ARTIFACT_HEADING = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 40,
+  raw: 'see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope',
+  targetFile: 'cans/artifacts/diagrams/host-runtime.txt',
+  targetSlug: 'driver-avf-nope',
+  reason: 'AnchorNotFound',
+};
+
+/** artifact-wiring.rs:46 — the broken artifact FILE (issue #69's exact
+ *  spelling from the report): no `cans/artifacts/code/` directory exists
+ *  on the fixture. */
+const BROKEN_ARTIFACT_FILE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 46,
+  raw: 'see: cans/artifacts/code/plugin-trait.rs#PluginError',
+  targetFile: 'cans/artifacts/code/plugin-trait.rs',
+  targetSlug: 'PluginError',
+  reason: 'FileNotFound',
+};
+
+/** artifact-wiring.rs:28 — the schematic pointer into the workspace's own
+ *  rules file, `cans/_rules.yaml#codebase.enabled`. VALID against the
+ *  committed fixture (the codebase block exists there), but BROKEN in the
+ *  pure-default variants: those subtests REWRITE _rules.yaml without a
+ *  codebase block, and the artifact tier validates the file's CURRENT
+ *  content — the rewrite deletes the very key this pointer names, so the
+ *  pointer breaks (the feature working exactly as intended: a config
+ *  rewrite that orphans a pointer into the config is a diff, not silence). */
+const BROKEN_RULES_KEY = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 28,
+  raw: 'see: cans/_rules.yaml#codebase.enabled',
+  targetFile: 'cans/_rules.yaml',
+  targetSlug: 'codebase.enabled',
+  reason: 'AnchorNotFound',
+};
+
+/** The five issues, in the contract's deterministic order (file asc, line
+ *  asc) — the two pre-existing true ones plus the three deliberate issue
+ *  #69 artifact records (issue #69 extended the fixture). */
+const ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
+
+/** The pure-default variant's oracle: the five records PLUS the
+ *  `cans/_rules.yaml#codebase.enabled` pointer as AnchorNotFound — the
+ *  variant's own rules rewrite drops the codebase block the anchor names
+ *  (see BROKEN_RULES_KEY above), one MORE broken than the config-on run. */
+const DEFAULTS_ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_RULES_KEY,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
 
 /** The exact wire keys a CodebaseIssueRecord may carry — no more, no fewer. */
 const ISSUE_KEYS = ['type', 'file', 'line', 'raw', 'targetFile', 'targetSlug', 'reason'].sort();
@@ -140,22 +227,26 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(12); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68); cans/ always skipped
-    expect(j.codebase.pointers).toBe(26); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68)
-    expect(j.codebase.broken).toBe(2);
+    expect(j.codebase.scanned).toBe(13); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68) + the artifact-wiring .rs source (#69); cans/ always skipped
+    expect(j.codebase.pointers).toBe(32); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68) + the six artifact pointers (#69)
+    expect(j.codebase.broken).toBe(5);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
 
   test('a2: every issue record carries EXACTLY the RFC §4.1 wire keys', () => {
     const p = ws('a2');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
-    expect((j.codebase.issues as any[]).length).toBe(2);
+    expect((j.codebase.issues as any[]).length).toBe(5);
     for (const issue of j.codebase.issues as any[]) {
       expect(Object.keys(issue).sort()).toEqual(ISSUE_KEYS);
     }
-    // Order is part of the contract: file asc, line asc.
+    // Order is part of the contract: file asc, line asc (the three #69
+    // artifact records interleave by file between routes.ts and quota.py).
     expect((j.codebase.issues as any[]).map((i) => `${i.file}:${i.line}`)).toEqual([
       'src/api/routes.ts:3',
+      'src/plugins/artifact-wiring.rs:36',
+      'src/plugins/artifact-wiring.rs:40',
+      'src/plugins/artifact-wiring.rs:46',
       'src/storage/quota.py:7',
     ]);
   });
@@ -166,13 +257,16 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     const rides = (j.sections.refs as any[]).filter(
       (i) => i.rule === 'codebase.broken_reference' && i.level === 'error',
     );
-    expect(rides.length).toBe(2);
+    expect(rides.length).toBe(5);
     expect(rides.map((i) => `${i.file}:${i.line}`).sort()).toEqual([
       'src/api/routes.ts:3',
+      'src/plugins/artifact-wiring.rs:36',
+      'src/plugins/artifact-wiring.rs:40',
+      'src/plugins/artifact-wiring.rs:46',
       'src/storage/quota.py:7',
     ]);
     // And they count like every band: error-level findings in errorCount.
-    expect(j.counts.errors).toBeGreaterThanOrEqual(2);
+    expect(j.counts.errors).toBeGreaterThanOrEqual(5);
   });
 
   test('a4: human output names the broken pointers (no JSON needed to see the rot)', () => {
@@ -182,12 +276,13 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     // The folded view names the family with its count and the first member's
     // diagnosis + did-you-mean fix (the report compaction contract, issue
     // #41 — one member per group in the fold):
-    expect(r.out + r.err).toContain('2× broken codebase ref');
+    expect(r.out + r.err).toContain('5× broken codebase ref');
     expect(r.out + r.err).toContain('src/api/routes.ts');
     // `--show refs` unfolds: EVERY member names its source file.
     const ex = runCli(['check', '--codebase', '--show', 'refs'], p);
     expect(ex.exit).toBe(2);
     expect(ex.out + ex.err).toContain('src/api/routes.ts');
+    expect(ex.out + ex.err).toContain('src/plugins/artifact-wiring.rs');
     expect(ex.out + ex.err).toContain('src/storage/quota.py');
   });
 });
@@ -195,16 +290,29 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
 // ── b: fixing the pointers heals the run ─────────────────────────────────────
 
 describe('issue #66 b — the fixed workspace exits 0 with an empty issues list', () => {
-  test('b1: patch the two broken pointers in the tmp copy → exit 0, broken 0, issues []', () => {
+  test('b1: patch the five broken pointers in the tmp copy → exit 0, broken 0, issues []', () => {
     const p = ws('b1');
-    // The fix the oracle prescribes: repair the slug (Quotas exists) and
-    // repoint the missing file at a real one.
+    // The fix the oracle prescribes: repair the slug (Quotas exists),
+    // repoint the missing file at a real one, and — since the #69 extension
+    // — heal the three deliberate artifact records the same way (the
+    // misspelled symbol and heading get their real spellings, the missing
+    // artifact target is repointed at the example that exists).
     const routesPath = join(p, 'src', 'api', 'routes.ts');
     writeFileSync(routesPath, readFileSync(routesPath, 'utf8').replace('#Qutas', '#Quotas'), 'utf8');
     const quotaPath = join(p, 'src', 'storage', 'quota.py');
     writeFileSync(
       quotaPath,
       readFileSync(quotaPath, 'utf8').replace('see: 09-observability.md', 'see: 07-network.md'),
+      'utf8',
+    );
+    const awPath = join(p, 'src', 'plugins', 'artifact-wiring.rs');
+    const aw = readFileSync(awPath, 'utf8');
+    writeFileSync(
+      awPath,
+      aw
+        .replace('see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope', 'see: cans/artifacts/examples/multi-vm-swarm.rs#federate')
+        .replace('see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope', 'see: cans/artifacts/diagrams/host-runtime.txt#driver-avf')
+        .replace('see: cans/artifacts/code/plugin-trait.rs#PluginError', 'see: cans/artifacts/examples/multi-vm-swarm.rs#federate'),
       'utf8',
     );
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -214,8 +322,8 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     expect(j.exitCode).toBe(0);
     // The phase ran (config-on) — the block is present with a clean outcome.
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(12);
-    expect(j.codebase.pointers).toBe(26);
+    expect(j.codebase.scanned).toBe(13);
+    expect(j.codebase.pointers).toBe(32);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -232,7 +340,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('01-auth.md#Sessions'); // the query AS WRITTEN
-    expect(j.scanned).toBe(12);
+    expect(j.scanned).toBe(13); // 12 pre-#69 + the artifact-wiring .rs source (#69)
     // The `cans/`-prefixed spelling (routes.ts:2) resolves to the same
     // target, so it is among the hits. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -354,7 +462,7 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 10 files, 24 pointers, the same 2 broken, no yaml', () => {
+  test('f1: the RFC §3 default include list — 11 files, 30 pointers, 6 broken (the 5 + the rules-key pointer), no yaml', () => {
     const p = ws('f1');
     // No CODEBASE block (the flag is the scan consent) — but the #68
     // plugin-tier wiring stays, mirroring the fixture's committed rules:
@@ -381,12 +489,18 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     expect(j.codebase).toBeDefined();
     // The default code-extension set has no *.yaml: src/net.yaml and
     // src/plugins/mounts.yaml (and their pointers) stay out of the scan —
-    // the config-on run sees 12/26 instead; the three #68 .rs sources are
-    // covered by the default *.rs include.
-    expect(j.codebase.scanned).toBe(10);
-    expect(j.codebase.pointers).toBe(24);
-    expect(j.codebase.broken).toBe(2);
-    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    // the config-on run sees 13/32 instead; the three #68 .rs sources AND
+    // the #69 artifact-wiring.rs source are covered by the default *.rs
+    // include, so the six artifact pointers stay in scope.
+    expect(j.codebase.scanned).toBe(11);
+    expect(j.codebase.pointers).toBe(30);
+    // SIX broken, one MORE than the config-on run: this variant's own rules
+    // rewrite drops the codebase block, and the #69 schematic pointer
+    // `cans/_rules.yaml#codebase.enabled` validates against the rules
+    // file's CURRENT content — the rewrite deleted the key it names, so
+    // the pointer honestly breaks (the tier is never a rubber stamp).
+    expect(j.codebase.broken).toBe(6);
+    expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
