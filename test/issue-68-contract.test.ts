@@ -57,9 +57,12 @@
  *             test/issue-69-contract.test.ts) — and ZERO findings from the
  *             three new src/plugins/*.rs sources, the heart of the issue
  *             (a2 repeats it under the pure-default include list with the
- *             plugin tier kept on: 11 files / 30 pointers / the same five
- *             records — the three #68 files are .rs, covered by the default
- *             rs glob; only the yaml-extra variant differs)
+ *             plugin tier kept on: 11 files / 30 pointers / SIX broken —
+ *             the five-record oracle PLUS the `cans/_rules.yaml#
+ *             codebase.enabled` pointer, which breaks there because the
+ *             variant's own rules rewrite drops the codebase block the
+ *             anchor names; the three #68 files are .rs, covered by the
+ *             default rs glob; only the yaml-extra variant differs)
  *   b ....... the reverse path, honestly split at the v1 boundary:
  *             b1 the refs COMMAND resolves its node query against
  *             DISCOVERED spec keys only (its own header: the check
@@ -239,6 +242,31 @@ const ORACLE_ISSUES = [
   BROKEN_FILE,
 ];
 
+/** artifact-wiring.rs:28 — the #69 schematic pointer into the workspace's
+ *  own rules file. VALID against the committed fixture, but BROKEN in the
+ *  pure-default a2 variant: that subtest rewrites _rules.yaml WITHOUT a
+ *  codebase block, and the artifact tier validates the file's CURRENT
+ *  content — the rewrite deletes the very key `codebase.enabled` the
+ *  pointer names, so it honestly breaks (one MORE broken than config-on). */
+const BROKEN_RULES_KEY = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 28,
+  raw: 'see: cans/_rules.yaml#codebase.enabled',
+  targetFile: 'cans/_rules.yaml',
+  targetSlug: 'codebase.enabled',
+  reason: 'AnchorNotFound',
+};
+
+const DEFAULTS_ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_RULES_KEY,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
+
 /** The three issue-#68 sources (the kelir plugin crates at fixture scale). */
 const NEW_SOURCES = [
   'src/plugins/db-proxy.rs',
@@ -307,7 +335,7 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     }
   });
 
-  test('a2: pure defaults (no codebase block, tier kept on) — 11 files / 30 pointers / the same 5 broken', () => {
+  test('a2: pure defaults (no codebase block, tier kept on) — 11 files / 30 pointers / 6 broken (the 5 + the rules-key pointer)', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -317,11 +345,15 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     // src/plugins/mounts.yaml stay out — but the three new sources are .rs
     // (covered by the default *.rs include) and the plugin tier is corpus-side
     // wiring, so the five kelir pointers still resolve: 11 files, 30
-    // pointers, the same five broken records (2 true + 3 deliberate #69).
+    // pointers. SIX broken, one MORE than the config-on run: this variant's
+    // rules rewrite drops the codebase block, and the #69 schematic pointer
+    // `cans/_rules.yaml#codebase.enabled` validates against the rules
+    // file's CURRENT content — the rewrite deleted the key it names, so
+    // the pointer honestly breaks (the tier is never a rubber stamp).
     expect(j.codebase.scanned).toBe(11);
     expect(j.codebase.pointers).toBe(30);
-    expect(j.codebase.broken).toBe(5);
-    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    expect(j.codebase.broken).toBe(6);
+    expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
   });

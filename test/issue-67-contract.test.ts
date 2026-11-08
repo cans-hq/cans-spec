@@ -195,6 +195,31 @@ const ORACLE_ISSUES = [
   BROKEN_FILE,
 ];
 
+/** artifact-wiring.rs:28 — the #69 schematic pointer into the workspace's
+ *  own rules file. VALID against the committed fixture, but BROKEN in the
+ *  pure-default a2 variant: that subtest rewrites _rules.yaml WITHOUT a
+ *  codebase block, and the artifact tier validates the file's CURRENT
+ *  content — the rewrite deletes the very key `codebase.enabled` the
+ *  pointer names, so it honestly breaks (one MORE broken than config-on). */
+const BROKEN_RULES_KEY = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 28,
+  raw: 'see: cans/_rules.yaml#codebase.enabled',
+  targetFile: 'cans/_rules.yaml',
+  targetSlug: 'codebase.enabled',
+  reason: 'AnchorNotFound',
+};
+
+const DEFAULTS_ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_RULES_KEY,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
+
 /** The four source files carrying the #67 pointers — none may appear in
  *  the issues (the a1 no-false-positive pin, re-scoped by #69: the new
  *  artifact-wiring.rs source DOES carry deliberate broken records, so the
@@ -264,22 +289,26 @@ describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve
     expect((j.codebase.issues as any[]).every((i) => !S67_SOURCE_FILES.includes(i.file))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 11 files / 30 pointers / the same 5 broken, yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 11 files / 30 pointers / 6 broken (the 5 + the rules-key pointer), yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
-    // src/plugins/mounts.yaml stay out — 11 files, 30 pointers, and the
-    // same five broken records (every non-yaml #67 pointer still resolves;
-    // the #68 plugin tier stays on in the variant, so the kelir five are in
-    // scope and resolve post-#68; the six #69 artifact pointers live in the
-    // .rs source, covered by the default *.rs include).
+    // src/plugins/mounts.yaml stay out — 11 files, 30 pointers. SIX broken,
+    // one more than the config-on run: this variant's rules rewrite drops
+    // the codebase block, and the #69 schematic pointer
+    // `cans/_rules.yaml#codebase.enabled` validates against the rules
+    // file's CURRENT content — the rewrite deleted the key it names, so
+    // the pointer honestly breaks (every non-yaml #67 pointer still
+    // resolves; the #68 plugin tier stays on in the variant, so the kelir
+    // five are in scope and resolve post-#68; the six #69 artifact pointers
+    // live in the .rs source, covered by the default *.rs include).
     expect(j.codebase.scanned).toBe(11);
     expect(j.codebase.pointers).toBe(30);
-    expect(j.codebase.broken).toBe(5);
-    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    expect(j.codebase.broken).toBe(6);
+    expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
 });

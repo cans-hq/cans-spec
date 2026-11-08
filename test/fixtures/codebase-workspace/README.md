@@ -304,8 +304,8 @@ purpose.
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
 | config block on (this `_rules.yaml`) | 13 (the 12 pre-#69 files plus `src/plugins/artifact-wiring.rs`) | 32 | 5 |
-| flag on, no config block (pure defaults, plugin tier kept on) | 11 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 30 | 5 |
-| aliasing include dropped (tier off, config block kept) | 13 | 32 | 10 — the 2 true, the five #68 pointers as FileNotFound, and the 3 #69 artifact broken (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of them) |
+| flag on, no config block (pure defaults, plugin tier kept on) | 11 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 30 | 6 — the 5 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence |
+| aliasing include dropped (tier off, config block kept) | 13 | 32 | 10 — the 2 true, the five #68 pointers as FileNotFound, and the 3 #69 artifact broken (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of them; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves) |
 | pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`) | 13 | 32 | 0 |
 
 The 5 broken are the pre-#67 pair PLUS the three deliberate issue-#69

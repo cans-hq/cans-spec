@@ -38,11 +38,15 @@
  *             shape, byte-for-byte (the additive-block contract)
  *   f ....... flag-on with NO codebase config block still scans (the
  *             defaults): the RFC §3 code-extension set only — 11 files /
- *             30 pointers / the same 5 broken — proving both the default
- *             include list (no `*.yaml`) and that the scan itself needs no
- *             config (the #68 plugin tier stays on in the variant so the
- *             fixture's cans/plugins/*.md corpus keys keep resolving; the
- *             #69 artifact pointers live in the .rs source, covered by the
+ *             30 pointers / 6 broken (the 5 + the `cans/_rules.yaml#
+ *             codebase.enabled` pointer, which breaks HERE because the
+ *             variant's own rules rewrite drops the codebase block the
+ *             anchor names — the artifact tier validates the file's
+ *             CURRENT content) — proving both the default include list
+ *             (no `*.yaml`) and that the scan itself needs no config (the
+ *             #68 plugin tier stays on in the variant so the fixture's
+ *             cans/plugins/*.md corpus keys keep resolving; the #69
+ *             artifact pointers live in the .rs source, covered by the
  *             default *.rs include)
  *
  * DELIBERATE DEVIATION (the suite's one, by design): the RFC's example text
@@ -165,11 +169,42 @@ const BROKEN_ARTIFACT_FILE = {
   reason: 'FileNotFound',
 };
 
+/** artifact-wiring.rs:28 — the schematic pointer into the workspace's own
+ *  rules file, `cans/_rules.yaml#codebase.enabled`. VALID against the
+ *  committed fixture (the codebase block exists there), but BROKEN in the
+ *  pure-default variants: those subtests REWRITE _rules.yaml without a
+ *  codebase block, and the artifact tier validates the file's CURRENT
+ *  content — the rewrite deletes the very key this pointer names, so the
+ *  pointer breaks (the feature working exactly as intended: a config
+ *  rewrite that orphans a pointer into the config is a diff, not silence). */
+const BROKEN_RULES_KEY = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/artifact-wiring.rs',
+  line: 28,
+  raw: 'see: cans/_rules.yaml#codebase.enabled',
+  targetFile: 'cans/_rules.yaml',
+  targetSlug: 'codebase.enabled',
+  reason: 'AnchorNotFound',
+};
+
 /** The five issues, in the contract's deterministic order (file asc, line
  *  asc) — the two pre-existing true ones plus the three deliberate issue
  *  #69 artifact records (issue #69 extended the fixture). */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
+  BROKEN_ARTIFACT_SYMBOL,
+  BROKEN_ARTIFACT_HEADING,
+  BROKEN_ARTIFACT_FILE,
+  BROKEN_FILE,
+];
+
+/** The pure-default variant's oracle: the five records PLUS the
+ *  `cans/_rules.yaml#codebase.enabled` pointer as AnchorNotFound — the
+ *  variant's own rules rewrite drops the codebase block the anchor names
+ *  (see BROKEN_RULES_KEY above), one MORE broken than the config-on run. */
+const DEFAULTS_ORACLE_ISSUES = [
+  BROKEN_ANCHOR,
+  BROKEN_RULES_KEY,
   BROKEN_ARTIFACT_SYMBOL,
   BROKEN_ARTIFACT_HEADING,
   BROKEN_ARTIFACT_FILE,
@@ -427,7 +462,7 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 11 files, 30 pointers, the same 5 broken, no yaml', () => {
+  test('f1: the RFC §3 default include list — 11 files, 30 pointers, 6 broken (the 5 + the rules-key pointer), no yaml', () => {
     const p = ws('f1');
     // No CODEBASE block (the flag is the scan consent) — but the #68
     // plugin-tier wiring stays, mirroring the fixture's committed rules:
@@ -459,8 +494,13 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     // include, so the six artifact pointers stay in scope.
     expect(j.codebase.scanned).toBe(11);
     expect(j.codebase.pointers).toBe(30);
-    expect(j.codebase.broken).toBe(5);
-    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    // SIX broken, one MORE than the config-on run: this variant's own rules
+    // rewrite drops the codebase block, and the #69 schematic pointer
+    // `cans/_rules.yaml#codebase.enabled` validates against the rules
+    // file's CURRENT content — the rewrite deleted the key it names, so
+    // the pointer honestly breaks (the tier is never a rubber stamp).
+    expect(j.codebase.broken).toBe(6);
+    expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
