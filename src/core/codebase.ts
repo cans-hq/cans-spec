@@ -148,15 +148,41 @@ export function codebaseTargetExtAlt(): string {
 }
 
 /** §2.1 — the matching rule. The RFC #66 §2.1 pattern is the pointer-GRAMMAR
- *  sketch; per issue #67 the ANCHOR group captures the full slug alphabet:
+ *  sketch; per issue #67 the ANCHOR group captures the full slug alphabet,
+ *  and per issue #69 the FILE group accepts every extension the artifact
+ *  anchor machinery can address:
  *
- *      see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.md)(?:#([^\s#]+))?
+ *      see:\s+(?:cans\/)?([a-zA-Z0-9_\-\/]+\.(?:json|yaml|…|md))(?:#([^\s#]+))?
  *
- *  Group 1 = the target file (`01-protocol.md`, `sub/dir/spec.md`, with an
- *  optional `cans/` workspace-qualified spelling), group 2 = the optional
- *  `#slug` anchor fragment — whitespace- or `#`-terminated, the EXACT shape
- *  of the spec side's §11 REF_RE anchor group (core/outline.ts). Why the
- *  wide class: the slug contract (`_rules.yaml#slug.algorithm`, core/
+ *  Group 1 = the target file — `.md` corpus targets (`01-protocol.md`,
+ *  `sub/dir/spec.md`) AND, since #69, ARTIFACT targets (`cans/artifacts/
+ *  code/plugin-trait.rs`, `cans/artifacts/diagrams/host-runtime.txt`, a
+ *  `.yaml`/`.json`/`.toml`/`.ts`/… file), each with an optional `cans/`
+ *  workspace-qualified spelling. Why the widening: 114 of 1523 codebase
+ *  `see:` pointers on the reporter's corpus target non-`.md` files (25
+ *  distinct artifact files — .rs, .ts, .py, .yaml, .txt, plus
+ *  `cans/_rules.yaml`) — the cans layout puts field layouts, schemas, wire
+ *  formats, pipeline diagrams and example code under `cans/artifacts/`,
+ *  code points at them too, and every one of those pointers was silently
+ *  unvalidated by `check --codebase` and rejected as malformed by
+ *  `cans refs`. The extension table (CODEBASE_TARGET_EXTS →
+ *  codebaseTargetExtAlt — the single source BOTH this regex and the
+ *  `cans refs` query grammar build their alternation from, so pointer and
+ *  query grammars can never drift) is the grammar's OVER-CAPTURE GUARD:
+ *  `.c`, `.cpp`, `.csv`, `v1.2`, `e.g` are deliberately NOT targets — no
+ *  anchor vocabulary can address them, so capturing them could only mint
+ *  unresolvable-anchor noise, never a verified pointer (the #67
+ *  narrow-classes-over-and-under-capture lesson, applied to the target
+ *  side). Extensions are LOWERCASE by the `.md` spelling rule
+ *  (`driver.RS` is prose, not a pointer; the resolution-side predicates
+ *  stay case-insensitive for paths that arrive by other means). The .md
+ *  tier's captures are byte-identical with the pre-#69 extractor: `md` is
+ *  the alternation's last member and every longer member fails on a
+ *  `.md`-terminated spelling, so the same group captures the same span.
+ *  Group 2 = the optional `#slug` anchor fragment — whitespace- or
+ *  `#`-terminated, the EXACT shape of the spec side's §11 REF_RE anchor
+ *  group (core/outline.ts). Why the wide anchor class: the slug contract
+ *  (`_rules.yaml#slug.algorithm`, core/
  *  slug.ts) preserves every non-separator character VERBATIM — `(`, `)`,
  *  `,`, `:`, `/`, `^` … all survive into real anchors — so the RFC's narrow
  *  `[a-zA-Z0-9_\-]+` sketch truncated at the first such character and
@@ -164,14 +190,15 @@ export function codebaseTargetExtAlt(): string {
  *  (`#UID/GID-mapping-isolation` read as `#UID`, `#Dynamic-W^X-JIT-
  *  execution-mediation` as `#Dynamic-W`). The #48 lesson, again: narrow
  *  classes both over- and under-capture; glued prose punctuation is a
- *  CLEANING problem (stripCodebaseAnchorPunct below), never a capture
- *  problem. Surrounding prose ("Initial handshake logic;", trailing " -
+ *  CLEANING problem (stripCodebaseAnchorPunct below — for .md and artifact
+ *  anchors alike), never a capture problem. Surrounding prose ("Initial
+ *  handshake logic;", trailing " -
  *  fails with ENOSPC when exceeded", block comments, YAML keys) is
  *  invisible to the pattern — §2.2's tolerance contract. GLOBAL: consumers
  *  match per-line (fresh string per line ⇒ fresh lastIndex state), never
  *  on multi-line blobs. */
 export const SEE_POINTER_RE: RegExp =
-  /see:\s+(?:cans\/)?([A-Za-z0-9_\-/]+\.md)(?:#([^\s#]+))?/g;
+  new RegExp(`see:\\s+(?:cans\\/)?([A-Za-z0-9_\\-/]+\\.(?:${codebaseTargetExtAlt()}))(?:#([^\\s#]+))?`, 'g');
 
 /** One embedded pointer extracted from a source file (§2). `raw` is the
  *  exact matched span (no surrounding prose) and `targetFile` is AS
