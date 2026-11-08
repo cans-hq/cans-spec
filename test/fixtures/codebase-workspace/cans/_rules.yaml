@@ -38,6 +38,12 @@ redundancy:
   fuzzy: false
 
 codebase:
+  # Issue #69 (the artifact-target tier): `see:` pointers in source files
+  # may now name this workspace's NON-SPEC artifact files too (this
+  # _rules.yaml included — `// see: cans/_rules.yaml#codebase.enabled` is a
+  # valid schematic anchor into the block below). Those targets are
+  # WORKSPACE files, resolved against cans/ the way corpus refs resolve
+  # on-disk targets; the scan itself still never enters this directory.
   enabled: true
   roots: ["."]
   # The RFC §3 default include list, spelled out verbatim — plus ONE
