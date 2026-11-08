@@ -545,7 +545,7 @@ under `cans/artifacts/` — code points at those too (`// see:
 cans/artifacts/code/plugin-trait.rs#PluginError`, `// see:
 cans/artifacts/diagrams/host-runtime.txt#driver-avf`, a key under
 `cans/_rules.yaml`) — and until #69 that whole pointer class was silently
-unvalidated (issue #69). The `codebase` scanner closes all of it. Opt-in:
+unvalidated. The `codebase` scanner closes all of it. Opt-in:
 
 ```yaml
 # cans/_rules.yaml
@@ -651,9 +651,10 @@ How resolution works:
   comments and YAML keys are invisible to the match; trailing prose after
   the pointer never fails it.
 - The `cans/` workspace itself is always skipped by the scan — corpus
-  refs verify in the refs engine, never twice; an artifact target is
-  read only at resolution, and parsed only when its pointer carries an
-  anchor into it — the scan itself still never enters the workspace.
+  refs verify in the refs engine, never twice. An artifact target is
+  read and parsed only when its pointer carries an anchor into it (a
+  file-level artifact pointer verifies existence and nothing more) —
+  artifact files are resolution inputs, never scan inputs.
 
 ### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
 

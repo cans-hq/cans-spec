@@ -299,10 +299,31 @@ output:
 #     any surrounding text: leading prose, trailing notes, parentheses,
 #     block comments and YAML keys are all invisible to the match, and
 #     trailing prose after the pointer never fails it.
-#   - <file> resolves against the corpus keys (the spec files the
-#     workspace loaded): exact match, else one optional leading `cans/` is
-#     stripped — `01-auth.md` and `cans/01-auth.md` are the same target.
-#     No match → reason `FileNotFound`.
+#   - a `.md` target resolves against the corpus keys (the spec files
+#     the workspace loaded): exact match, else one optional leading
+#     `cans/` is stripped — `01-auth.md` and `cans/01-auth.md` are the
+#     same target. No match → reason `FileNotFound`.
+#   - a target may also name an ARTIFACT file (issue #69) — any
+#     extension the artifact anchor machinery can address:
+#     `.json`/`.yaml`/`.yml`/`.toml` (schematic dot paths, issue #58),
+#     `.txt`/`.text` (section headings) and code files' top-level
+#     symbols (`.ts`/`.rs`/`.py`/`.go` and friends, issue #60).
+#     Artifact targets resolve against the WORKSPACE filesystem: the
+#     file must exist under cans/ (containment — `../` and absolute
+#     spellings never resolve) and the anchor validates against that
+#     file's addressable vocabulary, the same verdict path the corpus
+#     refs engine uses. A missing file → reason `FileNotFound`; a
+#     broken, ambiguous or unparseable anchor → reason `AnchorNotFound`
+#     with the why in the message; an artifact with nothing addressable
+#     carrying an anchor is a warning (`codebase.anchor.no-target`),
+#     never a finding. A file type no vocabulary can address (`.c`,
+#     `.cpp`, `.csv`) is deliberately not a pointer target — the
+#     extension table is the grammar's over-capture guard. The scan
+#     itself still never enters the workspace: an artifact file is
+#     read and parsed only when a pointer carries an anchor into it
+#     (a file-level artifact pointer verifies existence and nothing
+#     more) — artifact files are resolution inputs, never scan
+#     inputs.
 #   - #<slug> resolves with the SAME tolerant anchor matching the corpus
 #     refs engine uses (case- and separator-insensitive; the `slug:`
 #     algorithm at the top of this file is the canonical spelling — and
@@ -336,7 +357,11 @@ output:
 #
 # Reverse traceability: `cans refs "01-auth.md#Sessions" --codebase` lists
 # every scanned source file pointing at that node (file, line, the line
-# text as written), exit 0 whether or not matches exist. Without
+# text as written), exit 0 whether or not matches exist. Artifact queries
+# are legal too (issue #69) — `cans refs "cans/artifacts/diagrams/
+# host-runtime.txt#driver-avf" --codebase` — the query grammar builds
+# from the same target-extension table as the pointer grammar, so the
+# two can never drift. Without
 # --codebase the command refuses with guidance (a flag that silently does
 # nothing is a typo hiding in plain sight).
 #
