@@ -18,6 +18,16 @@
  *  to core/slug.ts as the single shared implementation
  *  (stripAnchorTrailingPunct); stripCodebaseAnchorPunct below is now a
  *  thin delegate that keeps this module's #67 export seam frozen.
+ *  Issue #69 — the ARTIFACT target tier: `.md` is no longer the only
+ *  pointer target. The extractor's file group now accepts every
+ *  extension the artifact anchor machinery can address (CODEBASE_TARGET_
+ *  EXTS below — the #58 schematic + #60 text/code vocabularies), and
+ *  resolution routes those targets at the WORKSPACE filesystem: the file
+ *  must exist under cans/ (resolveSpecFile containment, issue #10) and
+ *  the anchor resolves through checkArtifactAnchor — the SAME shared
+ *  verdict function the corpus refs engine uses for its on-disk artifact
+ *  refs — riding the #68 anchorMatches seam. Code pointing at
+ *  `cans/artifacts/**` files stops being silently unvalidated.
  *
  *  CANS enforces graph integrity inside the markdown corpus (the cans/
  *  workspace). Real implementations annotate functions, types and logic
@@ -86,6 +96,56 @@ import { readText } from './runtime.ts';
 import { flattenNodes } from './outline.ts';
 import { anchorMatches } from './refs.ts';
 import { anchorSlug, nearSlugMatches, stripAnchorTrailingPunct } from './slug.ts';
+
+/** Issue #69 — the addressable target-extension table: the file types a
+ *  `see:` pointer in a source file may name BESIDES `.md`. Until #69 the
+ *  extractor captured `.md` targets only, so the pointer class the cans
+ *  layout actually breeds — code pointing at the workspace's ARTIFACT
+ *  files (`// see: cans/artifacts/code/plugin-trait.rs#PluginError`,
+ *  `// see: cans/artifacts/diagrams/host-runtime.txt#driver-avf`, a YAML
+ *  key under `cans/_rules.yaml`) — was silently skipped by `check
+ *  --codebase` and rejected as malformed by `cans refs` (114 of 1523
+ *  pointers on the reporter's corpus, 25 distinct artifact files: .rs,
+ *  .ts, .py, .yaml, .txt, plus `cans/_rules.yaml` — all unvalidated).
+ *
+ *  The table is EXACTLY the union of the extensions the artifact anchor
+ *  machinery can address — the schematic vocabulary (`.json`/`.yaml`/
+ *  `.yml`/`.toml`, core/schematic.ts schematicFormatFor), the text-heading
+ *  vocabulary (`.txt`/`.text`, core/text-anchors.ts isTextArtifact), the
+ *  code-symbol vocabulary (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/
+ *  `.mjs`/`.cjs`/`.rs`/`.py`/`.go`, core/code-anchors.ts isCodeArtifact)
+ *  — plus `.md` itself (the corpus tier, unchanged). A file type NO
+ *  vocabulary can address (`.c`, `.cpp`, `.csv`, `v1.2`, `e.g`) is
+ *  deliberately NOT a pointer target: capturing it could only ever mint
+ *  unresolvable-anchor noise, never a verified pointer — the extension
+ *  table is the grammar's over-capture guard, the target-side twin of
+ *  #67's "narrow classes over- and under-capture" lesson. Extensions are
+ *  lowercase by the pointer grammar (the `.md` spelling rule; the
+ *  resolution-side predicates stay case-insensitive for paths that
+ *  arrive by other means). Keep in sync with the three vocabulary
+ *  predicates — the engine suite pins the membership matrix. */
+export const CODEBASE_TARGET_EXTS: readonly string[] = [
+  'md',                                            // the corpus tier (spec files)
+  'json', 'yaml', 'yml', 'toml',                   // the schematic vocabulary (#58)
+  'txt', 'text',                                   // the text-heading vocabulary (#60)
+  'ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs', 'rs', 'py', 'go', // the code-symbol vocabulary (#60)
+];
+
+/** Issue #69 — the regex-alternation source for CODEBASE_TARGET_EXTS,
+ *  LONGEST-FIRST. Order is correctness, not cosmetics: `tsx` starts with
+ *  `ts` (and `jsx` with `js`), and a regex alternation takes its FIRST
+ *  matching alternative — in table order `driver.tsx#A` would capture the
+ *  target as `driver.ts` and strand the `x`, because the optional anchor
+ *  group happily matches empty at `x`. Sorting by length descending makes
+ *  every prefix pair resolve to its longest member; equal-length entries
+ *  are mutually exclusive, so their order is irrelevant. Both consumers
+ *  of the table — the extractor's SEE_POINTER_RE (this module) and the
+ *  `cans refs` query grammar (src/commands/refs.ts) — build their
+ *  alternation through THIS function so the two grammars can never drift
+ *  apart (a query must be able to name everything a pointer can). */
+export function codebaseTargetExtAlt(): string {
+  return [...CODEBASE_TARGET_EXTS].sort((a, b) => b.length - a.length).join('|');
+}
 
 /** §2.1 — the matching rule. The RFC #66 §2.1 pattern is the pointer-GRAMMAR
  *  sketch; per issue #67 the ANCHOR group captures the full slug alphabet:
