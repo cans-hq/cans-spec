@@ -308,8 +308,12 @@ output:
 #     algorithm at the top of this file is the canonical spelling — and
 #     the anchor may carry that FULL alphabet: `(`, `,`, `:`, `/`, `^`
 #     are legal mid-anchor, and a node title ending in `: see: <target>`
-#     resolves by its bare title — issue #67). Never fuzzy — a near miss
-#     earns a `did you mean` suggestion, resolution never auto-heals.
+#     resolves by its bare title — issue #67). Anchor and heading
+#     compare like-with-like (issue #68): both sides get the
+#     trailing-punctuation cleaning pass — glued prose punctuation
+#     ignored, the heading's own slug-preserved trailing punctuation
+#     tolerated on either side. Never fuzzy — a near miss earns a
+#     `did you mean` suggestion, resolution never auto-heals.
 #     No match → reason `AnchorNotFound`.
 #
 # Wire shape (--json, additive — plain-check JSON stays byte-identical to
