@@ -12,9 +12,11 @@
  *             exit, the additive top-level `codebase` JSON block with
  *             issues[] entries carrying EXACTLY { type, file, line, raw,
  *             targetFile, targetSlug, reason }, and the broken counts
- *             matching the fixture oracle (5 scanned / 10 pointers / 2
- *             broken: AnchorNotFound on the `#Qutas` typo, FileNotFound on
- *             the missing `09-observability.md`)
+ *             matching the fixture oracle (issue #67 extended the fixture:
+ *             9 scanned / 21 pointers / 2 broken: AnchorNotFound on the
+ *             `#Qutas` typo, FileNotFound on the missing
+ *             `09-observability.md` — every #67 kelir-shaped pointer is
+ *             VALID; see test/issue-67-contract.test.ts)
  *   b ....... after fixing the broken pointers IN THE TMP COPY the same
  *             command exits 0 with `codebase.issues` empty — silent rot is
  *             a diff, not a life sentence
@@ -29,7 +31,7 @@
  *             `check --json` has NO `codebase` key — the pre-#66 wire
  *             shape, byte-for-byte (the additive-block contract)
  *   f ....... flag-on with NO config block still scans (the defaults): the
- *             RFC §3 code-extension set only — 4 files / 9 pointers / the
+ *             RFC §3 code-extension set only — 7 files / 19 pointers / the
  *             same 2 broken — proving both the default include list (no
  *             `*.yaml`) and that the scan itself needs no config
  *
@@ -134,8 +136,8 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(5); // rs + ts + go + py + yaml; cans/ always skipped
-    expect(j.codebase.pointers).toBe(10);
+    expect(j.codebase.scanned).toBe(9); // 5 pre-#67 + the 4 src/plugins/ files (issue #67); cans/ always skipped
+    expect(j.codebase.pointers).toBe(21); // 10 pre-#67 + the 11 kelir-shaped #67 pointers
     expect(j.codebase.broken).toBe(2);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
@@ -208,8 +210,8 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     expect(j.exitCode).toBe(0);
     // The phase ran (config-on) — the block is present with a clean outcome.
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(5);
-    expect(j.codebase.pointers).toBe(10);
+    expect(j.codebase.scanned).toBe(9);
+    expect(j.codebase.pointers).toBe(21);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -226,7 +228,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('01-auth.md#Sessions'); // the query AS WRITTEN
-    expect(j.scanned).toBe(5);
+    expect(j.scanned).toBe(9);
     // The `cans/`-prefixed spelling (routes.ts:2) resolves to the same
     // target, so it is among the hits. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -296,10 +298,20 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
   test('e1: `check --json` (plain rules) is byte-shaped pre-#66: no codebase key, clean run', () => {
     const p = ws('e1');
     // The off-workspace: the SAME fixture minus the codebase block (the
-    // corpus is refs-hub-clean, so the whole check is clean — exit 0).
+    // corpus is refs-hub-clean, so the whole check is clean — exit 0). The
+    // redundancy knobs are the fixture's own (issue #67: the verbatim
+    // kelir-shaped headings collide with the frozen corpus vocabulary at
+    // the typo layer's default distance — the README documents both knobs).
     writeFileSync(
       join(p, 'cans', '_rules.yaml'),
-      ['references:', '  back_pointers: false', ''].join('\n'),
+      [
+        'references:',
+        '  back_pointers: false',
+        'redundancy:',
+        '  word_frequency_threshold: 5',
+        '  fuzzy: false',
+        '',
+      ].join('\n'),
       'utf8',
     );
     const r = runCli(['check', '--json'], p);
@@ -319,6 +331,9 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
       [
         'references:',
         '  back_pointers: false',
+        'redundancy:',
+        '  word_frequency_threshold: 5',
+        '  fuzzy: false',
         'codebase:',
         '  enabled: false',
         '',
@@ -335,7 +350,7 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 4 files, 9 pointers, the same 2 broken, no yaml', () => {
+  test('f1: the RFC §3 default include list — 7 files, 19 pointers, the same 2 broken, no yaml', () => {
     const p = ws('f1');
     writeFileSync(
       join(p, 'cans', '_rules.yaml'),
@@ -346,12 +361,14 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    // The default code-extension set has no *.yaml: src/net.yaml (and its
-    // pointer) stay out of the scan — the config-on run sees 5/10 instead.
-    expect(j.codebase.scanned).toBe(4);
-    expect(j.codebase.pointers).toBe(9);
+    // The default code-extension set has no *.yaml: src/net.yaml and
+    // src/plugins/mounts.yaml (and their pointers) stay out of the scan —
+    // the config-on run sees 9/21 instead.
+    expect(j.codebase.scanned).toBe(7);
+    expect(j.codebase.pointers).toBe(19);
     expect(j.codebase.broken).toBe(2);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
+    expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
 });

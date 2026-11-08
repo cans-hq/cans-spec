@@ -1,0 +1,2 @@
+# Plugin mount defaults (issue #67: the YAML comment variant).
+fsinode_mode: full   # see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content

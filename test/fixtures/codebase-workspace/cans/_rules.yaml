@@ -9,6 +9,20 @@
 references:
   back_pointers: false
 
+# Issue #67 (the kelir-shaped extension): the extension is verbatim where
+# the issue is verbatim and the pre-#67 corpus is frozen, so the
+# mini-corpus reuses function words and near-form words by construction —
+# the kelir headings alone push "on" to four nodes, and collide at
+# exactly the typo layer's default distance (native↔active, rewrite↔
+# write — Levenshtein 2, the issue #47 false-positive class). A warning
+# there would muddy the exit-code bands this fixture isolates, so the §18
+# knobs carry one notch of word-frequency headroom and turn the near-miss
+# layer off; every other redundancy layer stays on and the corpus
+# remains check-clean.
+redundancy:
+  word_frequency_threshold: 5
+  fuzzy: false
+
 codebase:
   enabled: true
   roots: ["."]

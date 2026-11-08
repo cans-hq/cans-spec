@@ -1,0 +1,493 @@
+/**
+ * Issue #67 — the CONTRACT suite: `cans check --codebase` false
+ * "anchor not found" positives, pinned end-to-end against the extended
+ * `test/fixtures/codebase-workspace/` fixture (its README.md is the
+ * line-authoritative oracle — every pointer, its line, its verdict).
+ *
+ * THE BUGS (135 false positives on the kelir repo, 748 valid pointers):
+ *
+ *   Bug 1 (127) — the frozen #66 anchor class `[A-Za-z0-9_-]+` truncates
+ *             anchors at `(`, `)`, `,`, `:`, `/`, `^`. Real anchors that
+ *             exist verbatim as spec headings (`#Invariants-and-policy-
+ *             (transaction)`, `#FsInodeAttr-carries-full-mode,-uid,-gid,
+ *             -size,-content`, `#UID/GID-mapping-isolation`,
+ *             `#Dynamic-W^X-JIT-execution-mediation`,
+ *             `#Native-checkpoint-plane-(kelir-core::checkpoint)`) were
+ *             reported broken.
+ *   Bug 2 (8) — spec nodes carrying their pointer as a TITLE SUFFIX
+ *             (`- Connection parking on suspend: see: artifacts/…`) never
+ *             resolve: the matcher slugified the whole node line, while
+ *             the code points at the bare title.
+ *
+ * THE FROZEN FIX SPEC this suite is written against (the engine half
+ * lands on fix/issue-67-engine):
+ *
+ *   1. Anchor capture widens to the full slug alphabet (`[^\s#]+`,
+ *      whitespace/`#`-terminated); a trailing run of `)]},.;:!?'"’”…` is
+ *      stripped from the captured anchor, EXCEPT closers backed by an
+ *      unmatched opener of `()[]{}` are restored (so
+ *      `Invariants-and-policy-(transaction)` survives intact while glued
+ *      prose closers like `Sessions);` clean to `Sessions`).
+ *      Empty-after-strip → no anchor (file-level pointer). `raw` stays
+ *      the verbatim matched span.
+ *   2. Node-title matching compares BOTH the full node text AND the text
+ *      with a trailing `: see: <token>` suffix stripped.
+ *   3. Genuinely broken anchors are STILL reported — no over-tolerance.
+ *
+ * WHAT EACH BLOCK PINS (all blackbox via the real CLI, the issue-66
+ * integration harness pattern; the fixture is driven from a fresh tmp
+ * copy exactly like test/issue66-integration.test.ts):
+ *
+ *   a ....... the check scan over the extended fixture: config-on
+ *             9 scanned / 21 pointers / EXACTLY the 2 pre-#67 broken —
+ *             zero broken refs for every new kelir-shaped anchor, both
+ *             bug classes (a2 repeats it under the pure-default include
+ *             list: 7 files / 19 pointers / same 2 broken — the yaml
+ *             pointer invisible)
+ *   b ....... Bug 1 on the REVERSE path: `cans refs <node> --codebase`
+ *             finds every punctuation-bearing anchor, including the
+ *             glued-closer spellings (pre-fix these queries refuse as
+ *             malformed or answer nothing — the truncation also broke
+ *             the reverse direction)
+ *   c ....... Bug 2: the `: see:`-suffixed nodes resolve by their bare
+ *             titles (check scan + reverse query), and the file-level
+ *             query answers all ten pointers into 09-plugins.md
+ *   d ....... no over-tolerance (spec clause 3): the pre-existing
+ *             `#Qutas` typo and `09-observability.md` FileNotFound are
+ *             STILL the only broken records; a punctuated NEAR MISS
+ *             appended to a source file is still AnchorNotFound; a
+ *             truncated spelling answers NOTHING on the reverse path
+ *             (no fuzzy healing); and the extended corpus itself stays
+ *             check-clean (the extension smuggles in no corpus finding)
+ *   e ....... the extraction wire shape (spec clause 1) at the unit
+ *             seam, over the fixture's own bytes: targetSlug stripped/
+ *             restored per the closer rule, raw verbatim, targetFile as
+ *             written (cans/ prefix kept)
+ *
+ * HONESTY NOTE: on the contract branch ALONE (pre-engine-merge) the
+ * new-behavior blocks are RED by design — the fixture reproduces the
+ * bugs (13 broken where 2 belong: the 2 true + 11 false). This suite
+ * turns green against the merged engine that implements the frozen
+ * spec above; the two pre-#67 broken records are pinned byte-exactly so
+ * the merge can never silently heal (or duplicate) them.
+ *
+ * Runtime-neutral: imports the test facade, never 'bun:test' directly;
+ * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
+ * so the walk-up resolution lands on the intended workspace).
+ */
+import { describe, test, expect, afterEach } from './testing.ts';
+import { join } from 'path';
+import { readFileSync, writeFileSync } from 'fs';
+
+import { spawnCli } from './runtime.ts';
+import { makeTmpDir, cleanTmpDir, copyFixtureToTmp, readFixture } from './helpers.ts';
+import { extractCodebasePointers } from '../src/core/codebase.ts';
+
+// ── harness (the issue66-integration pattern, verbatim) ─────────────────────
+
+const tmps: string[] = [];
+
+/** Fresh copy of the fixture into tmp: <tmp>/codebase-workspace/{cans,src}. */
+function ws(name: string): string {
+  const tmp = makeTmpDir(`issue67-contract-${name}`);
+  tmps.push(tmp);
+  return copyFixtureToTmp('codebase-workspace', tmp);
+}
+
+/** Blackbox spawn pinned to the copied project root. CANS_ROOT is pinned
+ *  EMPTY so resolveWorkspaceRoot walks up from cwd and lands on the copied
+ *  fixture's cans/ — never some ancestor workspace. */
+function runCli(args: string[], projectDir: string) {
+  return spawnCli(args, projectDir, { ...process.env, CANS_ROOT: '' });
+}
+
+function parseJsonOut(out: string): any {
+  let parsed: unknown = null;
+  let parseError: unknown = null;
+  try {
+    parsed = JSON.parse(out);
+  } catch (e) {
+    parseError = e;
+  }
+  expect(parseError).toBeNull();
+  return parsed;
+}
+
+afterEach(() => {
+  while (tmps.length > 0) {
+    cleanTmpDir(tmps.pop()!);
+  }
+});
+
+// ── the fixture oracle, as numbers and records ──────────────────────────────
+// (test/fixtures/codebase-workspace/README.md is the human-readable source of
+// these — keep the two in sync; the files as committed are authoritative.)
+
+/** routes.ts:3 — the pre-#67 broken slug, UNCHANGED by the #67 fix: the
+ *  regression guard at the heart of spec clause 3 (no over-tolerance). */
+const BROKEN_ANCHOR = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/api/routes.ts',
+  line: 3,
+  raw: 'see: 03-storage.md#Qutas',
+  targetFile: '03-storage.md',
+  targetSlug: 'Qutas',
+  reason: 'AnchorNotFound',
+};
+
+/** quota.py:7 — the pre-#67 broken file, UNCHANGED by the #67 fix. */
+const BROKEN_FILE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/storage/quota.py',
+  line: 7,
+  raw: 'see: 09-observability.md',
+  targetFile: '09-observability.md',
+  targetSlug: null,
+  reason: 'FileNotFound',
+};
+
+/** The two issues, in the contract's deterministic order (file asc, line asc):
+ *  EVERY issue-#67 pointer — both bug classes — is VALID, so the broken set
+ *  is EXACTLY the pre-#67 pair. */
+const ORACLE_ISSUES = [BROKEN_ANCHOR, BROKEN_FILE];
+
+// The fixture's line-authoritative texts (README oracle), reused by the
+// reverse-query assertions below.
+const GO_L11 = '/* (see: cans/09-plugins.md#Invariants-and-policy-(transaction)) */';
+const GO_L14 = '// Glued prose closers never reach the anchor: see: 09-plugins.md#UID/GID-mapping-isolation);';
+const PY_L3 = '# Connection parking on suspend: see: cans/09-plugins.md#Connection-parking-on-suspend';
+const PY_L7 = '# L7 pgwire rewrite and 2PC commit: see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit';
+const PY_L11 = '# CoW swarm mesh federation: see: cans/09-plugins.md#CoW-swarm-mesh-federation';
+const YAML_L2 = 'fsinode_mode: full   # see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content';
+const RS_L2 = '// Begin, commit, and rollback paths: see: cans/09-plugins.md#Invariants-and-policy-(transaction)';
+const RS_L3 = '// Inode metadata is authoritative: see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content';
+const RS_L4 = '// Namespace identity: see: 09-plugins.md#UID/GID-mapping-isolation';
+const RS_L5 = '// JIT gate: see: 09-plugins.md#Dynamic-W^X-JIT-execution-mediation';
+
+/** The e1-shaped rules (no codebase block) + the fixture's own redundancy
+ *  knobs — the corpus-clean shape the #66 suite pins, extended with the
+ *  knobs the README documents for the kelir-shaped extension. */
+const RULES_NO_CODEBASE = [
+  'references:',
+  '  back_pointers: false',
+  'redundancy:',
+  '  word_frequency_threshold: 5',
+  '  fuzzy: false',
+  '',
+].join('\n');
+
+// ── a: the check scan — zero broken refs for every new anchor ──────────────
+
+describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
+  test('a1: config-on — 9 scanned / 21 pointers / EXACTLY the 2 pre-#67 broken (both bug classes clean)', () => {
+    const p = ws('a1');
+    const r = runCli(['check', '--codebase', '--json'], p);
+    expect(r.exit).toBe(2); // severity: error → the error band (2 true findings)
+    const j = parseJsonOut(r.out);
+    expect(j.codebase).toBeDefined();
+    expect(j.codebase.scanned).toBe(9);
+    expect(j.codebase.pointers).toBe(21);
+    expect(j.codebase.broken).toBe(2);
+    // THE pin: the broken set is byte-exactly the pre-#67 pair — none of the
+    // 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
+    // checkpoint.go incl. both glued-closer cases, 3 Bug-2 suffix targets in
+    // ingress.py, 1 yaml comma anchor) is reported broken.
+    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    expect((j.codebase.issues as any[]).every((i) => !i.file.startsWith('src/plugins/'))).toBe(true);
+  });
+
+  test('a2: pure defaults (no config block) — 7 files / 19 pointers / the same 2 broken, yaml pointer invisible', () => {
+    const p = ws('a2');
+    writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
+    const r = runCli(['check', '--codebase', '--json'], p);
+    expect(r.exit).toBe(2);
+    const j = parseJsonOut(r.out);
+    // The RFC §3 default include list has no *.yaml: src/net.yaml AND
+    // src/plugins/mounts.yaml stay out — 7 files, 19 pointers, and the same
+    // two broken records (every non-yaml #67 pointer still resolves).
+    expect(j.codebase.scanned).toBe(7);
+    expect(j.codebase.pointers).toBe(19);
+    expect(j.codebase.broken).toBe(2);
+    expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
+    expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
+  });
+});
+
+// ── b: Bug 1 on the reverse path ────────────────────────────────────────────
+
+describe('issue #67 b — refs <node> --codebase finds the punctuation anchors', () => {
+  test('b1: the paren anchor answers BOTH its spellings — the plain and the glued closer', () => {
+    const p = ws('b1');
+    const r = runCli(['refs', '09-plugins.md#Invariants-and-policy-(transaction)', '--codebase', '--json'], p);
+    expect(r.exit).toBe(0);
+    const j = parseJsonOut(r.out);
+    expect(j.ok).toBe(true);
+    expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
+    expect(j.scanned).toBe(9);
+    // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
+    // anchor, so both pointers answer. Order: file asc, line asc.
+    expect(j.matches).toEqual([
+      { file: 'src/plugins/checkpoint.go', line: 11, text: GO_L11 },
+      { file: 'src/plugins/transaction.rs', line: 2, text: RS_L2 },
+    ]);
+  });
+
+  test('b2: the comma-list anchor answers the Rust and the YAML spellings', () => {
+    const p = ws('b2');
+    const j = parseJsonOut(
+      runCli(
+        ['refs', '09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content', '--codebase', '--json'],
+        p,
+      ).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([
+      { file: 'src/plugins/mounts.yaml', line: 2, text: YAML_L2 },
+      { file: 'src/plugins/transaction.rs', line: 3, text: RS_L3 },
+    ]);
+  });
+
+  test('b3: the slash anchor answers the plain and the glued-prose-closer spellings', () => {
+    const p = ws('b3');
+    const j = parseJsonOut(
+      runCli(['refs', '09-plugins.md#UID/GID-mapping-isolation', '--codebase', '--json'], p).out,
+    );
+    expect(j.exitCode).toBe(0);
+    // checkpoint.go:14 glues `);` onto the anchor — prose closers strip, and
+    // the pointer still answers the query.
+    expect(j.matches).toEqual([
+      { file: 'src/plugins/checkpoint.go', line: 14, text: GO_L14 },
+      { file: 'src/plugins/transaction.rs', line: 4, text: RS_L4 },
+    ]);
+  });
+
+  test('b4: the caret anchor answers its single occurrence', () => {
+    const p = ws('b4');
+    const j = parseJsonOut(
+      runCli(['refs', '09-plugins.md#Dynamic-W^X-JIT-execution-mediation', '--codebase', '--json'], p).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([{ file: 'src/plugins/transaction.rs', line: 5, text: RS_L5 }]);
+  });
+
+  test('b5: the ::-containing anchor with a backed closer answers its occurrence', () => {
+    const p = ws('b5');
+    const j = parseJsonOut(
+      runCli(
+        ['refs', '10-lifecycle.md#Native-checkpoint-plane-(kelir-core::checkpoint)', '--codebase', '--json'],
+        p,
+      ).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([
+      {
+        file: 'src/plugins/checkpoint.go',
+        line: 7,
+        text: 'see: cans/10-lifecycle.md#Native-checkpoint-plane-(kelir-core::checkpoint)',
+      },
+    ]);
+  });
+});
+
+// ── c: Bug 2 — the : see:-suffixed nodes ────────────────────────────────────
+
+describe('issue #67 c — the : see:-suffixed spec nodes resolve by their bare titles', () => {
+  test('c1: none of the three suffix-targeting pointers is reported broken (the a1 pin, made explicit)', () => {
+    const p = ws('c1');
+    const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
+    expect(j.codebase.broken).toBe(2);
+    const suffixRaws = [
+      'see: cans/09-plugins.md#Connection-parking-on-suspend',
+      'see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit',
+      'see: cans/09-plugins.md#CoW-swarm-mesh-federation',
+    ];
+    for (const raw of suffixRaws) {
+      expect((j.codebase.issues as any[]).some((i) => i.raw === raw)).toBe(false);
+    }
+  });
+
+  test('c2: Connection parking on suspend — the reverse query finds the source pointer', () => {
+    const p = ws('c2');
+    const j = parseJsonOut(
+      runCli(['refs', '09-plugins.md#Connection-parking-on-suspend', '--codebase', '--json'], p).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([{ file: 'src/plugins/ingress.py', line: 3, text: PY_L3 }]);
+  });
+
+  test('c3: L7 pgwire rewrite and 2PC commit — the reverse query finds the source pointer', () => {
+    const p = ws('c3');
+    const j = parseJsonOut(
+      runCli(['refs', '09-plugins.md#L7-pgwire-rewrite-and-2PC-commit', '--codebase', '--json'], p).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([{ file: 'src/plugins/ingress.py', line: 7, text: PY_L7 }]);
+  });
+
+  test('c4: CoW swarm mesh federation — the reverse query finds the source pointer', () => {
+    const p = ws('c4');
+    const j = parseJsonOut(
+      runCli(['refs', '09-plugins.md#CoW-swarm-mesh-federation', '--codebase', '--json'], p).out,
+    );
+    expect(j.exitCode).toBe(0);
+    expect(j.matches).toEqual([{ file: 'src/plugins/ingress.py', line: 11, text: PY_L11 }]);
+  });
+
+  test('c5: the file-level query answers all ten pointers into 09-plugins.md (every anchor class)', () => {
+    const p = ws('c5');
+    const j = parseJsonOut(runCli(['refs', '09-plugins.md', '--codebase', '--json'], p).out);
+    expect(j.exitCode).toBe(0);
+    // File asc, line asc: the two checkpoint.go (glued `))` + glued `);`),
+    // the three ingress.py suffix targets, the mounts.yaml comma anchor, the
+    // four transaction.rs punctuation spellings — punctuation never splits a
+    // pointer off its file-level answer.
+    expect(j.matches).toEqual([
+      { file: 'src/plugins/checkpoint.go', line: 11, text: GO_L11 },
+      { file: 'src/plugins/checkpoint.go', line: 14, text: GO_L14 },
+      { file: 'src/plugins/ingress.py', line: 3, text: PY_L3 },
+      { file: 'src/plugins/ingress.py', line: 7, text: PY_L7 },
+      { file: 'src/plugins/ingress.py', line: 11, text: PY_L11 },
+      { file: 'src/plugins/mounts.yaml', line: 2, text: YAML_L2 },
+      { file: 'src/plugins/transaction.rs', line: 2, text: RS_L2 },
+      { file: 'src/plugins/transaction.rs', line: 3, text: RS_L3 },
+      { file: 'src/plugins/transaction.rs', line: 4, text: RS_L4 },
+      { file: 'src/plugins/transaction.rs', line: 5, text: RS_L5 },
+    ]);
+  });
+});
+
+// ── d: no over-tolerance (spec clause 3) ────────────────────────────────────
+
+describe('issue #67 d — genuinely broken anchors are still reported', () => {
+  test('d1: the pre-existing #Qutas typo is STILL AnchorNotFound, record byte-exact', () => {
+    const p = ws('d1');
+    const r = runCli(['check', '--codebase', '--json'], p);
+    expect(r.exit).toBe(2);
+    const j = parseJsonOut(r.out);
+    const qutas = (j.codebase.issues as any[]).filter((i) => i.raw === 'see: 03-storage.md#Qutas');
+    expect(qutas.length).toBe(1);
+    expect(qutas[0]).toEqual(BROKEN_ANCHOR);
+  });
+
+  test('d2: the pre-existing 09-observability.md is STILL FileNotFound, record byte-exact', () => {
+    const p = ws('d2');
+    const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
+    const missing = (j.codebase.issues as any[]).filter((i) => i.raw === 'see: 09-observability.md');
+    expect(missing.length).toBe(1);
+    expect(missing[0]).toEqual(BROKEN_FILE);
+  });
+
+  test('d3: punctuated NEAR MISSES appended to a source file are still AnchorNotFound', () => {
+    const p = ws('d3');
+    // Two new near misses, both shaped exactly like the Bug-1 anchors: a
+    // misspelled paren anchor and a truncated comma anchor. Widening the
+    // alphabet must not widen the VERDICT — neither matches any node.
+    const rs = join(p, 'src', 'plugins', 'transaction.rs');
+    writeFileSync(
+      rs,
+      readFileSync(rs, 'utf8') +
+        '\n// see: 09-plugins.md#Invariants-and-policy-(transakshun)\n// see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid\n',
+      'utf8',
+    );
+    const r = runCli(['check', '--codebase', '--json'], p);
+    expect(r.exit).toBe(2);
+    const j = parseJsonOut(r.out);
+    expect(j.codebase.pointers).toBe(23); // 21 + the two appended
+    expect(j.codebase.broken).toBe(4); // the 2 true + the 2 near misses
+    const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
+    expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
+      [11, 'Invariants-and-policy-(transakshun)', 'AnchorNotFound'],
+      [12, 'FsInodeAttr-carries-full-mode,-uid', 'AnchorNotFound'],
+    ]);
+  });
+
+  test('d4: a truncated spelling answers NOTHING on the reverse path — no fuzzy healing', () => {
+    const p = ws('d4');
+    const r = runCli(['refs', '09-plugins.md#Invariants-and-policy', '--codebase', '--json'], p);
+    expect(r.exit).toBe(0); // zero matches is an answer, not a failure
+    const j = parseJsonOut(r.out);
+    expect(j.ok).toBe(true);
+    expect(j.matches).toEqual([]);
+  });
+
+  test('d5: the extended corpus itself stays check-clean (the extension smuggles in no corpus finding)', () => {
+    const p = ws('d5');
+    // No codebase block, no flag: the plain pre-#66 check over the corpus
+    // with the extension (two new spec files, three artifact refs, the
+    // suffix nodes) — exit 0, no codebase key.
+    writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
+    const r = runCli(['check', '--json'], p);
+    expect(r.exit).toBe(0);
+    const j = parseJsonOut(r.out);
+    expect(j.ok).toBe(true);
+    expect('codebase' in j).toBe(false);
+    expect(j.counts.errors).toBe(0);
+    expect(j.counts.warnings).toBe(0);
+  });
+});
+
+// ── e: the extraction wire shape (unit seam, over the fixture's own bytes) ──
+
+describe('issue #67 e — extraction: full-alphabet capture, closer strip/restore, verbatim raw', () => {
+  test('e1: checkpoint.go — the :: anchor intact, the glued )) restored, the glued ); stripped', () => {
+    const out = extractCodebasePointers(readFixture('codebase-workspace', 'src', 'plugins', 'checkpoint.go'));
+    expect(out.length).toBe(3);
+    // Line 7: the ::-containing anchor with a closer backed by its opener —
+    // captured whole.
+    expect(out[0]).toEqual({
+      line: 7,
+      raw: 'see: cans/10-lifecycle.md#Native-checkpoint-plane-(kelir-core::checkpoint)',
+      targetFile: 'cans/10-lifecycle.md', // as written (cans/ prefix kept)
+      targetSlug: 'Native-checkpoint-plane-(kelir-core::checkpoint)',
+    });
+    // Line 11: raw keeps the VERBATIM matched span — the glued `))` included
+    // — while the captured anchor strips the closer run and restores the one
+    // `)` backed by the unmatched `(`.
+    expect(out[1]).toEqual({
+      line: 11,
+      raw: 'see: cans/09-plugins.md#Invariants-and-policy-(transaction))',
+      targetFile: 'cans/09-plugins.md',
+      targetSlug: 'Invariants-and-policy-(transaction)',
+    });
+    // Line 14: glued PROSE closers `);` — no unmatched opener, nothing to
+    // restore: they strip from the anchor, raw keeps them.
+    expect(out[2]).toEqual({
+      line: 14,
+      raw: 'see: 09-plugins.md#UID/GID-mapping-isolation);',
+      targetFile: '09-plugins.md',
+      targetSlug: 'UID/GID-mapping-isolation',
+    });
+  });
+
+  test('e2: the four transaction.rs spellings capture whole, punctuation and all', () => {
+    const out = extractCodebasePointers(readFixture('codebase-workspace', 'src', 'plugins', 'transaction.rs'));
+    expect(out.length).toBe(4);
+    expect(out.map((p) => [p.line, p.targetSlug])).toEqual([
+      [2, 'Invariants-and-policy-(transaction)'],
+      [3, 'FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content'],
+      [4, 'UID/GID-mapping-isolation'],
+      [5, 'Dynamic-W^X-JIT-execution-mediation'],
+    ]);
+    // The paren anchor ends in a closer backed by its opener — raw and slug
+    // agree byte-for-byte.
+    expect(out[0]!.raw).toBe('see: cans/09-plugins.md#Invariants-and-policy-(transaction)');
+    expect(out[0]!.targetFile).toBe('cans/09-plugins.md');
+  });
+
+  test('e3: the Bug-2 pointers and the yaml comma pointer extract with their whole anchors', () => {
+    const py = extractCodebasePointers(readFixture('codebase-workspace', 'src', 'plugins', 'ingress.py'));
+    expect(py.map((p) => [p.line, p.targetSlug])).toEqual([
+      [3, 'Connection-parking-on-suspend'],
+      [7, 'L7-pgwire-rewrite-and-2PC-commit'],
+      [11, 'CoW-swarm-mesh-federation'],
+    ]);
+    const yaml = extractCodebasePointers(readFixture('codebase-workspace', 'src', 'plugins', 'mounts.yaml'));
+    expect(yaml.length).toBe(1);
+    expect(yaml[0]).toEqual({
+      line: 2,
+      raw: 'see: 09-plugins.md#FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content',
+      targetFile: '09-plugins.md',
+      targetSlug: 'FsInodeAttr-carries-full-mode,-uid,-gid,-size,-content',
+    });
+  });
+});
