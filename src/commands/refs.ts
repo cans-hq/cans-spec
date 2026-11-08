@@ -57,7 +57,11 @@ import { readText } from '../core/runtime.ts';
 import { resolveWorkspaceRoot, discoverSpecFiles } from '../core/fs.ts';
 import { parseOutline } from '../core/outline.ts';
 import { loadRules, defaultCodebaseRules } from '../core/rules.ts';
-import { collectSourceFiles, extractCodebasePointers } from '../core/codebase.ts';
+import {
+  collectSourceFiles,
+  extractCodebasePointers,
+  stripCodebaseAnchorPunct,
+} from '../core/codebase.ts';
 import { normalizeForAnchor } from '../core/slug.ts';
 import { parseArgs, formatArgErrors, type FlagSpec } from '../core/args.ts';
 
@@ -70,9 +74,14 @@ const REFS_FLAGS: FlagSpec[] = [
 
 /** The node query grammar: `<file>.md` optionally `#Slug`, anchored on both
  *  ends. Character classes mirror SEE_POINTER_RE (file: letters/digits/
- *  underscore/dash/slash; slug: letters/digits/underscore/dash), so anything
- *  a source pointer could express is queryable and nothing else parses. */
-const QUERY_RE = /^([A-Za-z0-9_\-/]+\.md)(?:#([A-Za-z0-9_\-]+))?$/;
+ *  underscore/dash/slash; slug: issue #67 — the FULL slug alphabet,
+ *  whitespace/`#`-terminated, the same `[^\s#]+` shape the extractor
+ *  captures), so anything a source pointer could express is queryable and
+ *  nothing else parses. The captured query anchor is then cleaned with the
+ *  extractor's own stripCodebaseAnchorPunct — the mirror runs BOTH ways, so
+ *  a glued-closer spelling (`…#Invariants-and-policy-(transaction))` pasted
+ *  from prose) resolves exactly like the captured pointer would. */
+const QUERY_RE = /^([A-Za-z0-9_\-/]+\.md)(?:#([^\s#]+))?$/;
 
 /** Resolve a written `<file>.md` target against the corpus keys the way the
  *  engine does (§2.3): exact key first, else the `cans/`-stripped spelling
@@ -170,7 +179,12 @@ export async function run(args: string[]): Promise<RefsResult> {
       `no spec file matches "${query[1]}" — refs --codebase resolves against the workspace corpus (cans/); run \`cans status\` to list the spec files`,
     );
   }
-  const querySlug = query[2] ?? null;
+  // Issue #67: the query anchor is cleaned by the SAME pass the extractor
+  // applies to captured pointers (the QUERY_RE mirror, both directions); an
+  // anchor that cleans to empty (`#).`) degrades to a file-level query —
+  // targetSlug null — exactly like extractCodebasePointers degrades it.
+  const cleanedQuerySlug = query[2] === undefined ? '' : stripCodebaseAnchorPunct(query[2]!);
+  const querySlug = cleanedQuerySlug === '' ? null : cleanedQuerySlug;
 
   // The scan: the engine's own file selection + extraction (never
   // reimplemented here), matched against the query. Source paths are
