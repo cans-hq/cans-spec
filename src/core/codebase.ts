@@ -93,8 +93,9 @@ import { readdirSync } from 'node:fs';
 import { dirname, join, relative, isAbsolute } from 'node:path';
 import { globToRegExp } from './glob.ts';
 import { readText } from './runtime.ts';
-import { flattenNodes } from './outline.ts';
-import { anchorMatches } from './refs.ts';
+import { flattenNodes, parseOutline } from './outline.ts';
+import { resolveSpecFile } from './fs.ts';
+import { anchorMatches, checkArtifactAnchor } from './refs.ts';
 import { anchorSlug, nearSlugMatches, stripAnchorTrailingPunct } from './slug.ts';
 
 /** Issue #69 — the addressable target-extension table: the file types a
@@ -380,19 +381,43 @@ export function stripSeeRefSuffix(nodeText: string): string {
 }
 
 /** §2.3 full validation pass: select files (collectSourceFiles), extract
- *  pointers, resolve each against the loaded spec graph:
- *    - corpus keys = `corpus` (the workspace-relative key set check.ts
- *      already loaded — spec files, promoted subfolder files, plugin tier);
- *    - `<file>` → key: exact match, else `cans/`-stripped match; no match →
- *      reason 'FileNotFound';
- *    - `#<slug>` → anchorMatches(title, slug) over the key's nodes (YAML
- *      leaf anchors are NOT probed here — v1 scope is spec nodes); no match
- *      → reason 'AnchorNotFound' with a `did you mean` suggestion from
+ *  pointers, resolve each — TWO target tiers since issue #69:
+ *    - `.md` targets → the CORPUS: keys = `corpus` (the workspace-relative
+ *      key set check.ts already loaded — spec files, promoted subfolder
+ *      files, plugin tier); `<file>` → key: exact match, else `cans/`-
+ *      stripped match; no match → reason 'FileNotFound' ("file not found in
+ *      the spec corpus", the pre-#69 finding byte-unchanged); `#<slug>` →
+ *      anchorMatches(title, slug) over the key's nodes (YAML leaf anchors
+ *      are NOT probed there — v1 scope is spec nodes); no match → reason
+ *      'AnchorNotFound' with a `did you mean` suggestion from
  *      nearSlugMatches when the fuzzy layer finds one ≥ threshold.
+ *    - ARTIFACT targets (every CODEBASE_TARGET_EXTS spelling but `.md`) →
+ *      the WORKSPACE FILESYSTEM (issue #69): resolveSpecFile containment
+ *      (issue #10 — the file must exist under cans/; the pointer grammar's
+ *      path class cannot write a `.` at all, so `../` traversal spellings
+ *      are unwritable, and a leading `/` spelling joins UNDER the root by
+ *      path.join semantics); missing → 'FileNotFound' ("artifact target
+ *      not found in the cans workspace"); file-level → resolves, nothing
+ *      verified; anchored → the SHARED artifact verdict (refs.ts
+ *      checkArtifactAnchor — the same function the corpus refs engine's
+ *      on-disk artifact refs and `name://` external refs ride): schematic
+ *      dot paths / ambiguity / parse errors, bullet nodes, #60 text
+ *      headings and code symbols, all through the #68 anchorMatches seam.
+ *      Its error verdicts (refs.broken.anchor / refs.anchor.ambiguous /
+ *      refs.anchor.parse-error) map to reason 'AnchorNotFound' — the frozen
+ *      RFC §4.1 union {FileNotFound, AnchorNotFound} has no finer grain;
+ *      the specific WHY rides the message (the shared verdict's own
+ *      wording) and the suggestion. Its refs.anchor.no-target downgrade
+ *      (the target has NOTHING addressable — an empty .txt, a prose file)
+ *      is an ADVISORY, not a broken pointer: scan.warnings rule
+ *      'codebase.anchor.no-target', never a finding.
  *  Unreadable files surface as `warnings` (rule 'codebase.io', level
- *  'warning') — reported, never silently skipped. Findings are deterministic
- *  (file asc, line asc, raw order within a line). `scanned`/`pointers` count
- *  files and extracted pointers regardless of outcome. */
+ *  'warning') — source files AND anchored artifact targets (a read or
+ *  outline-parse failure: the anchor is not verified, never fabricated —
+ *  the corpus engine's unreadable-target precedent) — reported, never
+ *  silently skipped. Findings are deterministic (file asc, line asc, raw
+ *  order within a line). `scanned`/`pointers` count files and extracted
+ *  pointers regardless of outcome. */
 export async function checkCodebaseRefs(
   root: string,
   cfg: CodebaseRules,
@@ -439,12 +464,117 @@ export async function checkCodebaseRefs(
           ? stripped
           : null;
       if (key === null) {
-        findings.push({
-          ...pointer,
-          resolvedFile: null,
-          reason: 'FileNotFound',
-          message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — file not found in the spec corpus`,
-        });
+        // Two-tier file resolution (issue #69). A `.md` spelling names the
+        // CORPUS (the loaded spec graph): the pre-#69 FileNotFound finding,
+        // byte-unchanged. Anything else the grammar can capture is an
+        // ARTIFACT target (CODEBASE_TARGET_EXTS) — resolved against the
+        // WORKSPACE FILESYSTEM below. The case-insensitive `.md` test
+        // mirrors refs.ts looksLikeSpecRef (`/\.md$/i`): the grammar itself
+        // only writes lowercase `md`, but the branch is spelling-driven, not
+        // grammar-driven, so any `.md`-shaped target keeps the corpus
+        // treatment whatever case arrived.
+        if (/\.md$/i.test(stripped)) {
+          findings.push({
+            ...pointer,
+            resolvedFile: null,
+            reason: 'FileNotFound',
+            message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — file not found in the spec corpus`,
+          });
+          continue;
+        }
+        // The artifact tier: containment per issue #10 (resolveSpecFile's
+        // isInsideRoot guard — the file must exist UNDER the workspace
+        // root). Both spellings resolve: `stripped` is the targetFile minus
+        // the optional `cans/` prefix, exactly as the .md branch computes,
+        // and resolveSpecFile joining the workspace root handles `cans/x.rs`
+        // and `x.rs` alike. Escaping spellings cannot reach here: the
+        // grammar's path class has no `.` (`../` is unwritable), and a
+        // leading `/` joins UNDER the root by path.join semantics — the
+        // guard is defense in depth, not the only wall.
+        const artPath = resolveSpecFile(root, stripped);
+        if (artPath === null) {
+          findings.push({
+            ...pointer,
+            resolvedFile: null,
+            reason: 'FileNotFound',
+            message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — artifact target not found in the cans workspace`,
+          });
+          continue;
+        }
+        // File-level artifact pointer: the file exists, nothing to verify —
+        // no read, no parse (the laziness contract checkArtifactAnchor
+        // documents; the .md tier's own file-level branch behaves the same).
+        if (p.targetSlug === null) continue;
+        // Anchored: read and parse the artifact LAZILY — only now. No
+        // caching: the corpus engine's on-disk artifact path (refs.ts
+        // checkRefs) doesn't cache either; keep symmetric. The parse feeds
+        // the BULLET vocabulary (parseOutline — YAML block sequences keep
+        // minting bullet nodes, the #49 additive behavior), exactly the
+        // corpus engine's on-disk shape.
+        let source: string;
+        let nodes: OutlineNode[];
+        try {
+          source = await readText(artPath);
+          nodes = flattenNodes(parseOutline(source, artPath));
+        } catch {
+          // Unreadable/unparseable target: the anchor is NOT verified and
+          // never fabricated (the corpus engine's unreadable-target
+          // precedent, refs.ts checkRefs) — reported as a warning so the
+          // silence itself is visible, never a silent skip.
+          warnings.push({
+            file: rel,
+            line: p.line,
+            level: 'warning',
+            category: 'refs',
+            message: `unreadable artifact target: ${p.targetFile} — anchor not verified`,
+            rule: 'codebase.io',
+          });
+          continue;
+        }
+        // The SHARED verdict function — the ONE code path the corpus
+        // engine's on-disk artifact refs, its name:// external refs, and now
+        // the codebase artifact pointers all ride. display = the WRITTEN
+        // targetFile (both spellings resolve), so `did you mean` suggestions
+        // echo what the author wrote — the anchorSuggestion writtenTarget
+        // convention.
+        const verdicts = checkArtifactAnchor(
+          rel, p.line, p.targetFile, p.targetSlug, artPath, source, nodes,
+        );
+        for (const issue of verdicts) {
+          if (issue.level === 'warning') {
+            // The refs.anchor.no-target downgrade: the target has NOTHING
+            // addressable, so no anchor could ever resolve there by
+            // construction — an advisory, not a broken pointer (the corpus
+            // engine's own downgrade, mirrored; message adapted to the
+            // codebase scan's vocabulary).
+            warnings.push({
+              file: rel,
+              line: p.line,
+              level: 'warning',
+              category: 'refs',
+              message: `anchor on artifact target: ${p.targetFile}#${p.targetSlug} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref`,
+              rule: 'codebase.anchor.no-target',
+              suggestion: `drop the #${p.targetSlug} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${p.targetFile}`,
+            });
+            continue;
+          }
+          // refs.broken.anchor / refs.anchor.ambiguous / refs.anchor.
+          // parse-error all map to AnchorNotFound: the frozen RFC §4.1
+          // reason union {FileNotFound, AnchorNotFound} has no finer grain,
+          // and the finding is truthful at this vocabulary's granularity —
+          // the specific WHY rides the message (the shared verdict's own
+          // wording) and the suggestion. resolvedFile = the
+          // workspace-relative resolved path (`/` separators, the corpus
+          // key convention).
+          const finding: CodebaseFinding = {
+            ...pointer,
+            resolvedFile: relative(root, artPath).split('\\').join('/'),
+            reason: 'AnchorNotFound',
+            message: `broken codebase ref: ${rel}:${p.line} — ${p.raw} — ${issue.message}`,
+          };
+          if (issue.suggestion !== undefined) finding.suggestion = issue.suggestion;
+          findings.push(finding);
+        }
         continue;
       }
       if (p.targetSlug === null) continue; // file-level pointer: resolves, nothing to verify

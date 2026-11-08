@@ -554,8 +554,13 @@ function artifactAnchorVocabulary(path: string, source: string, isSchematic: boo
  *      and `export function createRule` answers `#createRule`.
  *   5. MISS: a truthful `refs.broken.anchor` error (contract 1) — or, when
  *      the target has NOTHING addressable at all (prose .md, empty
- *      schematic, .csv), the issue #49 `refs.anchor.no-target` downgrade. */
-function checkArtifactAnchor(
+ *      schematic, .csv), the issue #49 `refs.anchor.no-target` downgrade.
+ *
+ *  Issue #69: exported — the codebase engine's artifact tier rides this,
+ *  the ONE shared verdict function (corpus on-disk refs, name:// external
+ *  refs, and now codebase artifact pointers); signature and behavior
+ *  frozen. */
+export function checkArtifactAnchor(
   fromFile: string,
   line: number,
   display: string,

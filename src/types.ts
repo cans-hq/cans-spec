@@ -430,18 +430,24 @@ export interface CodebasePointer {
   line: number;
   /** The exact matched `see: …` span, no surrounding prose. */
   raw: string;
-  /** The `<file>.md` part as written (with or without `cans/`). */
+  /** The `<file>.<ext>` part as written — .md corpus targets and artifact
+   *  targets alike (issue #69: every CODEBASE_TARGET_EXTS spelling), with
+   *  or without `cans/`. */
   targetFile: string;
   /** The anchor fragment as written after `#`, or null when absent. */
   targetSlug: string | null;
 }
 
-/** Why a pointer failed to resolve (the RFC §4.1 JSON vocabulary). */
+/** Why a pointer failed to resolve (the RFC §4.1 JSON vocabulary). The
+ *  union is frozen — issue #69's artifact tier maps its finer-grained
+ *  misses (a schematic parse error, an ambiguous flat name) onto
+ *  AnchorNotFound with the specifics riding message/suggestion. */
 export type CodebaseReason = 'FileNotFound' | 'AnchorNotFound';
 
 /** A pointer that FAILED resolution (§2.3): the resolution result rides the
- *  pointer. `resolvedFile` is the corpus key it resolved to (null when the
- *  file itself was not found); `message` is the human one-liner;
+ *  pointer. `resolvedFile` is the corpus key OR — for issue #69 artifact
+ *  targets — the workspace-relative artifact path it resolved to (null when
+ *  the file itself was not found); `message` is the human one-liner;
  *  `suggestion` carries the nearSlugMatches `did you mean` when the fuzzy
  *  layer finds one (suggestion-only — resolution itself never goes fuzzy). */
 export interface CodebaseFinding extends CodebasePointer {
@@ -452,8 +458,12 @@ export interface CodebaseFinding extends CodebasePointer {
 }
 
 /** One codebase scan's full outcome (engine → CLI contract): findings (the
- *  failures), io warnings (unreadable files — reported, never skipped), and
- *  the discoverability counters (`scanned` files, `pointers` extracted). */
+ *  failures), io warnings (unreadable source files and unverifiable
+ *  anchored artifact targets — rule 'codebase.io'; the issue #69 advisory
+ *  for an anchored pointer at a target with nothing addressable — rule
+ *  'codebase.anchor.no-target' — reported, never skipped), and the
+ *  discoverability counters (`scanned` files, `pointers` extracted — .md
+ *  and artifact targets alike, issue #69). */
 export interface CodebaseScan {
   findings: CodebaseFinding[];
   warnings: Issue[];
