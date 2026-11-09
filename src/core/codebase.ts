@@ -28,6 +28,13 @@
  *  verdict function the corpus refs engine uses for its on-disk artifact
  *  refs — riding the #68 anchorMatches seam. Code pointing at
  *  `cans/artifacts/**` files stops being silently unvalidated.
+ *  Issue #70 — the LEAF tier rides the shared verdict: the artifact
+ *  anchors #69 made checkable grew two more vocabularies at the same
+ *  seam — Rust non-pub column-0 items and trait methods (code-anchors.ts
+ *  grammar v2), plus referenced names and diagram/tree text tokens
+ *  (extractCodeLeafNames / extractTextLeafTokens) — so `#configure_runtime`
+ *  answers a trait method, `#UserOracle` a non-pub unit struct, and
+ *  `#kelir-shim` a tree entry, all through checkArtifactAnchor unchanged.
  *
  *  CANS enforces graph integrity inside the markdown corpus (the cans/
  *  workspace). Real implementations annotate functions, types and logic
@@ -552,7 +559,7 @@ export async function checkCodebaseRefs(
               line: p.line,
               level: 'warning',
               category: 'refs',
-              message: `anchor on artifact target: ${p.targetFile}#${p.targetSlug} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref`,
+              message: `anchor on artifact target: ${p.targetFile}#${p.targetSlug} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref`,
               rule: 'codebase.anchor.no-target',
               suggestion: `drop the #${p.targetSlug} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${p.targetFile}`,
             });

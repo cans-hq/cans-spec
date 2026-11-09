@@ -9,8 +9,8 @@ import {
   parseSchematic, schematicFormatFor, resolveSchematicAnchor, schematicAddresses,
 } from './schematic.ts';
 import type { SchematicParse, SchematicFormat, SchematicValue } from './schematic.ts';
-import { extractTextHeadings, isTextArtifact } from './text-anchors.ts';
-import { extractCodeSymbols, isCodeArtifact } from './code-anchors.ts';
+import { extractTextHeadings, extractTextLeafTokens, isTextArtifact } from './text-anchors.ts';
+import { extractCodeSymbols, extractCodeLeafNames, isCodeArtifact } from './code-anchors.ts';
 
 export interface RefGraph {
   forward: Map<string, RefTarget[]>;
@@ -521,6 +521,26 @@ function artifactAnchorVocabulary(path: string, source: string, isSchematic: boo
   return [];
 }
 
+/** Issue #70 (class B): the LEAF vocabulary of a non-schematic artifact
+ *  target — the tier BELOW the #60 declaration/heading vocabulary:
+ *  .txt/.text text tokens (extractTextLeafTokens — diagram/tree lines: a
+ *  pointer into a diagram means "this entry of the diagram") and code
+ *  files' referenced names (extractCodeLeafNames — use/import names, call
+ *  sites, field accesses: a pointer to an example means "this file
+ *  demonstrates the symbol"), the reporter's established convention.
+ *  Schematic targets resolve through parseSchematic (leaf tier []), and a
+ *  .md path matches neither isTextArtifact nor isCodeArtifact — spec-node
+ *  anchors are NEVER leaf-addressable. Raw texts in document order, the
+ *  extractYamlKeys convention; computed only on the miss path of an
+ *  ANCHORED pointer, the laziness contract (7) that artifactAnchorVocabulary
+ *  documents. */
+function artifactLeafVocabulary(path: string, source: string, isSchematic: boolean): string[] {
+  if (isSchematic) return [];
+  if (isTextArtifact(path)) return extractTextLeafTokens(source);
+  if (isCodeArtifact(path)) return extractCodeLeafNames(path, source);
+  return [];
+}
+
 /** Issue #58: the anchor verdict for one artifact target — THE shared code
  *  path for on-disk targets and `name://` external targets alike (no
  *  per-format special cases). Callers hand in the target's source and its
@@ -552,6 +572,13 @@ function artifactAnchorVocabulary(path: string, source: string, isSchematic: boo
  *      (exact-after-normalization, first match in document order, no new
  *      ambiguity error class), so `CREATION FLOW` answers `#creation-flow`
  *      and `export function createRule` answers `#createRule`.
+ *      Issue #70 adds the LEAF tier beneath it: the same resolution over
+ *      referenced names (imports/uses/call sites — extractCodeLeafNames)
+ *      and text tokens of diagram/tree lines (extractTextLeafTokens), so
+ *      `#LedgerPlugin` answers an imported name and `#kelir-shim` answers
+ *      a tree entry. Declarations rank before leaves (document-order
+ *      spirit; irrelevant to a `some()` probe) and the same §12 seam
+ *      governs both — camelCase still never folds.
  *   5. MISS: a truthful `refs.broken.anchor` error (contract 1) — or, when
  *      the target has NOTHING addressable at all (prose .md, empty
  *      schematic, .csv), the issue #49 `refs.anchor.no-target` downgrade.
@@ -599,18 +626,21 @@ export function checkArtifactAnchor(
   if (nodes.some(n => anchorMatches(n.text, anchor))) return [];
   // Issue #60: non-schematic artifacts resolve against their natural
   // addressable units after the bullet miss — first §12 match wins (the
-  // bullet model, no new ambiguity error class).
+  // bullet model, no new ambiguity error class). Issue #70: the LEAF tier
+  // (referenced names + text tokens) joins the same probe, declarations
+  // ranked before leaves.
   const extraVocab = artifactAnchorVocabulary(path, source ?? '', format !== null);
-  if (extraVocab.some(text => anchorMatches(text, anchor))) return [];
+  const leafVocab = artifactLeafVocabulary(path, source ?? '', format !== null);
+  if ([...extraVocab, ...leafVocab].some(text => anchorMatches(text, anchor))) return [];
   // Miss. The target having NOTHING addressable (no bullets, no schematic
-  // paths, no heading/symbol vocabulary — prose .md, empty schematic, .csv)
-  // keeps the issue #49 advisory downgrade: no anchor could ever resolve
-  // there by construction. With anything addressable present, the miss is
-  // a truthful error.
-  if (nodes.length === 0 && (schematic === null || schematic.paths.length === 0) && extraVocab.length === 0) {
+  // paths, no heading/symbol vocabulary, no leaf vocabulary — prose .md,
+  // empty schematic, .csv) keeps the issue #49 advisory downgrade: no
+  // anchor could ever resolve there by construction. With anything
+  // addressable present, the miss is a truthful error.
+  if (nodes.length === 0 && (schematic === null || schematic.paths.length === 0) && extraVocab.length === 0 && leafVocab.length === 0) {
     return [{
       file: fromFile, line, level: 'warning', category: 'refs',
-      message: `anchor on non-outline target: ${display}#${anchor} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols); use a file-level ref`,
+      message: `anchor on non-outline target: ${display}#${anchor} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref`,
       rule: 'refs.anchor.no-target', // issue #49
       suggestion: `drop the #${anchor} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${display}`,
     }];
@@ -622,10 +652,12 @@ export function checkArtifactAnchor(
     // Issue #53 Part 1.3: the ref follows the node — a near match proposes
     // the corrected ref, never a rename; only a truly missing key earns
     // add-key advice. Schematic targets suggest PATH-form fixes (#58);
-    // non-schematic artifacts rank their heading/symbol texts (#60).
+    // non-schematic artifacts rank their heading/symbol texts (#60) and,
+    // since #70, the leaf union (referenced names + text tokens) — a typo
+    // of a referenced name deserves the same did-you-mean quality.
     suggestion: schematic !== null
       ? schematicMissSuggestion(display, anchor, schematic.root, nodes)
-      : brokenAnchorSuggestion(display, anchor, nodes, extraVocab),
+      : brokenAnchorSuggestion(display, anchor, nodes, [...extraVocab, ...leafVocab]),
   }];
 }
 
@@ -690,7 +722,8 @@ function schematicMissSuggestion(
  *  INVERTED: it invited renaming (or adding) nodes to satisfy a bad anchor,
  *  when the outline is the source of truth and THE REF SHOULD FOLLOW THE
  *  NODE. Now the target's addressable vocabulary (real bullet texts plus
- *  the issue #60 artifact vocabulary — text headings and code symbols,
+ *  the issue #60 artifact vocabulary — text headings and code symbols —
+ *  plus, since #70, the LEAF union of referenced names and text tokens,
  *  handed in by checkArtifactAnchor; synthetic placeholders excluded: they
  *  are parser artifacts, issue #8, not content a human could have meant) is
  *  fuzzy-ranked against the failing anchor via nearSlugMatches (≥
