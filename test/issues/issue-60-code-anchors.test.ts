@@ -19,8 +19,9 @@
  *          one grammar
  *   r1-r4  Rust: pub item forms; generic/lifetime stripping; modifier
  *          runs (async fn, const fn, unsafe extern "C", static mut);
- *          non-pub / pub(crate) / indented methods excluded (the
- *          documented exported-only call)
+ *          non-pub column-0 items MINT, pub(crate)/pub(super) and
+ *          indented impl methods stay excluded (the issue #70 revision
+ *          of #60's exported-only call)
  *   p1-p2  Python: def/async def/class at column 0 in order; methods,
  *          nested defs, assignments, shebangs and comments excluded
  *   g1-g4  Go: func/type/const/var forms; method receivers (incl.
@@ -141,7 +142,7 @@ describe('issue #60: TS/JS family — exported top-level declarations', () => {
 
 // ── Rust ──
 
-describe('issue #60: Rust — pub top-level items', () => {
+describe('issue #60: Rust — column-0 items (pub optional since #70)', () => {
   test('r1: every pub item form, exact document order', () => {
     const src = [
       'pub fn parse(source: &str) -> Vec<&str> {',
@@ -189,19 +190,25 @@ describe('issue #60: Rust — pub top-level items', () => {
     ]);
   });
 
-  test('r4: exported-only call — bare fn, pub(crate), non-pub items and impl methods mint nothing', () => {
+  test('r4: #70 semantics — non-pub column-0 items mint; pub(crate)/pub(super) and impl methods mint nothing', () => {
+    // issue #70 revises #60's exported-only call: a column-0 declaration
+    // is a code symbol regardless of `pub` (the kelir corpus's example
+    // artifacts — `struct UserOracle;`, whole files of non-pub items —
+    // address exactly this way), while crate-restricted visibility and
+    // indented impl methods stay un-minted (impl methods are the leaf
+    // tier's net, extractCodeLeafNames).
     const src = [
-      'fn helper() {}',                       // private — not the exported surface
-      'pub(crate) fn crate_only() {}',        // crate-restricted — not exported
-      'pub(super) fn parent_only() {}',       // parent-restricted — not exported
-      'struct Private { }',                   // private type
+      'fn helper() {}',                       // issue #70: column-0 — mints
+      'pub(crate) fn crate_only() {}',        // crate-restricted — still not
+      'pub(super) fn parent_only() {}',       // parent-restricted — still not
+      'struct Private { }',                   // issue #70: column-0 — mints
       'impl Graph {',
       '    pub fn method(&self) {}',          // indented method — not top level
       '}',
       'use std::collections::HashMap;',       // not an item declaration
       'pub fn public() {}',
     ].join('\n');
-    expect(extractCodeSymbols('private.rs', src)).toEqual(['public']);
+    expect(extractCodeSymbols('private.rs', src)).toEqual(['helper', 'Private', 'public']);
   });
 });
 
@@ -434,10 +441,10 @@ describe('issue #60: realistic artifacts — exact ordered vocabularies', () => 
       '    pub fn hidden() {} // nested — not top level',
       '}',
       '',
-      'fn private_helper() {} // not pub — not addressable',
+      'fn private_helper() {} // issue #70: column-0 — mints (pub is optional)',
     ].join('\n');
     expect(extractCodeSymbols('artifacts/code/graph.rs', graphRs)).toEqual([
-      'Graph', 'MAX_DEPTH', 'depth', 'walk', 'Visit', 'Table', 'util',
+      'Graph', 'MAX_DEPTH', 'depth', 'walk', 'Visit', 'Table', 'util', 'private_helper',
     ]);
 
     const pipelinePy = [

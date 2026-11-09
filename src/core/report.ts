@@ -204,7 +204,9 @@ const RE_BROKEN_ANCHOR = /^broken anchor: (\S+)#(\S+) — no node matches$/;
 // same <file>#<anchor> shape as RE_BROKEN_ANCHOR, advisory severity.
 // Issue #60: the vocabulary list in the message widened to the full
 // addressable set (bullets, schematic key paths, text headings, code symbols).
-const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets, schematic key paths, text headings, code symbols\); use a file-level ref$/;
+// Issue #70: the list widened again with the leaf tier (referenced names,
+// text tokens) — kept in lockstep with refs.ts's emission, byte for byte.
+const RE_ANCHOR_NO_TARGET = /^anchor on non-outline target: (\S+)#(\S+) — target has no addressable nodes \(bullets, schematic key paths, text headings, code symbols, referenced names, text tokens\); use a file-level ref$/;
 // Issue #58: the schematic-anchor errors (JSON/YAML/TOML targets). Both are
 // error-level refs findings — grouped per pointer target like the no-target
 // advisory, so several anchors on the same broken/ambiguous file stay

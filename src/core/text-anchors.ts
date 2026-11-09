@@ -1,5 +1,7 @@
 /** Plain-text heading anchors — issue #60: the addressable section-heading
- *  vocabulary of .txt/.text artifact targets.
+ *  vocabulary of .txt/.text artifact targets; issue #70 adds the
+ *  extractTextLeafTokens diagram/tree-line tier beside it (headings
+ *  behavior byte-unchanged).
  *
  *  WHY THIS MODULE EXISTS. Issues #49/#58 taught checkRefs to resolve
  *  `#anchors` against the natural addressable units of schematic artifacts
@@ -174,4 +176,50 @@ const TEXT_EXT_RE = /\.te?xt$/i;
 /** Issue #60: does this path name a plain-text artifact target? */
 export function isTextArtifact(path: string): boolean {
   return TEXT_EXT_RE.test(path);
+}
+
+// ── Issue #70: the diagram/tree-line leaf tier ──
+
+/** The text-leaf token grammar: a maximal run of ASCII alphanumerics plus
+ *  INTERNAL `-`/`_` — so `kelir-shim`, `driver-rustvmm` and `virtio-shm`
+ *  are single tokens (internal dashes preserved), while a LEADING dash
+ *  (bullet decoration, `─`-runs) never joins (the first char class is
+ *  alnum-only). Unicode box/tree drawing (│├└─┌┐┘┴…) is outside the class
+ *  entirely and never glues tokens together. */
+const TEXT_LEAF_TOKEN_RE = /[A-Za-z0-9][A-Za-z0-9_-]*/g;
+
+/** Issue #70 (class B): the diagram/tree-LINE leaf vocabulary of a
+ *  plain-text artifact target — the text tokens of its lines, not just its
+ *  headings. WHY: on the kelir corpus anchors aimed at entries that exist
+ *  only as tree/box lines — `project-structure.txt#kelir-shim` (the tree
+ *  entry `│   ├── kelir-shim/`), `four-ring-bus.txt#virtio-shm` (the box
+ *  entry `[virtio-shm]`), `host-runtime.txt#driver-rustvmm` (the box-tree
+ *  line `│   ├── driver-rustvmm (DEFAULT Linux)…`, a file that is pure
+ *  box-drawing, so extractTextHeadings mints nothing and its pointers drew
+ *  no-target warnings) — and the reporter's convention quote is the repo's
+ *  established reading: “a pointer into a diagram means ‘this entry of the
+ *  diagram’”. Headings alone cannot address that class; this tier
+ *  tokenizes every line: tokens are maximal `[A-Za-z0-9][A-Za-z0-9_-]*`
+ *  runs filtered to length ≥ 2 AND at least one letter — pure numbers (a
+ *  port like `5432`) and single characters stay out, and box-drawing never
+ *  joins. `THE VIRTIO DEVICE COMPLEX` therefore yields THE, VIRTIO,
+ *  DEVICE, COMPLEX as separate tokens. Deliberately dumb: CRLF-safe by
+ *  construction (the token class excludes `\r`/`\n`), and over-extraction
+ *  stays the fail-safe direction (a spurious token can only turn a
+ *  would-be error into a hit, never mask a real one). Dedupe keeps the
+ *  first occurrence, document order; empty source → []. extractTextHeadings
+ *  above is byte-unchanged — this is an ADDITIVE tier beside it. */
+export function extractTextLeafTokens(source: string): string[] {
+  const tokens: string[] = [];
+  const seen = new Set<string>();
+  for (const m of source.matchAll(TEXT_LEAF_TOKEN_RE)) {
+    const tok = m[0];
+    if (tok.length < 2) continue;              // single chars never address anything
+    if (!/[A-Za-z]/.test(tok)) continue;       // pure numbers (ports, sizes) stay out
+    if (!seen.has(tok)) {
+      seen.add(tok); // first occurrence wins; document order kept
+      tokens.push(tok);
+    }
+  }
+  return tokens;
 }
