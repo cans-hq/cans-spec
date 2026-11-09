@@ -25,7 +25,6 @@ class MigrateParams(BaseModel, frozen=True):
     action: Literal["migrate"]
     schema_name: str
     target_version: int = Field(ge=1)
-    dry_run: bool = False
 
 
 def build_runtime(pg_host: str, pg_secret: str) -> KelirBuilder:
@@ -51,7 +50,6 @@ async def main() -> None:
     async with build_runtime("db.internal", "secret") as session:
         run = await session.spawn(
             "python", ["-m", "app.migrate", "--schema", "migrate"],
-            cwd="/workspace/migrations",
             params=MigrateParams(action="migrate", schema_name="migrate"),
         )
         if run.exit_code != 0:

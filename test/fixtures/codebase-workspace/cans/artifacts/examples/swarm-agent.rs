@@ -9,9 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use kelir::{FinalizeRequest, KelirBuilder, VmConfig};
 
-/// Deserialization target for every `spawn()` call in this file. Any
-/// handler that calls `.params::<SpawnAction>(…)` forces serde to validate
-/// the inbound JSON against this shape before dispatch.
+/// Deserialization target for every `spawn()` call in this file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum SpawnAction {
     FixStripeWebhook { repo: String, issue_id: String },
