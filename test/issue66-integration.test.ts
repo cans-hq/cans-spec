@@ -331,15 +331,22 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
 // ── b: fixing the pointers heals the run ─────────────────────────────────────
 
 describe('issue #66 b — the fixed workspace exits 0 with an empty issues list', () => {
-  test('b1: patch the seven broken pointers in the tmp copy → exit 0, broken 0, issues []', () => {
+  test('b1: patch the broken pointers and the advisory in the tmp copy → exit 0, broken 0, issues []', () => {
     const p = ws('b1');
     // The fix the oracle prescribes: repair the slug (Quotas exists),
     // repoint the missing file at a real one, — since the #69 extension —
     // heal the three deliberate artifact records the same way (the
     // misspelled symbol and heading get their real spellings, the missing
-    // artifact target is repointed at the example that exists) and —
-    // since #70 — heal the two typos the same way (the trait method and
-    // the import token get their real spellings).
+    // artifact target is repointed at the example that exists), — since
+    // #70 — heal the two typos the same way (the trait method and the
+    // import token get their real spellings) and drop the empty-target
+    // advisory pointer's anchor (the #41 ladder exits 1 on warnings-only,
+    // so a fully-healed tree must heal the warning class too — the
+    // file-level spelling of the same pointer is valid on any target).
+    // The typo patterns are NEWLINE-ANCHORED: `#configure_runtim` is a
+    // prefix of the VALID `#configure_runtime` pointer at line 15, so a
+    // bare replace would corrupt the valid occurrence first (the
+    // merge-commit lesson — String.replace takes the first hit).
     const routesPath = join(p, 'src', 'api', 'routes.ts');
     writeFileSync(routesPath, readFileSync(routesPath, 'utf8').replace('#Qutas', '#Quotas'), 'utf8');
     const quotaPath = join(p, 'src', 'storage', 'quota.py');
@@ -363,8 +370,15 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     writeFileSync(
       twPath,
       tw
-        .replace('see: cans/artifacts/code/container-service.rs#configure_runtim', 'see: cans/artifacts/code/container-service.rs#configure_runtime')
-        .replace('see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn', 'see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugin'),
+        .replace(
+          'see: cans/artifacts/code/container-service.rs#configure_runtim\n',
+          'see: cans/artifacts/code/container-service.rs#configure_runtime\n',
+        )
+        .replace('see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn', 'see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugin')
+        .replace(
+          'see: cans/artifacts/diagrams/empty-metrics.txt#anything',
+          'see: cans/artifacts/diagrams/empty-metrics.txt',
+        ),
       'utf8',
     );
     const r = runCli(['check', '--codebase', '--json'], p);
