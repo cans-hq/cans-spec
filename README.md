@@ -333,7 +333,17 @@ resolves at a `├── kelir-shim/` tree line, `#virtio-shm` at a `[virtio-shm
 box — and the Rust symbol grammar mints column-0 declarations regardless
 of `pub` plus trait-block methods; over-extraction is fail-safe (an extra
 name can only turn a would-be error into a hit, never mask a real miss —
-the full #70 story lives in the codebase section). A `see:` ref to a
+the full #70 story lives in the codebase section). Since issue #71 a
+`.txt`/`.text` line is also addressable as a whole ENTRY — the entry is
+the physical line: leading Unicode box-drawing/tree decoration stripped,
+one outermost ASCII `[`…`]` bracket pair stripped when it is the only
+one, lines with <2 chars or no letters never mint — so a multi-word
+hyphenated PHRASE anchor resolves where it used to fail with `no node
+matches`: `#Kernel-seccomp-unotify-triggers` answers the diagram line
+`Kernel seccomp-unotify triggers`, `#USERSPACE-SMOLTCP-INGRESS-RING` the
+box line `[USERSPACE SMOLTCP INGRESS RING]`, and the single-token anchors
+above keep working (the entry tier sits between the heading tier and the
+#70 leaf tier, through the same seam). A `see:` ref to a
 non-spec artifact file is TERMINAL for deep-hop purposes — 0 hops, it can
 never form an A→B→C spec chain — so an anchored pointer into one is verified
 against that vocabulary alone, with the same tolerant normalization
@@ -624,8 +634,9 @@ How resolution works:
   vocabularies the References engine verifies artifact refs with (the
   anchor sections above): schematic dot paths for
   `.json`/`.yaml`/`.yml`/`.toml` (issue #58), section headings for
-  `.txt`/`.text`, top-level symbols for code files (issue #60). A
-  missing file is reason `FileNotFound`; a broken, ambiguous or
+  `.txt`/`.text` (whole-line entries since #71, word tokens since #70),
+  top-level symbols for code files (issue #60, referenced names since
+  #70). A missing file is reason `FileNotFound`; a broken, ambiguous or
   unparseable anchor is reason `AnchorNotFound` with the specific why
   in the message plus a `did you mean` suggestion; an artifact with
   nothing addressable carrying an anchor is a warning
@@ -694,8 +705,29 @@ union (declarations + leaves), so a typo of a referenced name gets the same
 `refs.anchor.no-target` / `codebase.anchor.no-target` advisories narrow to
 their truthful core: they fire only for a target with no addressable
 content at all (an empty `.txt`), and the message enumerates the full
-vocabulary (bullets, schematic key paths, text headings, code symbols,
-referenced names, text tokens).
+vocabulary (bullets, schematic key paths, text headings, text entries,
+code symbols, referenced names, text tokens).
+
+**The #71 entry tier — phrase anchors into diagrams.** #70's leaf tier
+resolved single-token anchors into `.txt` diagrams, but a multi-word
+hyphenated PHRASE anchor still failed with `no node matches`: `see:
+cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers`
+aimed at the diagram line `Kernel seccomp-unotify triggers`, `see:
+cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` at
+`[USERSPACE SMOLTCP INGRESS RING]` — the #70 token tier addresses the
+words, never the line as a whole, and the convention's reading — a
+pointer into a diagram means "this entry of the diagram" — makes the
+entry the WHOLE line. Issue #71 adds the ENTRY tier between the heading
+tier and the #70 leaf tier, through the same shared artifact-anchor
+seam: every physical line of a `.txt`/`.text` target mints as a
+whole-line entry (leading Unicode box-drawing/tree decoration stripped;
+one outermost ASCII `[`…`]` bracket pair stripped when it is the only
+one; lines with <2 chars or no letters never mint), so both phrase
+anchors above resolve while #70's single-token anchors (`#kelir-shim`,
+`#virtio-shm`, `#driver-avf`) keep working as before. Broken-anchor
+messages, suggestion shapes, the exit ladder and the wire shape are
+unchanged; the no-target advisory's message enumeration gains the
+seventh vocabulary, `text entries`.
 
 Exit codes are the #41 ladder, confirmed intended by #70: `cans check
 --codebase` exits 0 clean · 1 warnings-only (`ok` stays true — `--strict`
