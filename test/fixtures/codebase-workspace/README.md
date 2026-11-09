@@ -1,4 +1,4 @@
-# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68, #69 and #70)
+# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68, #69, #70 and #71)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
@@ -11,7 +11,8 @@ pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
 
 This file is the human-readable oracle for `test/issue66-integration.test.ts`,
 `test/issue-67-contract.test.ts`, `test/issue-68-contract.test.ts`,
-`test/issue-69-contract.test.ts` and `test/issue-70-contract.test.ts`: every
+`test/issue-69-contract.test.ts`, `test/issue-70-contract.test.ts` and
+`test/issue-71-contract.test.ts`: every
 embedded pointer, its line, and the outcome the real CLI must produce. Line
 numbers below are byte-authoritative for the files as committed.
 
@@ -92,6 +93,30 @@ ADDS content, and it adds NO new corpus files: all the new targets are
 WORKSPACE artifacts under `cans/` — never scanned, never spec — and the
 one new source is `src/`, exactly the #69 pattern.
 
+**The issue #71 extension** (the kelir-shaped repro, round four): 0.19.0
+on kelir still misses one anchor class — multi-word hyphenated PHRASE
+anchors into `.txt` diagram targets. The #60 heading tier addresses
+section titles, the #70 leaf-token tier addresses single tokens, but a
+pointer that names a WHOLE diagram entry (`trap-flow.txt#
+Kernel-seccomp-unotify-triggers` at the entry `Kernel seccomp-unotify
+triggers`; `wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` at the
+bracketed box entry `[USERSPACE SMOLTCP INGRESS RING]`) matches neither
+vocabulary — `no node matches`, the issue's two errors. The extension
+adds the two diagrams — `cans/artifacts/diagrams/trap-flow.txt` (its
+line 8 is the issue's target line verbatim) and `cans/artifacts/diagrams/
+wire-plane.txt` (its line 5 verbatim) — plus the scanned sources
+`src/trap.rs` and `src/transport.rs` carrying four pointers: the two repro
+phrase pointers (VALID post-#71 through the new ENTRY tier — per physical
+line: trim, strip the leading box-drawing run, strip one outermost `[…]`
+pair, every lettered line is an entry; normalizeForAnchor folds `-`↔space
+so the phrase and its line are one), one near-miss phrase typo kept broken
+on purpose, and one single-token control the #70 leaf tier already
+resolves (the widening never narrows). Every pre-#71 file and its verdict
+is unchanged below; the extension only ADDS content, and it adds NO new
+corpus files: both diagrams are WORKSPACE artifacts under `cans/` — never
+scanned, never spec — and the two new sources are `src/`, exactly the
+#69/#70 pattern.
+
 ## The corpus (`cans/`)
 
 Workspace-relative keys (what `<file>` in a pointer resolves against):
@@ -157,7 +182,7 @@ spec, never scanned.
 `cans/` itself is ALWAYS skipped by the scanner (corpus refs verify in the
 refs engine, never twice) — note `cans/_rules.yaml` matches the
 `**/*.yaml` include glob and must therefore prove the skip rule: with the
-config block on, exactly the thirteen `src/` files below are scanned.
+config block on, exactly the sixteen `src/` files below are scanned.
 
 ### The redundancy knobs in `cans/_rules.yaml` (issue #67)
 
@@ -377,26 +402,74 @@ host-runtime underlined headings), so the census reads 22 broken / 1
 warning on 0.18.0 — the issue's report at fixture scale, the red-by-design
 pattern the #70 contract suite documents.
 
+### `src/trap.rs` — Rust line comments; the phrase-entry pointers (issue #71)
+
+The issue's first repro site (`crates/kelir-shim/src/trap.rs`) at fixture
+scale: the pointer names a WHOLE entry of the trap-flow diagram — the
+multi-word hyphenated PHRASE `Kernel seccomp-unotify-triggers` against the
+diagram's line 8, `Kernel seccomp-unotify triggers`. Post-#71 the ENTRY
+tier resolves it (normalizeForAnchor folds `-`↔space, so the phrase and
+its line normalize equal); pre-#71 (0.19.0) the heading tier cannot (the
+line is mixed-case flow prose, not a section title) and the leaf-token
+tier cannot (no single token — `Kernel`, `seccomp-unotify`, `triggers` —
+is the whole phrase) → a false `AnchorNotFound` error.
+
+| line | written span | verdict |
+|---|---|---|
+| 3 | `see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers` | VALID (post-#71) — the PHRASE-ENTRY anchor: the whole diagram line `Kernel seccomp-unotify triggers` (trap-flow.txt line 8, the issue's target line verbatim) |
+| 7 | `see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger` | **BROKEN — AnchorNotFound.** The near miss of the entry phrase (the singular `trigger`; post-#71 similarity ≈ 0.97 ≥ the 0.8 suggestion floor → `did you mean` proposing the entry spelling `#Kernel-seccomp-unotify-triggers`, resolution never auto-heals) |
+
+2 pointers, 1 broken (post-#71). Pre-#71 line 3 is the issue's false
+error and line 7's suggestion pool is empty (headings and tokens only —
+nothing within Levenshtein of the phrase), so both findings ride the
+error class, 2 of the 3 pre-#71 false/true errors of the #71 extension.
+
+### `src/transport.rs` — Rust line comments; the box-entry phrase + the control (issue #71)
+
+The issue's second repro site (`crates/kelir-transport/src/lib.rs`) at
+fixture scale, plus the control: the bracketed ALL-CAPS box entry
+`[USERSPACE SMOLTCP INGRESS RING]` (wire-plane.txt line 5, verbatim) is
+addressed as a whole phrase — post-#71 the ENTRY tier strips the ONE
+outermost `[…]` pair and the anchor resolves. Pre-#71 the line is NOT an
+ALL-CAPS heading (its physically-above line is non-blank box drawing —
+the standalone-paragraph guard fails by design, the bracketed entry sits
+mid-diagram) and no single token equals the phrase. The CONTROL pointer
+rides the #70 leaf tier: `SMOLTCP` is a word token of the same box line,
+addressable on BOTH sides of the #71 merge — the entry tier widens the
+vocabulary, never narrows it.
+
+| line | written span | verdict |
+|---|---|---|
+| 3 | `see: cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` | VALID (post-#71) — the BRACKETED PHRASE-ENTRY anchor: the whole box line `[USERSPACE SMOLTCP INGRESS RING]` minus its one outermost bracket pair (wire-plane.txt line 5, the issue's target line verbatim) |
+| 7 | `see: cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` | VALID — the single-token CONTROL: a word token of the same box line, resolved by the #70 leaf tier pre- AND post-#71 (the widening never narrows) |
+
+2 pointers, 0 broken. Pre-#71 line 3 is the issue's second false error;
+line 7 resolves in every world.
+
 ## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 14 (the 13 pre-#70 files plus `src/plugins/trait-wiring.rs`) | 50 (32 + the 18 #70 pointers) | 7 post-#70 — the 5 pre-#70 plus the two #70 typos; **22 pre-#70** (0.18.0: the 15 valid #70 pointers error too). Warnings: exactly 1 in both worlds — the empty-metrics no-target advisory |
-| flag on, no config block (pure defaults, plugin tier kept on) | 12 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 48 | 8 post-#70 — the 7 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence. **23 pre-#70** (the 22 + the rules-key pointer). Warnings: 1 |
-| aliasing include dropped (tier off, config block kept) | 14 | 50 | 12 post-#70 — the 2 true, the five #68 pointers as FileNotFound, the 3 #69 artifact broken and the 2 #70 typos (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of the #69/#70 artifact pointers; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves). **27 pre-#70** (the 12 + the 15 valid-as-broken) |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`, trait-wiring.rs:106 → `#configure_runtime`, :109 → `#LedgerPlugin`) | 14 | 50 | 0 post-#70 (pre-#70: 15 — the valid-as-broken class) |
+| config block on (this `_rules.yaml`) | 16 (the 14 post-#70 files plus `src/trap.rs` + `src/transport.rs`, issue #71) | 54 (50 + the four #71 pointers) | 8 post-#71 — the 7 post-#70 plus the #71 phrase typo (trap.rs:7); the two repro PHRASE pointers (trap.rs:3, transport.rs:3) resolve post-#71 and are the issue's 2 false errors on 0.19.0 (**10 pre-#71**); **22 pre-#70** (0.18.0). Warnings: exactly 1 in every world — the empty-metrics no-target advisory |
+| flag on, no config block (pure defaults, plugin tier kept on) | 14 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the two #71 sources are `.rs`, covered by the default `**/*.rs`) | 52 | 9 post-#71 — the 8 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence. **11 pre-#71** (the 9 + the 2 false phrase errors). **23 pre-#70**. Warnings: 1 |
+| aliasing include dropped (tier off, config block kept) | 16 | 54 | 13 post-#71 — the 2 true, the five #68 pointers as FileNotFound, the 3 #69 artifact broken, the 2 #70 typos and the #71 phrase typo (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of the #69/#70/#71 artifact pointers; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves). **15 pre-#71** (the 13 + the 2 false phrase errors). **27 pre-#70** |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`, trait-wiring.rs:106 → `#configure_runtime`, :109 → `#LedgerPlugin`, trap.rs:7 → `#Kernel-seccomp-unotify-triggers`) | 16 | 54 | 0 post-#71 (pre-#71: 3 — the two false phrase errors and the healed-typo-as-written error; pre-#70: 15 — the valid-as-broken class) |
 
 The 7 broken (post-#70) are the pre-#67 pair PLUS the three deliberate
 issue-#69 records PLUS the two issue-#70 typos — every issue-#67 pointer
 (both bug classes), every issue-#68 pointer, the three VALID issue-#69
 pointers and the fifteen VALID issue-#70 pointers resolve post-#70.
+Issue #71 adds the phrase typo as an EIGHTH record (trap.rs sorts after
+quota.py, so it slots in last) and the two repro PHRASE pointers join the
+valid set — 8 broken post-#71, 10 on 0.19.0 (the two false phrase errors
+the issue reports).
 Pre-#69 the census counted 26 pointers and 2 broken: the six artifact
 targets never parsed as pointers at all (the silent-skip half of the
 issue). Pre-#70 (0.18.0, the issue #70 report at fixture scale): 50
 pointers, 22 broken + 1 warning — the 15 valid #70 anchors all false
 AnchorNotFound errors (the class-A/class-B repro) and the empty-metrics
-pointer the one warning. Broken-pointer wire records (exact 7-key shape,
-deterministic order — file asc, line asc):
+pointer the one warning. Broken-pointer wire records post-#71 (exact
+7-key shape, deterministic order — file asc, line asc):
 
 ```json
 [
@@ -425,11 +498,15 @@ deterministic order — file asc, line asc):
     "targetSlug": "LedgerPlugn", "reason": "AnchorNotFound" },
   { "type": "CodebaseBrokenReference", "file": "src/storage/quota.py", "line": 7,
     "raw": "see: 09-observability.md", "targetFile": "09-observability.md",
-    "targetSlug": null, "reason": "FileNotFound" }
+    "targetSlug": null, "reason": "FileNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/trap.rs", "line": 7,
+    "raw": "see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger",
+    "targetFile": "cans/artifacts/diagrams/trap-flow.txt",
+    "targetSlug": "Kernel-seccomp-unotify-trigger", "reason": "AnchorNotFound" }
 ]
 ```
 
-`severity: error` → all seven findings are errors → `cans check --codebase`
+`severity: error` → all eight findings are errors → `cans check --codebase`
 exits **2** (the repo error-band convention; the RFC's example text shows 1
 — that one-number difference is the integration suite's one deliberate
 deviation, documented in its header). Issue #70 adds the warnings-only
@@ -502,3 +579,9 @@ bare stem, an empty slug or trailing garbage all refuse with the
 | `cans/artifacts/diagrams/four-ring-bus.txt#virtio-shm` (artifact, the box-entry token) | `src/plugins/trait-wiring.rs:93` |
 | `cans/artifacts/diagrams/host-runtime.txt#driver-rustvmm` (artifact, the box-tree token) | `src/plugins/trait-wiring.rs:98` |
 | `cans/artifacts/diagrams/empty-metrics.txt#anything` (artifact, the empty-target advisory pointer) | `src/plugins/trait-wiring.rs:115` — the reverse path answers it like any other writer line (the no-target verdict is the CHECK's, not the query's) |
+| `cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers` (artifact, the #71 phrase-entry anchor) | `src/trap.rs:3` |
+| `cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger` (artifact, the #71 TYPO spelling) | `src/trap.rs:7` — the reverse path answers for broken pointers too (a query, not a verdict; the #69 `#federateNope` precedent) |
+| `cans/artifacts/diagrams/trap-flow.txt` (artifact, file-level) | both into it: `src/trap.rs:3`, `:7` |
+| `cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` (artifact, the #71 bracketed phrase-entry anchor) | `src/transport.rs:3` |
+| `cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` (artifact, the #71 single-token CONTROL) | `src/transport.rs:7` |
+| `cans/artifacts/diagrams/wire-plane.txt` (artifact, file-level) | both into it: `src/transport.rs:3`, `:7` |

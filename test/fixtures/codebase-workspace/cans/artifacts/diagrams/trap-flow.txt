@@ -1,0 +1,11 @@
+THE UNOTIFY TRAP FLOW
+
+The guest kernel's seccomp filter defers every intercepted syscall to
+the shim through the unotify fd; each entry below names one stage of
+the flow in firing order — a pointer at an entry means the entry, the
+whole line (the diagram convention).
+
+Kernel seccomp-unotify triggers
+Shim polls the notify fd and reads the request
+Shim emulates, forwards, or denies the syscall
+Shim writes the response and wakes the guest waiter

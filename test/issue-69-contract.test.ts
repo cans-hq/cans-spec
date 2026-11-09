@@ -251,12 +251,27 @@ const BROKEN_FILE = {
   reason: 'FileNotFound',
 };
 
+/** trap.rs:7 — the issue #71 phrase typo (the singular near-miss of the
+ *  `Kernel-seccomp-unotify-triggers` whole-line entry; kept broken on
+ *  purpose, pinned by test/issue-71-contract.test.ts). */
+const BROKEN_71_TYPO_PHRASE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/trap.rs',
+  line: 7,
+  raw: 'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger',
+  targetFile: 'cans/artifacts/diagrams/trap-flow.txt',
+  targetSlug: 'Kernel-seccomp-unotify-trigger',
+  reason: 'AnchorNotFound',
+};
+
 /** The broken records, in the contract's deterministic order
  *  (file asc, line asc): the two pre-existing true ones plus the three
  *  deliberate issue-#69 ones PLUS — since the #70 extension — the two
  *  issue-#70 typos (trait-wiring.rs sorts after artifact-wiring.rs and
- *  before quota.py, so they slot in exactly here) — every VALID artifact
- *  pointer (and every #67/#68/#70 pointer) is missing from this set. */
+ *  before quota.py, so they slot in exactly here) PLUS — since the #71
+ *  extension — the one #71 phrase typo (trap.rs sorts after quota.py, so
+ *  it slots in exactly at the end) — every VALID artifact pointer (and
+ *  every #67/#68/#70/#71 pointer) is missing from this set. */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
   BROKEN_ARTIFACT_SYMBOL,
@@ -265,6 +280,7 @@ const ORACLE_ISSUES = [
   BROKEN_70_TYPO_METHOD,
   BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
+  BROKEN_71_TYPO_PHRASE,
 ];
 
 /** The three VALID artifact pointers' written spans — none may be reported
@@ -289,24 +305,28 @@ const AW = {
 // ── a: the check scan — the artifact tier validates, neither skips nor mints ─
 
 describe('issue #69 a — check --codebase: the artifact pointers join the census, three resolve, three break', () => {
-  test('a1: config-on — 14 scanned / 50 pointers / EXACTLY the 7 broken records, zero findings for the valid three', () => {
+  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken records, zero findings for the valid three', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (7 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
     // 12 pre-#69 sources + the artifact-wiring .rs source (#69) + the
-    // trait-wiring .rs source (#70) — the .txt artifacts live under
-    // cans/ — workspace files are never scanned.
-    expect(j.codebase.scanned).toBe(14);
+    // trait-wiring .rs source (#70) + the two #71 carriers (trap.rs and
+    // transport.rs) — the .txt artifacts live under cans/ — workspace
+    // files are never scanned.
+    expect(j.codebase.scanned).toBe(16);
     // 26 pre-#69 pointers + the six artifact pointers (#69) + the eighteen
-    // #70 pointers: pre-#69 the census did not even SEE this class (the
-    // silent-skip half of the issue).
-    expect(j.codebase.pointers).toBe(50);
-    expect(j.codebase.broken).toBe(7);
-    // THE pin: the broken set is byte-exactly the seven records above, in
+    // #70 pointers + the four #71 pointers (the two repro phrase anchors,
+    // the phrase typo, the single-token control): pre-#69 the census did
+    // not even SEE this class (the silent-skip half of the issue).
+    expect(j.codebase.pointers).toBe(54);
+    expect(j.codebase.broken).toBe(8);
+    // THE pin: the broken set is byte-exactly the eight records above, in
     // the deterministic order (file asc, line asc) — since #70 the two
-    // #70 typos slot in between the artifact-wiring.rs ones and quota.py.
+    // #70 typos slot in between the artifact-wiring.rs ones and quota.py,
+    // and since #71 the phrase typo slots in after quota.py (trap.rs
+    // sorts last).
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).map((i) => `${i.file}:${i.line}`)).toEqual([
       'src/api/routes.ts:3',
@@ -316,6 +336,7 @@ describe('issue #69 a — check --codebase: the artifact pointers join the censu
       'src/plugins/trait-wiring.rs:106',
       'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
+      'src/trap.rs:7',
     ]);
     // Since #70: exactly ONE warning rides the run — the empty-metrics
     // no-target advisory (an EMPTY target has nothing addressable by any
@@ -352,13 +373,13 @@ describe('issue #69 a — check --codebase: the artifact pointers join the censu
     }
   });
 
-  test('a2: the seven findings ride sections.refs as codebase.broken_reference errors', () => {
+  test('a2: the eight findings ride sections.refs as codebase.broken_reference errors', () => {
     const p = ws('a2');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
     const rides = (j.sections.refs as any[]).filter(
       (i) => i.rule === 'codebase.broken_reference' && i.level === 'error',
     );
-    expect(rides.length).toBe(7);
+    expect(rides.length).toBe(8);
     expect(rides.map((i) => `${i.file}:${i.line}`).sort()).toEqual([
       'src/api/routes.ts:3',
       'src/plugins/artifact-wiring.rs:36',
@@ -367,8 +388,9 @@ describe('issue #69 a — check --codebase: the artifact pointers join the censu
       'src/plugins/trait-wiring.rs:106',
       'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
+      'src/trap.rs:7',
     ]);
-    expect(j.counts.errors).toBeGreaterThanOrEqual(7);
+    expect(j.counts.errors).toBeGreaterThanOrEqual(8);
   });
 });
 
@@ -399,11 +421,11 @@ describe('issue #69 b — the artifact findings on the wire and in the human rep
     const p = ws('b2');
     // The folded view names the family with its count; --show refs unfolds
     // every member (the issue66-integration a4 pattern), so the artifact
-    // miss and its suggestion are visible without JSON. Since #70 the
-    // family reads 7× (the 5 + the two #70 typos).
+    // miss and its suggestion are visible without JSON. Since #71 the
+    // family reads 8× (the 5 + the two #70 typos + the #71 phrase typo).
     const folded = runCli(['check', '--codebase'], p);
     expect(folded.exit).toBe(2);
-    expect(folded.out + folded.err).toContain('7× broken codebase ref');
+    expect(folded.out + folded.err).toContain('8× broken codebase ref');
     const ex = runCli(['check', '--codebase', '--show', 'refs'], p);
     expect(ex.exit).toBe(2);
     expect(ex.out + ex.err).toContain('federateNope');
@@ -442,7 +464,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('cans/artifacts/examples/multi-vm-swarm.rs#federate'); // AS WRITTEN
-    expect(j.scanned).toBe(14); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
+    expect(j.scanned).toBe(16); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the two #71 carriers
     // ONLY the valid pointer answers: the `#federateNope` spelling at line
     // 36 does NOT (normalizeForAnchor('federateNope') !== 'federate' — no
     // fuzzy healing, the #67 d4 precedent on the artifact tier).
@@ -537,7 +559,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     // direction: an artifact target is never a corpus key).
     const j = parseJsonOut(runCli(['refs', '01-auth.md#Sessions', '--codebase', '--json'], p).out);
     expect(j.exitCode).toBe(0);
-    expect(j.scanned).toBe(14);
+    expect(j.scanned).toBe(16); // + the two #71 carriers (trap.rs, transport.rs)
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',

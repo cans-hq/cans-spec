@@ -14,18 +14,21 @@
  *             targetFile, targetSlug, reason }, and the broken counts
  *             matching the fixture oracle (issue #67 extended the fixture,
  *             issue #68 extended it again, issue #69 extended it a third
- *             time with the artifact-target tier, and issue #70 extended
- *             it a fourth time with the grammar-v2/leaf-tier shapes:
- *             14 scanned / 50 pointers / 7 broken: AnchorNotFound on the
+ *             time with the artifact-target tier, issue #70 extended it a
+ *             fourth time with the grammar-v2/leaf-tier shapes, and issue
+ *             #71 extended it a fifth time with the phrase-entry carriers:
+ *             16 scanned / 54 pointers / 8 broken: AnchorNotFound on the
  *             `#Qutas` typo, FileNotFound on the missing
  *             `09-observability.md`, plus the three deliberate #69
- *             artifact records and the two #70 typos; every #67/#68
- *             pointer, the three valid #69 artifact pointers AND the
- *             fifteen valid #70 pointers is VALID; see the
- *             issue-67/-68/-69/-70 contract suites)
- *   b ....... after fixing the broken pointers IN THE TMP COPY (all seven
- *             since #70: the two pre-existing, the three deliberate
- *             artifact ones and the two #70 typos) the same command exits
+ *             artifact records, the two #70 typos and the #71 phrase typo;
+ *             every #67/#68 pointer, the three valid #69 artifact
+ *             pointers, the fifteen valid #70 pointers AND the three valid
+ *             #71 phrase/control pointers is VALID; see the
+ *             issue-67/-68/-69/-70/-71 contract suites)
+ *   b ....... after fixing the broken pointers IN THE TMP COPY (all eight
+ *             since #71: the two pre-existing, the three deliberate
+ *             artifact ones, the two #70 typos and the #71 phrase typo) the
+ *             same command exits
  *             0 with `codebase.issues` empty — silent rot is a diff, not a
  *             life sentence
  *   c ....... `refs "<file>#<slug>" --codebase` lists the exact fixture
@@ -39,16 +42,16 @@
  *             `check --json` has NO `codebase` key — the pre-#66 wire
  *             shape, byte-for-byte (the additive-block contract)
  *   f ....... flag-on with NO codebase config block still scans (the
- *             defaults): the RFC §3 code-extension set only — 12 files /
- *             48 pointers / 8 broken (the 7 + the `cans/_rules.yaml#
+ *             defaults): the RFC §3 code-extension set only — 14 files /
+ *             52 pointers / 9 broken (the 8 + the `cans/_rules.yaml#
  *             codebase.enabled` pointer, which breaks HERE because the
  *             variant's own rules rewrite drops the codebase block the
  *             anchor names — the artifact tier validates the file's
  *             CURRENT content) — proving both the default include list
  *             (no `*.yaml`) and that the scan itself needs no config (the
  *             #68 plugin tier stays on in the variant so the fixture's
- *             cans/plugins/*.md corpus keys keep resolving; the #69/#70
- *             artifact pointers live in the .rs sources, covered by the
+ *             cans/plugins/*.md corpus keys keep resolving; the #69/#70/
+ *             #71 artifact pointers live in the .rs sources, covered by the
  *             default *.rs include)
  *
  * DELIBERATE DEVIATION (the suite's one, by design): the RFC's example text
@@ -216,10 +219,26 @@ const BROKEN_70_TYPO_NAME = {
   reason: 'AnchorNotFound',
 };
 
+/** trap.rs:7 — the issue #71 PHRASE typo (the SINGULAR near miss of the
+ *  trap-flow diagram's line-8 entry `Kernel seccomp-unotify triggers`),
+ *  kept broken on purpose, pinned by test/issue-71-contract.test.ts —
+ *  the #71 extension of the fixture added it; it slots in LAST (trap.rs
+ *  sorts after quota.py). */
+const BROKEN_71_TYPO_PHRASE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/trap.rs',
+  line: 7,
+  raw: 'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger',
+  targetFile: 'cans/artifacts/diagrams/trap-flow.txt',
+  targetSlug: 'Kernel-seccomp-unotify-trigger',
+  reason: 'AnchorNotFound',
+};
+
 /** The broken records, in the contract's deterministic order (file asc,
  *  line asc) — the two pre-existing true ones plus the three deliberate
- *  issue #69 artifact records and, since #70, the two issue #70 typos
- *  (issues #69/#70 extended the fixture; trait-wiring.rs sorts after
+ *  issue #69 artifact records, the two issue #70 typos and — since the #71
+ *  extension — the #71 phrase typo LAST (trap.rs sorts after quota.py;
+ *  issues #69/#70/#71 extended the fixture; trait-wiring.rs sorts after
  *  artifact-wiring.rs, so the #70 records slot in exactly here). */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
@@ -229,9 +248,10 @@ const ORACLE_ISSUES = [
   BROKEN_70_TYPO_METHOD,
   BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
+  BROKEN_71_TYPO_PHRASE,
 ];
 
-/** The pure-default variant's oracle: the seven records PLUS the
+/** The pure-default variant's oracle: the eight records PLUS the
  *  `cans/_rules.yaml#codebase.enabled` pointer as AnchorNotFound — the
  *  variant's own rules rewrite drops the codebase block the anchor names
  *  (see BROKEN_RULES_KEY above), one MORE broken than the config-on run. */
@@ -244,6 +264,7 @@ const DEFAULTS_ORACLE_ISSUES = [
   BROKEN_70_TYPO_METHOD,
   BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
+  BROKEN_71_TYPO_PHRASE,
 ];
 
 /** The exact wire keys a CodebaseIssueRecord may carry — no more, no fewer. */
@@ -262,23 +283,24 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(14); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68) + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70); cans/ always skipped
-    expect(j.codebase.pointers).toBe(50); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers
-    expect(j.codebase.broken).toBe(7);
+    expect(j.codebase.scanned).toBe(16); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68) + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport .rs carriers (#71); cans/ always skipped
+    expect(j.codebase.pointers).toBe(54); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers
+    expect(j.codebase.broken).toBe(8);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
 
   test('a2: every issue record carries EXACTLY the RFC §4.1 wire keys', () => {
     const p = ws('a2');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
-    expect((j.codebase.issues as any[]).length).toBe(7);
+    expect((j.codebase.issues as any[]).length).toBe(8);
     for (const issue of j.codebase.issues as any[]) {
       expect(Object.keys(issue).sort()).toEqual(ISSUE_KEYS);
     }
     // Order is part of the contract: file asc, line asc (the three #69
     // artifact records interleave by file between routes.ts and quota.py,
     // and since #70 so do the two #70 typos between artifact-wiring.rs
-    // and quota.py).
+    // and quota.py; since #71 the phrase typo lands LAST — trap.rs sorts
+    // after quota.py).
     expect((j.codebase.issues as any[]).map((i) => `${i.file}:${i.line}`)).toEqual([
       'src/api/routes.ts:3',
       'src/plugins/artifact-wiring.rs:36',
@@ -287,6 +309,7 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
       'src/plugins/trait-wiring.rs:106',
       'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
+      'src/trap.rs:7',
     ]);
   });
 
@@ -296,7 +319,7 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     const rides = (j.sections.refs as any[]).filter(
       (i) => i.rule === 'codebase.broken_reference' && i.level === 'error',
     );
-    expect(rides.length).toBe(7);
+    expect(rides.length).toBe(8);
     expect(rides.map((i) => `${i.file}:${i.line}`).sort()).toEqual([
       'src/api/routes.ts:3',
       'src/plugins/artifact-wiring.rs:36',
@@ -305,9 +328,10 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
       'src/plugins/trait-wiring.rs:106',
       'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
+      'src/trap.rs:7',
     ]);
     // And they count like every band: error-level findings in errorCount.
-    expect(j.counts.errors).toBeGreaterThanOrEqual(7);
+    expect(j.counts.errors).toBeGreaterThanOrEqual(8);
   });
 
   test('a4: human output names the broken pointers (no JSON needed to see the rot)', () => {
@@ -317,7 +341,7 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     // The folded view names the family with its count and the first member's
     // diagnosis + did-you-mean fix (the report compaction contract, issue
     // #41 — one member per group in the fold):
-    expect(r.out + r.err).toContain('7× broken codebase ref');
+    expect(r.out + r.err).toContain('8× broken codebase ref'); // 8 since #71 (7 + the phrase typo)
     expect(r.out + r.err).toContain('src/api/routes.ts');
     // `--show refs` unfolds: EVERY member names its source file.
     const ex = runCli(['check', '--codebase', '--show', 'refs'], p);
@@ -339,12 +363,16 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     // misspelled symbol and heading get their real spellings, the missing
     // artifact target is repointed at the example that exists), — since
     // #70 — heal the two typos the same way (the trait method and the
-    // import token get their real spellings) and drop the empty-target
+    // import token get their real spellings), — since #71 — heal the
+    // phrase typo (the singular gets its entry spelling) and drop the
+    // empty-target
     // advisory pointer's anchor (the #41 ladder exits 1 on warnings-only,
     // so a fully-healed tree must heal the warning class too — the
     // file-level spelling of the same pointer is valid on any target).
     // The typo patterns are NEWLINE-ANCHORED: `#configure_runtim` is a
-    // prefix of the VALID `#configure_runtime` pointer at line 15, so a
+    // prefix of the VALID `#configure_runtime` pointer at line 15 and
+    // `#Kernel-seccomp-unotify-trigger` of the VALID
+    // `#Kernel-seccomp-unotify-triggers` at trap.rs:3, so a
     // bare replace would corrupt the valid occurrence first (the
     // merge-commit lesson — String.replace takes the first hit).
     const routesPath = join(p, 'src', 'api', 'routes.ts');
@@ -381,6 +409,15 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
         ),
       'utf8',
     );
+    const trapPath = join(p, 'src', 'trap.rs');
+    writeFileSync(
+      trapPath,
+      readFileSync(trapPath, 'utf8').replace(
+        'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger\n',
+        'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers\n',
+      ),
+      'utf8',
+    );
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(0);
     const j = parseJsonOut(r.out);
@@ -388,8 +425,8 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     expect(j.exitCode).toBe(0);
     // The phase ran (config-on) — the block is present with a clean outcome.
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(14);
-    expect(j.codebase.pointers).toBe(50);
+    expect(j.codebase.scanned).toBe(16);
+    expect(j.codebase.pointers).toBe(54);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -406,7 +443,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('01-auth.md#Sessions'); // the query AS WRITTEN
-    expect(j.scanned).toBe(14); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
+    expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
     // The `cans/`-prefixed spelling (routes.ts:2) resolves to the same
     // target, so it is among the hits. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -528,7 +565,7 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 12 files, 48 pointers, 8 broken (the 7 + the rules-key pointer), no yaml', () => {
+  test('f1: the RFC §3 default include list — 14 files, 52 pointers, 9 broken (the 8 + the rules-key pointer), no yaml', () => {
     const p = ws('f1');
     // No CODEBASE block (the flag is the scan consent) — but the #68
     // plugin-tier wiring stays, mirroring the fixture's committed rules:
@@ -555,19 +592,20 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     expect(j.codebase).toBeDefined();
     // The default code-extension set has no *.yaml: src/net.yaml and
     // src/plugins/mounts.yaml (and their pointers) stay out of the scan —
-    // the config-on run sees 14/50 instead; the three #68 .rs sources AND
-    // the #69 artifact-wiring.rs source AND the #70 trait-wiring.rs source
-    // are covered by the default *.rs include, so the six #69 artifact
-    // pointers and the eighteen #70 pointers stay in scope.
-    expect(j.codebase.scanned).toBe(12);
-    expect(j.codebase.pointers).toBe(48);
-    // EIGHT broken, one MORE than the config-on run: this variant's own
+    // the config-on run sees 16/54 instead; the three #68 .rs sources, the
+    // #69 artifact-wiring.rs source, the #70 trait-wiring.rs source AND
+    // the #71 trap/transport carriers are covered by the default *.rs
+    // include, so the six #69 artifact pointers, the eighteen #70 pointers
+    // and the four #71 pointers stay in scope.
+    expect(j.codebase.scanned).toBe(14);
+    expect(j.codebase.pointers).toBe(52);
+    // NINE broken, one MORE than the config-on run: this variant's own
     // rules rewrite drops the codebase block, and the #69 schematic
     // pointer `cans/_rules.yaml#codebase.enabled` validates against the
     // rules file's CURRENT content — the rewrite deleted the key it
     // names, so the pointer honestly breaks (the tier is never a rubber
     // stamp).
-    expect(j.codebase.broken).toBe(8);
+    expect(j.codebase.broken).toBe(9);
     expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/net.yaml')).toBe(false);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);

@@ -1,0 +1,8 @@
+THE WIRE PLANE
+                                     │
+      ┌──────────────────────────────┴───────────────────┐
+      │ the guest netns rides the userspace smoltcp ring  │
+[USERSPACE SMOLTCP INGRESS RING]
+      └──────────────┬───────────────────────────────────┘
+                     ▼
+[KERNEL VIRTIO NETQUEUE PAIR]
