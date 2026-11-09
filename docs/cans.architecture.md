@@ -318,10 +318,11 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - If anchor on a `.txt`/`.text` or code-file target (`.ts`, `.js`, `.rs`,
   `.py`, `.go`, …) → the target's natural addressable units: section
   headings for text artifacts, top-level symbols for code files (issue #60),
-  since issue #71 the whole-line ENTRY tier of `.txt`/`.text` targets
-  (below), and since issue #70 their LEAF tier (referenced names and word
-  tokens, below), resolved by the same §12 normalization and first-match
-  rule as bullets.
+  since issue #71 the ENTRY tier of `.txt`/`.text` targets (whole lines,
+  and since issue #72 each bracketed group sharing the line its own entry
+  beside them — below), and since issue #70 their LEAF tier (referenced
+  names and word tokens, below), resolved by the same §12 normalization
+  and first-match rule as bullets.
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
 ### Schematic anchors — JSON / YAML / TOML (issue #58)
@@ -440,8 +441,17 @@ artifacts/registry.rs#parse_header                .rs / .py / .go likewise
   `Kernel seccomp-unotify triggers`, `#USERSPACE-SMOLTCP-INGRESS-RING`
   at `[USERSPACE SMOLTCP INGRESS RING]`): the pointer-into-a-diagram
   convention's "this entry of the diagram" reading with the entry as the
-  WHOLE line, while #70's single-token anchors keep working (the full
-  contract: the codebase section's #71 block).
+  WHOLE line, while #70's single-token anchors keep working. Since issue
+  #72 each maximal flat bracketed GROUP on a line mints its trimmed
+  interior as its OWN entry beside the whole-line one — which keeps
+  minting verbatim, the widening never narrows — left-to-right under the
+  same guards (`[]`, `[5]`, `[x]` never mint), so the kelir row
+  `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]`
+  answers `#USERSPACE-SMOLTCP-INGRESS-RING` at the group entry and
+  `#FOO-BAR-BAZ` resolves at `[FOO BAR BAZ] [other one]`, while
+  single-group lines (`[SOLO ENTRY HERE]`, `[KERNEL VIRTIO NETQUEUE
+  PAIR]`) keep resolving exactly as since #71 (the full contract: the
+  codebase section's #71 block).
 - **The leaf tier (issue #70)**: the declarations above are not the whole
   surface a pointer can legitimately name — every identifier a code target
   references and every word token of a `.txt`/`.text` tree/box/diagram
@@ -1015,7 +1025,7 @@ extensions the artifact anchor machinery can address —
 plus the union of the §12 vocabularies: schematic
 `.json`/`.yaml`/`.yml`/`.toml` (issue #58), text `.txt`/`.text`
 (headings, issue #60 — word tokens since #70, whole-line entries since
-#71) and code symbols
+#71, per-group bracketed entries since #72) and code symbols
 `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.rs`/`.py`/`.go`
 (issue #60). A file type NO vocabulary can address (`.c`, `.cpp`,
 `.csv`, a versioned `v1.2`) is deliberately not a pointer target —
@@ -1128,11 +1138,29 @@ when it is the only one, lines with <2 chars or no letters never mint —
 so the phrase anchors above resolve, #70's single-token anchors
 (`#kelir-shim`, `#virtio-shm`, `#driver-avf`) keep working as before,
 and `.md` corpus and schematic `.json`/`.yaml`/`.toml` targets stay
-untouched. Everything else is unchanged — the broken-anchor message, the
+untouched. Issue #72 completes the bracket story: the single-pair strip
+answers a lone bracketed span only, so a bracketed entry SHARING its
+line with other bracketed groups — the kelir wire-plane.txt line 5,
+`[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]`,
+the issue's minimal `[FOO BAR BAZ] [other one]` — kept the whole
+bracketed row as its one entry, and the phrase anchors naming its first
+group (`#USERSPACE-SMOLTCP-INGRESS-RING`, `#FOO-BAR-BAZ`) failed as `no
+node matches`. #72 keeps the whole cleaned line minting verbatim (the
+#71 rule, unchanged — the widening never narrows) and mints each maximal
+flat bracketed group's trimmed interior as its OWN entry, left-to-right,
+under the same guards (`[]`, `[5]`, `[x]` never mint; whole-line entry
+first, then the groups, first-occurrence dedupe in document order) — so
+`#USERSPACE-SMOLTCP-INGRESS-RING` resolves at the group entry
+`USERSPACE SMOLTCP INGRESS RING` and `#FOO-BAR-BAZ` at `[FOO BAR BAZ]
+[other one]`, while single-pair lines (`#SOLO-ENTRY-HERE` at `[SOLO
+ENTRY HERE]`) and every single-group line keep resolving exactly as
+since #71. Everything else is unchanged — the broken-anchor message, the
 suggestion shapes, the exit ladder, the wire shape — except the no-target
 advisory's message enumeration, which gains the seventh vocabulary: the
 verbatim list is now (bullets, schematic key paths, text headings, text
-entries, code symbols, referenced names, text tokens).
+entries, code symbols, referenced names, text tokens); #72 mints no new
+vocabulary type — the entry tier simply mints more entries — so that
+message and every contract above stand unchanged through it.
 
 **Pipeline (select → extract → resolve → report):**
 
@@ -2040,7 +2068,8 @@ repaired ONLY when ALL of these hold for the failing `see: <file>#<anchor>`:
 1. **Target resolvable and parseable** — the same path checkRefs used
    (loaded workspace key, or the file on disk via the spec resolver; YAML
    mapping keys, and since issue #60 the text headings and code symbols of
-   non-schematic artifacts (the #70 leaf and #71 entry tiers included),
+   non-schematic artifacts (the #70 leaf and #71 entry tiers included,
+   #72's per-group bracketed entries with them),
    count as addressable candidates — the repair
    vocabulary mirrors the resolution vocabulary, issue #49). Missing or
    unparseable targets are skipped cleanly — they keep their own findings.
@@ -2262,7 +2291,10 @@ grammar names through the shared extension table); queries resolve over
 the same widened target space — the #70 leaf tier and Rust grammar v2
 included, and since issue #71 the whole-line entry tier of `.txt`/`.text`
 targets likewise (still no grammar change: the extension table is
-untouched, only the anchor-resolution vocabulary grew). An artifact query
+untouched, only the anchor-resolution vocabulary grew) — and since issue
+#72 the per-group bracketed entries too (again no grammar change: the
+extension table and the query grammar are untouched; only the entry tier
+mints more entries). An artifact query
 resolves its file against the workspace
 (containment, issue #10) and matches pointers by resolved-path equality
 with the same anchor-insensitive comparison as a corpus query. In both

@@ -353,6 +353,20 @@ output:
 #     schematic key paths, text headings, text entries, code symbols,
 #     referenced names, text tokens). Everything else (broken-anchor
 #     messages, suggestions, exit ladder, wire shape) is unchanged.
+#   - issue #72 widens the ENTRY tier for bracketed entries that SHARE
+#     their line with other bracketed groups, through the same shared
+#     verdict path: the whole cleaned line keeps minting verbatim (the
+#     #71 rule, unchanged — the widening never narrows) and each maximal
+#     flat bracketed group on the line mints its trimmed interior as its
+#     OWN entry, left-to-right under the same guards (`[]`, `[5]`, `[x]`
+#     never mint) — so `#USERSPACE-SMOLTCP-INGRESS-RING` resolves at the
+#     shared line `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound]
+#     [on_net_inbound]` through the group entry, and `#FOO-BAR-BAZ` at
+#     `[FOO BAR BAZ] [other one]`, while single-token and single-pair
+#     anchors (`#SOLO-ENTRY-HERE` at a lone `[SOLO ENTRY HERE]`) keep
+#     working. No new vocabulary type — the entry tier mints more
+#     entries — so the seven-vocabulary message and every other contract
+#     above stand unchanged.
 #   - #<slug> resolves with the SAME tolerant anchor matching the corpus
 #     refs engine uses (case- and separator-insensitive; the `slug:`
 #     algorithm at the top of this file is the canonical spelling — and

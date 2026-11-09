@@ -343,7 +343,17 @@ matches`: `#Kernel-seccomp-unotify-triggers` answers the diagram line
 `Kernel seccomp-unotify triggers`, `#USERSPACE-SMOLTCP-INGRESS-RING` the
 box line `[USERSPACE SMOLTCP INGRESS RING]`, and the single-token anchors
 above keep working (the entry tier sits between the heading tier and the
-#70 leaf tier, through the same seam). A `see:` ref to a
+#70 leaf tier, through the same seam). Since issue #72 a bracketed entry
+that SHARES its line with other bracketed groups resolves too: the whole
+cleaned line keeps minting verbatim (the widening never narrows) and each
+maximal flat bracketed group on the line mints its trimmed interior as
+its OWN entry, left-to-right under the same guards (`[]`, `[5]`, `[x]`
+never mint) — so `#USERSPACE-SMOLTCP-INGRESS-RING` answers the shared
+line `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]`
+through the group entry, and `#FOO-BAR-BAZ` the issue's minimal repro
+`[FOO BAR BAZ] [other one]`, while a single-group line like
+`[KERNEL VIRTIO NETQUEUE PAIR]` keeps resolving exactly as since #71. A
+`see:` ref to a
 non-spec artifact file is TERMINAL for deep-hop purposes — 0 hops, it can
 never form an A→B→C spec chain — so an anchored pointer into one is verified
 against that vocabulary alone, with the same tolerant normalization
@@ -634,7 +644,8 @@ How resolution works:
   vocabularies the References engine verifies artifact refs with (the
   anchor sections above): schematic dot paths for
   `.json`/`.yaml`/`.yml`/`.toml` (issue #58), section headings for
-  `.txt`/`.text` (whole-line entries since #71, word tokens since #70),
+  `.txt`/`.text` (whole-line entries since #71, per-group bracketed
+  entries since #72, word tokens since #70),
   top-level symbols for code files (issue #60, referenced names since
   #70). A missing file is reason `FileNotFound`; a broken, ambiguous or
   unparseable anchor is reason `AnchorNotFound` with the specific why
@@ -724,10 +735,24 @@ whole-line entry (leading Unicode box-drawing/tree decoration stripped;
 one outermost ASCII `[`…`]` bracket pair stripped when it is the only
 one; lines with <2 chars or no letters never mint), so both phrase
 anchors above resolve while #70's single-token anchors (`#kelir-shim`,
-`#virtio-shm`, `#driver-avf`) keep working as before. Broken-anchor
-messages, suggestion shapes, the exit ladder and the wire shape are
-unchanged; the no-target advisory's message enumeration gains the
-seventh vocabulary, `text entries`.
+`#virtio-shm`, `#driver-avf`) keep working as before. Issue #72 closes
+the one shape that tier left unreachable: a line of several bracketed
+groups — the kelir wire-plane row `[USERSPACE SMOLTCP INGRESS RING]
+[on_net_outbound] [on_net_inbound]`, the issue's minimal `[FOO BAR BAZ]
+[other one]` — strips nothing (the single-pair rule answers a lone
+bracketed span only), so the whole bracketed row was the one entry and a
+phrase anchor naming its first group (`#USERSPACE-SMOLTCP-INGRESS-RING`,
+`#FOO-BAR-BAZ`) failed with `no node matches`. #72 keeps the whole-line
+entry minting verbatim (the widening never narrows) and mints each
+maximal flat bracketed group's trimmed interior as its OWN entry,
+left-to-right under the same guards (`[]`, `[5]`, `[x]` never mint), so
+both anchors resolve at the group entry while `#SOLO-ENTRY-HERE` at a
+lone `[SOLO ENTRY HERE]` — and every single-group line, `[KERNEL VIRTIO
+NETQUEUE PAIR]` included — keeps resolving exactly as since #71.
+Broken-anchor messages, suggestion shapes, the exit ladder and the wire
+shape are unchanged — #72 mints no new vocabulary type, the entry tier
+simply mints more entries; the no-target advisory's message enumeration
+gains the seventh vocabulary, `text entries`.
 
 Exit codes are the #41 ladder, confirmed intended by #70: `cans check
 --codebase` exits 0 clean · 1 warnings-only (`ok` stays true — `--strict`
