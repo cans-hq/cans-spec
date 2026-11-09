@@ -59,17 +59,20 @@
  * integration harness pattern; the fixture is driven from a fresh tmp copy):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             14 scanned (12 pre-#69 + the artifact-wiring .rs source
- *             (#69) + the trait-wiring .rs source (#70)) / 50 pointers
- *             (26 + the six artifact pointers (#69) + the eighteen #70
+ *             17 scanned (12 pre-#69 + the artifact-wiring .rs source
+ *             (#69) + the trait-wiring .rs source (#70) + the trap and
+ *             transport carriers (#71) + the net-refs.rs carrier (#72)) /
+ *             56 pointers (26 + the six artifact pointers (#69) + the
+ *             eighteen #70 pointers + the four #71 pointers + the two #72
  *             pointers — pre-#69 the census did not even SEE the artifact
- *             class) / EXACTLY the SEVEN broken records byte-pinned in
+ *             class) / EXACTLY the EIGHT broken records byte-pinned in
  *             the deterministic order (the 2 pre-existing true records +
  *             the 3 deliberate #69 ones + the 2 #70 typos, which slot in
  *             file order — trait-wiring.rs sorts after artifact-
- *             wiring.rs), EXACTLY ONE warning (the #70 empty-metrics
- *             no-target advisory), and ZERO findings for the three VALID
- *             artifact pointers — the heart of the issue
+ *             wiring.rs — + the #71 phrase typo, last), EXACTLY ONE
+ *             warning (the #70 empty-metrics no-target advisory), and
+ *             ZERO findings for the three VALID artifact pointers — the
+ *             heart of the issue
  *   b ....... the --json wire: the artifact findings carry targetFile and
  *             targetSlug VERBATIM (the `cans/` prefix kept, the anchor as
  *             captured) with reasons AnchorNotFound / FileNotFound; and
@@ -111,6 +114,14 @@
  * extraction-driven), d1 (the corpus band untouched). Merge order:
  * engine first, then this branch — the full suite goes green only
  * against the merged engine (verified at the merge commit).
+ *
+ * THE #71+#72 SHIFTS (test/issue-71-contract.test.ts and
+ * test/issue-72-contract.test.ts own the extensions): the fixture grew the
+ * trap/transport phrase carriers (+2 scanned, +4 pointers, +1 phrase typo
+ * — the eight-record oracle) and then the net-refs.rs carrier (+1 scanned,
+ * +2 VALID pointers, no new broken record), so the census pins moved once
+ * more — a1 16→17 scanned / 54→56 pointers, c1/c6 16→17 scanned. No
+ * verdict moved: the same eight broken records in the same order.
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
@@ -305,7 +316,7 @@ const AW = {
 // ── a: the check scan — the artifact tier validates, neither skips nor mints ─
 
 describe('issue #69 a — check --codebase: the artifact pointers join the census, three resolve, three break', () => {
-  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken records, zero findings for the valid three', () => {
+  test('a1: config-on — 17 scanned / 56 pointers / EXACTLY the 8 broken records, zero findings for the valid three', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
@@ -313,14 +324,15 @@ describe('issue #69 a — check --codebase: the artifact pointers join the censu
     expect(j.codebase).toBeDefined();
     // 12 pre-#69 sources + the artifact-wiring .rs source (#69) + the
     // trait-wiring .rs source (#70) + the two #71 carriers (trap.rs and
-    // transport.rs) — the .txt artifacts live under cans/ — workspace
-    // files are never scanned.
-    expect(j.codebase.scanned).toBe(16);
+    // transport.rs) + the net-refs.rs carrier (#72) — the .txt artifacts
+    // live under cans/ — workspace files are never scanned.
+    expect(j.codebase.scanned).toBe(17);
     // 26 pre-#69 pointers + the six artifact pointers (#69) + the eighteen
     // #70 pointers + the four #71 pointers (the two repro phrase anchors,
-    // the phrase typo, the single-token control): pre-#69 the census did
-    // not even SEE this class (the silent-skip half of the issue).
-    expect(j.codebase.pointers).toBe(54);
+    // the phrase typo, the single-token control) + the two #72 pointers:
+    // pre-#69 the census did not even SEE this class (the silent-skip half
+    // of the issue).
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(8);
     // THE pin: the broken set is byte-exactly the eight records above, in
     // the deterministic order (file asc, line asc) — since #70 the two
@@ -464,7 +476,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('cans/artifacts/examples/multi-vm-swarm.rs#federate'); // AS WRITTEN
-    expect(j.scanned).toBe(16); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the two #71 carriers
+    expect(j.scanned).toBe(17); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the two #71 carriers + the net-refs.rs carrier (#72)
     // ONLY the valid pointer answers: the `#federateNope` spelling at line
     // 36 does NOT (normalizeForAnchor('federateNope') !== 'federate' — no
     // fuzzy healing, the #67 d4 precedent on the artifact tier).
@@ -559,7 +571,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     // direction: an artifact target is never a corpus key).
     const j = parseJsonOut(runCli(['refs', '01-auth.md#Sessions', '--codebase', '--json'], p).out);
     expect(j.exitCode).toBe(0);
-    expect(j.scanned).toBe(16); // + the two #71 carriers (trap.rs, transport.rs)
+    expect(j.scanned).toBe(17); // + the two #71 carriers (trap.rs, transport.rs) + the #72 net-refs.rs carrier
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',

@@ -65,6 +65,15 @@
  * pre-fix misses are ERRORS, the issue's report). On the BARE 0.19.0
  * engine: 16 / 54 / 10 broken (the 8 + the two repro phrase pointers as
  * FALSE errors) + the same 1 warning.
+ * RE-PINNED for #72 (fixture growth only, no verdict moved): the #72
+ * extension adds the net-refs.rs carrier (+1 scanned, +2 pointers — both
+ * VALID, resolved by the #72 per-group widening the engine merge brings)
+ * and grows wire-plane.txt line 5 into a three-group row (its #71 repro
+ * pointer keeps resolving, through the group entry now) — so the pins
+ * below read 17 scanned / 56 pointers; the EIGHT broken records, the
+ * fold, the rides and the ladder rungs are UNCHANGED (net-refs.rs adds no
+ * broken record, and `#SMOLTCP`/`#SOLO-ENTRY-HERE`-class single-pair and
+ * leaf controls keep their world).
  *
  * WHAT EACH BLOCK PINS (all blackbox via the real CLI, the issue-66/67/68/
  * 69/70 integration harness pattern; the fixture is driven from a fresh tmp
@@ -98,7 +107,7 @@
  *             / #70 `#configure_runtim` precedent); the file-level queries
  *             answer ALL their pointers; a TRUNCATED phrase answers ZERO
  *             matches (never fuzzy); a `.md` regression query still
- *             answers its pre-existing matches over the 16-file scan
+ *             answers its pre-existing matches over the 17-file scan
  *   d ....... the exit-code ladder re-pinned over the SHIFTED census: the
  *             raw fixture exits 2 (8 errors + 1 warning, ok:false);
  *             healing ALL EIGHT error records in the tmp copy (the #71
@@ -321,18 +330,19 @@ const TRANSPORT = {
 // ── a: the check scan — the entry tier validates, never mints ──────────────
 
 describe('issue #71 a — check --codebase: the four pointers join the census, the phrases resolve, the typo breaks', () => {
-  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken records, zero findings for the repro phrases and the control', () => {
+  test('a1: config-on — 17 scanned / 56 pointers / EXACTLY the 8 broken records, zero findings for the repro phrases and the control', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    // 14 post-#70 sources + the two #71 .rs carriers (the .txt targets live
-    // under cans/ — workspace files are never scanned).
-    expect(j.codebase.scanned).toBe(16);
+    // 14 post-#70 sources + the two #71 .rs carriers + the #72 net-refs.rs
+    // carrier (the .txt targets live under cans/ — workspace files are
+    // never scanned).
+    expect(j.codebase.scanned).toBe(17);
     // 50 post-#70 pointers + the four #71 ones (2 repro phrases + 1 typo +
-    // 1 control).
-    expect(j.codebase.pointers).toBe(54);
+    // 1 control) + the two #72 ones (the t.txt repro + its control).
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(8);
     expect(j.counts.errors).toBe(8);
     // THE pin: the broken set is byte-exactly the eight records above, in
@@ -481,7 +491,7 @@ describe('issue #71 c — refs <artifact> --codebase: the phrase anchors answer 
       expect(j.ok).toBe(true);
       expect(j.command).toBe('refs');
       expect(j.node).toBe(q); // the query AS WRITTEN
-      expect(j.scanned).toBe(16);
+      expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
       expect(j.matches).toEqual([{ file, line, text }]);
     }
   });
@@ -561,7 +571,7 @@ describe('issue #71 c — refs <artifact> --codebase: the phrase anchors answer 
     // artifact pointer leaks into a corpus query (the non-crossing pin).
     const j = parseJsonOut(runCli(['refs', '01-auth.md#Sessions', '--codebase', '--json'], p).out);
     expect(j.exitCode).toBe(0);
-    expect(j.scanned).toBe(16);
+    expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',
@@ -572,7 +582,7 @@ describe('issue #71 c — refs <artifact> --codebase: the phrase anchors answer 
 
 // ── d: the exit-code ladder, re-pinned over the shifted census ─────────────
 
-describe('issue #71 d — the exit ladder over the 16/54 census: 0 clean / 1 warnings / 2 errors', () => {
+describe('issue #71 d — the exit ladder over the 17/56 census: 0 clean / 1 warnings / 2 errors', () => {
   /** Heal the EIGHT error records of the tmp copy — the oracle the README
    *  prescribes, #66-b1's heal set extended by the #71 phrase typo. The
    *  typo pattern is NEWLINE-ANCHORED: `#Kernel-seccomp-unotify-trigger`
@@ -598,15 +608,15 @@ describe('issue #71 d — the exit ladder over the 16/54 census: 0 clean / 1 war
       .replace('see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger\n', 'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers\n'));
   }
 
-  test('d1: the RAW fixture — the error band, EXIT CODE 2 (16/54/8+1)', () => {
+  test('d1: the RAW fixture — the error band, EXIT CODE 2 (17/56/8+1)', () => {
     const p = ws('d1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
-    expect(j.codebase.scanned).toBe(16);
-    expect(j.codebase.pointers).toBe(54);
+    expect(j.codebase.scanned).toBe(17);
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(8);
     expect(j.counts.errors).toBe(8);
     expect(j.counts.warnings).toBe(1); // the empty-metrics advisory rides along
@@ -625,8 +635,8 @@ describe('issue #71 d — the exit ladder over the 16/54 census: 0 clean / 1 war
     expect(j.exitCode).toBe(1);
     expect(j.counts.errors).toBe(0);
     expect(j.counts.warnings).toBe(1);
-    expect(j.codebase.scanned).toBe(16);
-    expect(j.codebase.pointers).toBe(54);
+    expect(j.codebase.scanned).toBe(17);
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -652,7 +662,7 @@ describe('issue #71 d — the exit ladder over the 16/54 census: 0 clean / 1 war
     expect(j.exitCode).toBe(0);
     expect(j.counts.errors).toBe(0);
     expect(j.counts.warnings).toBe(0);
-    expect(j.codebase.pointers).toBe(54);
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(0);
   });
 });

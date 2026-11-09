@@ -15,16 +15,19 @@
  *             matching the fixture oracle (issue #67 extended the fixture,
  *             issue #68 extended it again, issue #69 extended it a third
  *             time with the artifact-target tier, issue #70 extended it a
- *             fourth time with the grammar-v2/leaf-tier shapes, and issue
- *             #71 extended it a fifth time with the phrase-entry carriers:
- *             16 scanned / 54 pointers / 8 broken: AnchorNotFound on the
+ *             fourth time with the grammar-v2/leaf-tier shapes, issue #71
+ *             extended it a fifth time with the phrase-entry carriers, and
+ *             issue #72 extended it a sixth time with the bracketed-group
+ *             carrier (net-refs.rs): 17 scanned / 56 pointers / 8 broken:
+ *             AnchorNotFound on the
  *             `#Qutas` typo, FileNotFound on the missing
  *             `09-observability.md`, plus the three deliberate #69
  *             artifact records, the two #70 typos and the #71 phrase typo;
  *             every #67/#68 pointer, the three valid #69 artifact
- *             pointers, the fifteen valid #70 pointers AND the three valid
- *             #71 phrase/control pointers is VALID; see the
- *             issue-67/-68/-69/-70/-71 contract suites)
+ *             pointers, the fifteen valid #70 pointers, the three valid
+ *             #71 phrase/control pointers AND the two valid #72
+ *             group/control pointers is VALID; see the
+ *             issue-67/-68/-69/-70/-71/-72 contract suites)
  *   b ....... after fixing the broken pointers IN THE TMP COPY (all eight
  *             since #71: the two pre-existing, the three deliberate
  *             artifact ones, the two #70 typos and the #71 phrase typo) the
@@ -42,8 +45,8 @@
  *             `check --json` has NO `codebase` key — the pre-#66 wire
  *             shape, byte-for-byte (the additive-block contract)
  *   f ....... flag-on with NO codebase config block still scans (the
- *             defaults): the RFC §3 code-extension set only — 14 files /
- *             52 pointers / 9 broken (the 8 + the `cans/_rules.yaml#
+ *             defaults): the RFC §3 code-extension set only — 15 files /
+ *             54 pointers / 9 broken (the 8 + the `cans/_rules.yaml#
  *             codebase.enabled` pointer, which breaks HERE because the
  *             variant's own rules rewrite drops the codebase block the
  *             anchor names — the artifact tier validates the file's
@@ -51,8 +54,8 @@
  *             (no `*.yaml`) and that the scan itself needs no config (the
  *             #68 plugin tier stays on in the variant so the fixture's
  *             cans/plugins/*.md corpus keys keep resolving; the #69/#70/
- *             #71 artifact pointers live in the .rs sources, covered by the
- *             default *.rs include)
+ *             #71/#72 artifact pointers live in the .rs sources, covered
+ *             by the default *.rs include)
  *
  * DELIBERATE DEVIATION (the suite's one, by design): the RFC's example text
  * shows exit code 1 for a broken-pointer run; this repo's error-band
@@ -283,8 +286,8 @@ describe('issue #66 a — check --codebase on the broken-pointer workspace', () 
     expect(j.ok).toBe(false);
     expect(j.exitCode).toBe(2);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(16); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68) + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport .rs carriers (#71); cans/ always skipped
-    expect(j.codebase.pointers).toBe(54); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers
+    expect(j.codebase.scanned).toBe(17); // 5 pre-#67 + the 4 src/plugins/ files (#67) + the 3 .rs sources (#68) + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport .rs carriers (#71) + the net-refs .rs carrier (#72); cans/ always skipped
+    expect(j.codebase.pointers).toBe(56); // 10 pre-#67 + the 11 kelir-shaped #67 pointers + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers + the two #72 pointers
     expect(j.codebase.broken).toBe(8);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
@@ -425,8 +428,8 @@ describe('issue #66 b — the fixed workspace exits 0 with an empty issues list'
     expect(j.exitCode).toBe(0);
     // The phase ran (config-on) — the block is present with a clean outcome.
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(16);
-    expect(j.codebase.pointers).toBe(54);
+    expect(j.codebase.scanned).toBe(17);
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(0);
     expect(j.codebase.issues).toEqual([]);
   });
@@ -443,7 +446,7 @@ describe('issue #66 c — refs <node> --codebase lists the exact fixture hits', 
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('01-auth.md#Sessions'); // the query AS WRITTEN
-    expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
+    expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
     // The `cans/`-prefixed spelling (routes.ts:2) resolves to the same
     // target, so it is among the hits. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -565,7 +568,7 @@ describe('issue #66 e — no codebase block and no flag: the plain-check wire ha
 // ── f: flag-on with no config block scans the defaults ───────────────────────
 
 describe('issue #66 f — check --codebase with no config block still scans (the defaults)', () => {
-  test('f1: the RFC §3 default include list — 14 files, 52 pointers, 9 broken (the 8 + the rules-key pointer), no yaml', () => {
+  test('f1: the RFC §3 default include list — 15 files, 54 pointers, 9 broken (the 8 + the rules-key pointer), no yaml', () => {
     const p = ws('f1');
     // No CODEBASE block (the flag is the scan consent) — but the #68
     // plugin-tier wiring stays, mirroring the fixture's committed rules:
@@ -592,13 +595,14 @@ describe('issue #66 f — check --codebase with no config block still scans (the
     expect(j.codebase).toBeDefined();
     // The default code-extension set has no *.yaml: src/net.yaml and
     // src/plugins/mounts.yaml (and their pointers) stay out of the scan —
-    // the config-on run sees 16/54 instead; the three #68 .rs sources, the
-    // #69 artifact-wiring.rs source, the #70 trait-wiring.rs source AND
-    // the #71 trap/transport carriers are covered by the default *.rs
-    // include, so the six #69 artifact pointers, the eighteen #70 pointers
-    // and the four #71 pointers stay in scope.
-    expect(j.codebase.scanned).toBe(14);
-    expect(j.codebase.pointers).toBe(52);
+    // the config-on run sees 17/56 instead; the three #68 .rs sources, the
+    // #69 artifact-wiring.rs source, the #70 trait-wiring.rs source, the
+    // #71 trap/transport carriers AND the #72 net-refs.rs carrier are
+    // covered by the default *.rs include, so the six #69 artifact
+    // pointers, the eighteen #70 pointers, the four #71 pointers and the
+    // two #72 pointers stay in scope.
+    expect(j.codebase.scanned).toBe(15);
+    expect(j.codebase.pointers).toBe(54);
     // NINE broken, one MORE than the config-on run: this variant's own
     // rules rewrite drops the codebase block, and the #69 schematic
     // pointer `cans/_rules.yaml#codebase.enabled` validates against the

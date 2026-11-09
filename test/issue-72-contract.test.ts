@@ -52,7 +52,8 @@
  * trap.rs/transport.rs shape: the repro pointer
  * `// see: cans/artifacts/diagrams/t.txt#FOO-BAR-BAZ` at line 3, the
  * control pointer `// see: cans/artifacts/diagrams/t.txt#SOLO-ENTRY-HERE`
- * at line 8) rides the committed `**/*.rs` glob AND the RFC §3 default.
+ * at line 8) rides the committed `*.rs` include glob AND the RFC §3
+ * default.
  *
  * CENSUS ARITHMETIC (verified by RUNNING under the engine spec, never
  * assumed): scanned 16 → 17 (the net-refs.rs carrier, covered by the
