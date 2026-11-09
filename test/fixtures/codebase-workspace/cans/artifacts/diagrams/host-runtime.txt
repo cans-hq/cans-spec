@@ -16,3 +16,13 @@ driver-avf
 driver-virtio
 -------------
   host mmio --> virtio-pci --> vm[1].net0
+
+The driver backend tree (issue #70 extension): the pluggable implementations
+the DriverRouter mediates, mirroring the real diagram's kelir-drivers box.
+The tree tokens below are the leaf vocabulary the src/ pointers ride —
+box-drawn tree lines, never headings (the parens and the lowercase names
+keep the text-heading vocabulary exactly as #69 pinned it).
+
+│  ├── driver-rustvmm (DEFAULT Linux, Rust VMM)
+│  ├── driver-avf     (Intel AVF passthrough)
+│  └── driver-cloud-hypervisor (fallback)
