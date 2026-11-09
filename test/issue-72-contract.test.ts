@@ -132,16 +132,18 @@
  * two false records), a2 (TEN findings ride sections.refs, not eight),
  * a4 (the pure-defaults census reads 11 broken, not 9), b2 (the fold
  * reads `10×` and both false spans DO ride the unfolded findings —
- * neither carries a near match on the bare engine), d2/d3 (the healed
- * tree still carries the two false errors, so both rungs read exit 2,
- * not 1/0). The green-on-bare pins are the contract half that must STAY
- * green across the merge: a3 (the warnings class — rule and count and
- * the advisory's line, engine-independent), b1 (the #71 typo record's
- * wire shape, selected by written span — it exists with the same shape
- * on both engines), c1–c6 (the reverse path answers writers regardless
- * of verdicts), d1 (the raw fixture's error band — exit 2 either way),
- * e1 (the corpus band untouched). Merge order: engine first, then this
- * branch — the full suite goes green only against the merged engine.
+ * neither carries a near match on the bare engine), d1 (the raw census
+ * reads 10 broken / 10 errors, not 8 — the EXIT CODE itself is 2 either
+ * way, but the census pins ride the rung), d2/d3 (the healed tree still
+ * carries the two false errors, so both rungs read exit 2, not 1/0). The
+ * green-on-bare pins are the contract half that must STAY green across
+ * the merge: a3 (the warnings class — rule and count and the advisory's
+ * line, engine-independent), b1 (the #71 typo record's wire shape,
+ * selected by written span — it exists with the same shape on both
+ * engines), c1–c6 (the reverse path answers writers regardless of
+ * verdicts), e1 (the corpus band untouched). Merge order: engine first,
+ * then this branch — the full suite goes green only against the merged
+ * engine.
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
