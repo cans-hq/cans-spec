@@ -318,9 +318,10 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - If anchor on a `.txt`/`.text` or code-file target (`.ts`, `.js`, `.rs`,
   `.py`, `.go`, …) → the target's natural addressable units: section
   headings for text artifacts, top-level symbols for code files (issue #60),
-  and since issue #70 their LEAF tier (referenced names and word tokens,
-  below), resolved by the same §12 normalization and first-match rule as
-  bullets.
+  since issue #71 the whole-line ENTRY tier of `.txt`/`.text` targets
+  (below), and since issue #70 their LEAF tier (referenced names and word
+  tokens, below), resolved by the same §12 normalization and first-match
+  rule as bullets.
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
 ### Schematic anchors — JSON / YAML / TOML (issue #58)
@@ -428,6 +429,19 @@ artifacts/registry.rs#parse_header                .rs / .py / .go likewise
   consts, modules — are the vocabulary, extracted line-based without
   parsing (the zero-dependency law holds; over-extraction can only add
   addressable names, never silence a miss).
+- **The entry tier (issue #71)**: a `.txt`/`.text` diagram's natural unit
+  is the LINE — every physical line mints as a whole-line entry (leading
+  Unicode box-drawing/tree decoration stripped; one outermost ASCII
+  `[`…`]` bracket pair stripped when it is the only one; lines with <2
+  chars or no letters never mint), resolved between the #60 heading tier
+  and the #70 leaf tier through the same frozen anchor seam — so a
+  multi-word hyphenated PHRASE anchor resolves
+  (`#Kernel-seccomp-unotify-triggers` at the line
+  `Kernel seccomp-unotify triggers`, `#USERSPACE-SMOLTCP-INGRESS-RING`
+  at `[USERSPACE SMOLTCP INGRESS RING]`): the pointer-into-a-diagram
+  convention's "this entry of the diagram" reading with the entry as the
+  WHOLE line, while #70's single-token anchors keep working (the full
+  contract: the codebase section's #71 block).
 - **The leaf tier (issue #70)**: the declarations above are not the whole
   surface a pointer can legitimately name — every identifier a code target
   references and every word token of a `.txt`/`.text` tree/box/diagram
@@ -440,12 +454,14 @@ artifacts/registry.rs#parse_header                .rs / .py / .go likewise
 - **A miss is the only failure**: an anchor that matches nothing is the
   `refs.broken.anchor` error, never stacked under a spurious deep-hop
   error (the target is terminal, so no hop exists to stack). Its
-  suggestion ranks the heading/symbol texts like bullet texts (issue #53).
+  suggestion ranks the heading/entry/leaf/symbol texts like bullet texts
+  (issue #53).
 - **Nothing addressable** (an empty `.txt`, a `.csv`, any format outside
   the vocabulary) keeps the `refs.anchor.no-target` advisory downgrade of
   issue #49 — explicit, never a silent pass.
-- **The `--fix` anchor repair** proposes heading/symbol candidates for
-  these targets too, mirroring the resolution vocabulary (below).
+- **The `--fix` anchor repair** proposes heading/entry/leaf/symbol
+  candidates for these targets too, mirroring the resolution vocabulary
+  (below).
 - **External `name://` targets** resolve through the same shared verdict
   path, so a pointer at `ext://notes/runbook.txt#creation-flow` behaves
   exactly like the on-disk form.
@@ -455,11 +471,12 @@ A broken anchor keeps its `refs.broken.anchor` error — but the ADVICE follows
 the node, never the other way around (the old `fix the anchor or add a
 "<anchor>" node` wording invited renaming spec nodes to satisfy a bad ref).
 On a miss, the target's addressable vocabulary — real bullet texts + YAML
-mapping keys +, since issue #60, text headings and code symbols — synthetic
-placeholder nodes excluded (issue #8) — is
-fuzzy-ranked against the failing anchor (`nearSlugMatches`, normalized
-similarity ≥ 0.8; resolution itself stays exact-after-normalization, the
-fuzzy layer exists only for suggestions and the gated `--fix` repair):
+mapping keys +, since issue #60, text headings and code symbols (the #70
+leaf and #71 entry tiers included) — synthetic placeholder nodes excluded
+(issue #8) — is fuzzy-ranked against the failing anchor (`nearSlugMatches`,
+normalized similarity ≥ 0.8; resolution itself stays
+exact-after-normalization, the fuzzy layer exists only for suggestions and
+the gated `--fix` repair):
 - **one near candidate** → `did you mean <file>#<slug>? — fix the ref
   anchor`, with the CANONICAL `anchorSlug` spelling (the same form
   `cans slug` prints) — a pure ref fix.
@@ -629,7 +646,8 @@ Verdicts, in order:
    through the same shared path as an on-disk target — bullet nodes plus,
    for JSON/YAML/TOML, the full schematic dot-path vocabulary of issue #58,
    and, for `.txt`/code files, the heading/symbol vocabulary of issue #60
-   (issue #49 parity). A miss is `refs.broken.anchor`, an ambiguous flat
+   with its #70 leaf and #71 entry tiers (issue #49 parity). A miss is
+   `refs.broken.anchor`, an ambiguous flat
    name is `refs.anchor.ambiguous`, an unparseable target is
    `refs.anchor.parse-error`, and a target with nothing addressable
    downgrades to the `refs.anchor.no-target` advisory.
@@ -995,8 +1013,9 @@ by TABLE, not by `.anything-goes`: the file group accepts exactly the
 extensions the artifact anchor machinery can address —
 `CODEBASE_TARGET_EXTS` (`core/codebase.ts`), `.md` (the corpus tier)
 plus the union of the §12 vocabularies: schematic
-`.json`/`.yaml`/`.yml`/`.toml` (issue #58), text headings
-`.txt`/`.text` and code symbols
+`.json`/`.yaml`/`.yml`/`.toml` (issue #58), text `.txt`/`.text`
+(headings, issue #60 — word tokens since #70, whole-line entries since
+#71) and code symbols
 `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.rs`/`.py`/`.go`
 (issue #60). A file type NO vocabulary can address (`.c`, `.cpp`,
 `.csv`, a versioned `v1.2`) is deliberately not a pointer target —
@@ -1071,7 +1090,8 @@ advisory narrows to its truthful core: `refs.anchor.no-target` /
 `codebase.anchor.no-target` now fire only for a target with NO
 addressable content at all (an empty `.txt`; a `.csv` was never in the
 table) — the message enumerates the full vocabulary (bullets, schematic
-key paths, text headings, code symbols, referenced names, text tokens).
+key paths, text headings, text entries, code symbols, referenced names,
+text tokens).
 
 **Rust symbol grammar v2 (issue #70):** the #60 Rust rules minted `pub`
 items only — the "exported" call — and the kelir run paid for it in the
@@ -1089,6 +1109,30 @@ mints: `pub(crate)`/`pub(super)` items (crate-restricted visibility is
 not a demonstrated name) and impl-block methods (an impl is a
 realization, not a declaration surface — the #60 reasoning kept). The
 TS/JS, Python and Go grammars are unchanged.
+
+**The entry tier — whole-line diagram entries (issue #71):** #70's leaf
+tier made single-token anchors into `.txt`/`.text` diagrams resolve, but
+a multi-word hyphenated PHRASE anchor still failed as `no node matches`:
+`see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers`
+aimed at the diagram line `Kernel seccomp-unotify triggers`, and
+`cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` at
+`[USERSPACE SMOLTCP INGRESS RING]` — the #70 token tier addresses the
+words, never the line as a whole, and the convention's "this entry of
+the diagram" reading makes the entry the WHOLE line. #71 adds the ENTRY
+tier additively, between the #60 heading tier and the #70 leaf-token
+tier, through the same frozen `checkArtifactAnchor` seam
+(`extractTextEntries`): each physical line of a `.txt`/`.text` target
+mints as a whole-line entry — leading Unicode box-drawing/tree
+decoration stripped, one outermost ASCII `[`…`]` bracket pair stripped
+when it is the only one, lines with <2 chars or no letters never mint —
+so the phrase anchors above resolve, #70's single-token anchors
+(`#kelir-shim`, `#virtio-shm`, `#driver-avf`) keep working as before,
+and `.md` corpus and schematic `.json`/`.yaml`/`.toml` targets stay
+untouched. Everything else is unchanged — the broken-anchor message, the
+suggestion shapes, the exit ladder, the wire shape — except the no-target
+advisory's message enumeration, which gains the seventh vocabulary: the
+verbatim list is now (bullets, schematic key paths, text headings, text
+entries, code symbols, referenced names, text tokens).
 
 **Pipeline (select → extract → resolve → report):**
 
@@ -1206,7 +1250,7 @@ and the issue #67 suites.
 | Ref to a missing non-spec target | Broken ref error — and still mesh-exiting in deep-hop terms (issue #44 never downgrades the broken-ref signal) |
 | Extensionless flat target `see: 02-b` | Resolves flat-first to `02-b.md`, then `02-b/index.md` (§11, round 6) |
 | Subfolder `.md` target `see: plugins/pty.md` | Promoted to a first-class spec file by `cans check` (issue #54); its own `see:` refs are ordinary edges — §5 deep-hop rules apply |
-| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's natural vocabulary (bullets, schematic key paths, text headings, code symbols), the same shared vocabulary as on-disk targets (issues #55, #49, #58, #60) |
+| External pointer `see: kelir-cloud://sub/path` (declared root, present, file exists) | Valid terminal ref — one hop like an artifact target; anchors resolve against the target's natural vocabulary (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens), the same shared vocabulary as on-disk targets (issues #55, #49, #58, #60, #70, #71) |
 | External pointer, undeclared root name | Broken ref error — `undeclared external root 'name'` (issue #55) |
 | External pointer, declared root not checked out | ONE warning per referenced root; pointers into it unverified that run (issue #55) |
 | External pointer, sub-path escaping the root (`root://../..`, symlink out) | Broken ref error — containment is lexical AND realpath; never resolves outside the declared root (issue #55, extends #10) |
@@ -1919,8 +1963,9 @@ structure-category warnings to errors in place before counting — exit 2,
 **External roots (issue #55):** with `references.external_roots` declared
 (§18), `see: name://sub/path` pointers verify against the sibling checkouts
 — `check` READS them (existence, containment, and — for anchored pointers —
-the one target file's natural vocabulary: bullets, YAML keys, schematic key
-paths, text headings, code symbols) and never writes anything there:
+the one target file's natural vocabulary: bullets, schematic key paths,
+text headings, text entries, code symbols, referenced names, text tokens)
+and never writes anything there:
 `--fix` writes spec files only, external targets earn no back-pointers, and
 the external repo's own `see:` graph is never entered (terminal targets,
 §12). A declared root that is not checked out is a warning, so CI that only
@@ -1995,7 +2040,8 @@ repaired ONLY when ALL of these hold for the failing `see: <file>#<anchor>`:
 1. **Target resolvable and parseable** — the same path checkRefs used
    (loaded workspace key, or the file on disk via the spec resolver; YAML
    mapping keys, and since issue #60 the text headings and code symbols of
-   non-schematic artifacts, count as addressable candidates — the repair
+   non-schematic artifacts (the #70 leaf and #71 entry tiers included),
+   count as addressable candidates — the repair
    vocabulary mirrors the resolution vocabulary, issue #49). Missing or
    unparseable targets are skipped cleanly — they keep their own findings.
 2. **Unambiguous intent** — EXACTLY ONE distinct node/key text in the target
@@ -2214,7 +2260,10 @@ pointer can name and the two can never drift. Issue #70 changed no
 grammar here (the query side already names everything the pointer
 grammar names through the shared extension table); queries resolve over
 the same widened target space — the #70 leaf tier and Rust grammar v2
-included. An artifact query resolves its file against the workspace
+included, and since issue #71 the whole-line entry tier of `.txt`/`.text`
+targets likewise (still no grammar change: the extension table is
+untouched, only the anchor-resolution vocabulary grew). An artifact query
+resolves its file against the workspace
 (containment, issue #10) and matches pointers by resolved-path equality
 with the same anchor-insensitive comparison as a corpus query. In both
 tiers `core/codebase.ts` runs
