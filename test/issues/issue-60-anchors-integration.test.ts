@@ -287,12 +287,15 @@ describe('issue #60: checkRefs — natural addressable units per file kind', () 
     expect(downgraded.every(i => i.level === 'warning')).toBe(true);
     expect(downgraded[0]!.message).toBe(
       // issue #70: parenthetical widened with the leaf tier — bytes re-pinned.
-      'anchor on non-outline target: artifacts/matrix.csv#row-count — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref',
+      // issue #71: entry tier joined the list — bytes re-pinned again.
+      'anchor on non-outline target: artifacts/matrix.csv#row-count — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref',
     );
     expect(downgraded[1]!.message).toBe(
       // issue #70: parenthetical widened with the leaf tier — bytes re-pinned
       // (an EMPTY .txt has no tokens, so the leaf tier adds no vocabulary).
-      'anchor on non-outline target: artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref',
+      // issue #71: entry tier joined the list — bytes re-pinned again (an
+      // empty .txt has no entries either, so the advisory survives).
+      'anchor on non-outline target: artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref',
     );
     expect(issues.filter(i => i.rule === 'refs.broken.anchor')).toHaveLength(0);
   });

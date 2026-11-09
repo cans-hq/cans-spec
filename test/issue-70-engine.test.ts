@@ -832,7 +832,9 @@ describe('issue #70 engine — resolution (the leaf tier, end to end)', () => {
     const w = scan.warnings[0]!;
     expect(w.rule).toBe('codebase.anchor.no-target');
     expect(w.message).toBe(
-      'anchor on artifact target: cans/artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref',
+      // issue #70 re-pin superseded: issue #71 added the entry tier (text
+      // entries) to the parenthetical — bytes re-pinned, seven vocabularies.
+      'anchor on artifact target: cans/artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref',
     );
   });
 
@@ -897,7 +899,9 @@ describe('issue #70 engine — the seam guards', () => {
     expect(issues[0]!.rule).toBe('refs.anchor.no-target');
     expect(issues[0]!.level).toBe('warning');
     expect(issues[0]!.message).toBe(
-      'anchor on non-outline target: docs/notes.md#Session — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref',
+      // issue #70 re-pin superseded: issue #71 added the entry tier (text
+      // entries) to the parenthetical — bytes re-pinned, seven vocabularies.
+      'anchor on non-outline target: docs/notes.md#Session — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref',
     );
   });
 
