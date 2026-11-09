@@ -1,4 +1,4 @@
-# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68 and #69)
+# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68, #69 and #70)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
@@ -10,10 +10,10 @@ pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
 `severity: error`.
 
 This file is the human-readable oracle for `test/issue66-integration.test.ts`,
-`test/issue-67-contract.test.ts`, `test/issue-68-contract.test.ts` and
-`test/issue-69-contract.test.ts`: every embedded pointer, its line, and the
-outcome the real CLI must produce. Line numbers below are byte-authoritative
-for the files as committed.
+`test/issue-67-contract.test.ts`, `test/issue-68-contract.test.ts`,
+`test/issue-69-contract.test.ts` and `test/issue-70-contract.test.ts`: every
+embedded pointer, its line, and the outcome the real CLI must produce. Line
+numbers below are byte-authoritative for the files as committed.
 
 **The issue #67 extension** (the kelir-shaped repro): the four `src/plugins/`
 files and the two new spec files reproduce, at fixture scale, the 135 false
@@ -59,6 +59,38 @@ NO new corpus files: the artifact targets are WORKSPACE files, never
 scanned (the scan never enters `cans/`) and never corpus — `cans refs`
 reaches them through the artifact query tier (issue #69), but discovery
 never loads them.
+
+**The issue #70 extension** (the kelir-shaped repro, round three): 0.18.0 on
+kelir minted 16 `codebase.broken_reference` errors + 19 `codebase.anchor.
+no-target` warnings for pointers that were RIGHT — anchors that exist in
+their targets as trait methods, no-`pub` unit structs, referenced names
+(imports/uses/field accesses) and text tokens (tree entries, box lines).
+The #60 code-symbol grammar minted `pub` column-0 items ONLY, so a trait
+method (`async fn configure_runtime` inside `pub trait ContainerService`)
+and a no-`pub` unit struct (`struct UserOracle;`) were invisible; and no
+vocabulary at all addressed a name that merely APPEARS in the target (an
+import token, a field access) or a text token inside a tree/box line —
+so those anchors hit either a false `AnchorNotFound` error (target has
+SOME vocabulary) or the no-target advisory (target has none). The
+extension adds the REAL kelir artifact shapes — `cans/artifacts/code/
+container-service.rs` (the 53-line trait file, verbatim), `cans/artifacts/
+examples/swarm-agent.rs` + `db-runtime.py` (compact miniatures preserving
+the cited lines verbatim), the multi-vm-swarm.rs and host-runtime.txt
+EXTENSIONS (every pre-#70 byte kept — the #69 pins ride `pub fn federate`
+and the underlined `driver-avf`/`driver-virtio` headings), `cans/artifacts/
+config/project-structure.txt` (the tree miniature with the verbatim
+kelir-shim line and the trailing ATX section), `cans/artifacts/diagrams/
+four-ring-bus.txt` (the real 10-line diagram, verbatim) and `cans/artifacts/
+diagrams/empty-metrics.txt` (the EMPTY target — the warnings-only class) —
+plus the scanned source `src/plugins/trait-wiring.rs` carrying eighteen
+pointers, one per cited shape: fifteen VALID (three trait methods, the unit
+struct, four referenced names of the agent example, two of the db example,
+two plugin names of the swarm example, three text tokens), two near-miss
+typos kept broken on purpose, one at the empty target (the advisory class).
+Every pre-#70 file and its verdict is unchanged below; the extension only
+ADDS content, and it adds NO new corpus files: all the new targets are
+WORKSPACE artifacts under `cans/` — never scanned, never spec — and the
+one new source is `src/`, exactly the #69 pattern.
 
 ## The corpus (`cans/`)
 
@@ -293,27 +325,77 @@ broken ones.
 | 28 | `see: cans/_rules.yaml#codebase.enabled` | VALID — the SCHEMATIC anchor: the fixture's own rules file parses with the #58 YAML subset parser and the dot path resolves to a scalar leaf (verified: no fallback config file needed) |
 | 36 | `see: cans/artifacts/examples/multi-vm-swarm.rs#federateNope` | **BROKEN — AnchorNotFound.** File resolves; `federateNope` matches no symbol of the artifact (near miss of `federate` → `did you mean` suggestion, resolution never auto-heals) |
 | 40 | `see: cans/artifacts/diagrams/host-runtime.txt#driver-avf-nope` | **BROKEN — AnchorNotFound.** File resolves; `driver-avf-nope` matches no heading |
-| 46 | `see: cans/artifacts/code/plugin-trait.rs#PluginError` | **BROKEN — FileNotFound.** The issue's exact spelling: no `cans/artifacts/code/` directory exists on this fixture (the example code lives under `artifacts/examples/`) — the artifact target is missing from the cans workspace |
+| 46 | `see: cans/artifacts/code/plugin-trait.rs#PluginError` | **BROKEN — FileNotFound.** The issue's exact spelling: at #69 time no `cans/artifacts/code/` directory existed on this fixture at all; since the #70 extension the directory exists (it holds `container-service.rs`) but the FILE still does not — the verdict is unchanged, the artifact target is still missing from the cans workspace |
 
 6 pointers, 3 broken (post-#69). The three VALID pointers produce no
 findings; the three BROKEN ones are the issue's own repro, kept broken on
 purpose.
 
+### `src/plugins/trait-wiring.rs` — Rust line comments; the grammar-v2 and leaf-tier pointers (issue #70)
+
+The issue #70 pointer classes at fixture scale: eighteen `see:` pointers at
+the new artifact targets, one per comment line, spread over plausible
+wiring prose. Post-#70 the declaration grammar v2 (trait methods inside
+`pub trait` blocks, no-`pub` column-0 declarations) and the LEAF tier
+(every identifier token of a code target, every `[A-Za-z0-9][A-Za-z0-9_\-]*`
+token of a `.txt` target) resolve the fifteen VALID ones; pre-#70 (0.18.0)
+ALL FIFTEEN were false `codebase.broken_reference` errors — every one of
+their targets has SOME pre-#70 vocabulary (a `pub` declaration, a Python
+def, a text heading), so each miss took the ERROR path, exactly the issue's
+class-A/class-B-error report. The two typos are near misses kept broken on
+purpose, and the empty-metrics pointer is the issue's warnings-only class
+(the no-target advisory — an EMPTY target has nothing addressable by ANY
+vocabulary, so no anchor could ever resolve there by construction).
+
+| line | written span | verdict |
+|---|---|---|
+| 15 | `see: cans/artifacts/code/container-service.rs#configure_runtime` | VALID (post-#70) — the TRAIT-METHOD anchor: `async fn configure_runtime(&mut self)` inside `pub trait ContainerService` (the real 53-line file, verbatim); grammar v2 mints the method |
+| 22 | `see: cans/artifacts/code/container-service.rs#mount_scratch` | VALID (post-#70) — same class, the scratch-mount method |
+| 27 | `see: cans/artifacts/code/container-service.rs#ingest_image` | VALID (post-#70) — same class, the image-ingest method |
+| 34 | `see: cans/artifacts/examples/swarm-agent.rs#UserOracle` | VALID (post-#70) — the NO-`pub` COLUMN-0 unit struct: `struct UserOracle;` at the miniature's end, verbatim from the real file |
+| 41 | `see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugin` | VALID (post-#70) — the leaf tier: the import token of the INDENTED use-tree inside `main` (`use kelir::{plugins::{ledger::{FinalReceipt, LedgerCtx, LedgerPlugin,},},};`) |
+| 46 | `see: cans/artifacts/examples/swarm-agent.rs#binary_blake3` | VALID (post-#70) — the leaf tier: the field-access identifier (`c.trap.binary_blake3.iter()`, `receipt.binary_blake3 != trap_hex`) |
+| 51 | `see: cans/artifacts/examples/swarm-agent.rs#FinalizeRequest` | VALID (post-#70) — the leaf tier: the type-position token of the finalize chain |
+| 56 | `see: cans/artifacts/examples/swarm-agent.rs#FinalReceipt` | VALID (post-#70) — the leaf tier: the let-binding type token (`let receipt: FinalReceipt = session.ctx::<LedgerCtx>().finalize(FinalizeRequest {`) |
+| 63 | `see: cans/artifacts/examples/db-runtime.py#PgWireRewrite` | VALID (post-#70) — the leaf tier: the indented-paren import / `postgres=PgWireRewrite(` constructor token |
+| 68 | `see: cans/artifacts/examples/db-runtime.py#DbProxyConfig` | VALID (post-#70) — same class: `.plugin(DbProxyPlugin(DbProxyConfig(` |
+| 75 | `see: cans/artifacts/examples/multi-vm-swarm.rs#MeshPlugin` | VALID (post-#70) — the leaf tier: the use-tree name (`mesh::{MeshConfig, MeshPlugin,}`) and the `.plugin(MeshPlugin::new(MeshConfig {` line |
+| 80 | `see: cans/artifacts/examples/multi-vm-swarm.rs#SupplyChainPlugin` | VALID (post-#70) — same class: `supply::{SupplyChainPlugin,}` / `.plugin(SupplyChainPlugin::new(SupplyChainConfig {` |
+| 88 | `see: cans/artifacts/config/project-structure.txt#kelir-shim` | VALID (post-#70) — the `.txt` LEAF-TOKEN tier: the tree-entry token of `│   ├── kelir-shim/                    # Guest Paravirtual Micro-Init (<50KB musl PID 1)` (the real line-136 shape, verbatim) |
+| 93 | `see: cans/artifacts/diagrams/four-ring-bus.txt#virtio-shm` | VALID (post-#70) — the `.txt` leaf-token tier: the box-entry token of `[virtio-shm] ───┴────────── [virtio-blk / wdt / balloon]` (the real 10-line file, verbatim) |
+| 98 | `see: cans/artifacts/diagrams/host-runtime.txt#driver-rustvmm` | VALID (post-#70) — the `.txt` leaf-token tier: the box-tree token of the appended `│  ├── driver-rustvmm (DEFAULT Linux, Rust VMM)` line (the real diagram's tree shape; the pre-#70 bytes — the underlined `driver-avf`/`driver-virtio` headings the #69 pins ride — are kept byte-intact above it) |
+| 106 | `see: cans/artifacts/code/container-service.rs#configure_runtim` | **BROKEN — AnchorNotFound.** The near miss of `configure_runtime` (post-#70 similarity ≈ 0.94 ≥ the 0.8 suggestion floor → `did you mean` proposing the trait method, resolution never auto-heals) |
+| 109 | `see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn` | **BROKEN — AnchorNotFound.** The near miss of `LedgerPlugin` (≈ 0.92 → `did you mean` proposing the import token) |
+| 115 | `see: cans/artifacts/diagrams/empty-metrics.txt#anything` | **WARNING — `codebase.anchor.no-target`, never a finding.** The target is the EMPTY file: no bullets, no schematic paths, no headings, no symbols, no tokens — the advisory class (the issue's 19 warnings), and the exit-ladder probe of issue class C |
+
+18 pointers, 2 broken + 1 warning (post-#70). Pre-#70 the fifteen VALID
+ones are ALL false AnchorNotFound errors (their targets each carry some
+pre-#70 vocabulary — `pub trait ContainerService`, the `pub enum`/`pub
+struct` of the agent miniature, the Python defs, `pub fn federate`, the
+project-structure ATX heading, the four-ring-bus caps heading, the
+host-runtime underlined headings), so the census reads 22 broken / 1
+warning on 0.18.0 — the issue's report at fixture scale, the red-by-design
+pattern the #70 contract suite documents.
+
 ## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 13 (the 12 pre-#69 files plus `src/plugins/artifact-wiring.rs`) | 32 | 5 |
-| flag on, no config block (pure defaults, plugin tier kept on) | 11 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 30 | 6 — the 5 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence |
-| aliasing include dropped (tier off, config block kept) | 13 | 32 | 10 — the 2 true, the five #68 pointers as FileNotFound, and the 3 #69 artifact broken (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of them; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves) |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`) | 13 | 32 | 0 |
+| config block on (this `_rules.yaml`) | 14 (the 13 pre-#70 files plus `src/plugins/trait-wiring.rs`) | 50 (32 + the 18 #70 pointers) | 7 post-#70 — the 5 pre-#70 plus the two #70 typos; **22 pre-#70** (0.18.0: the 15 valid #70 pointers error too). Warnings: exactly 1 in both worlds — the empty-metrics no-target advisory |
+| flag on, no config block (pure defaults, plugin tier kept on) | 12 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the new file is `.rs`, covered by the default `**/*.rs`) | 48 | 8 post-#70 — the 7 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence. **23 pre-#70** (the 22 + the rules-key pointer). Warnings: 1 |
+| aliasing include dropped (tier off, config block kept) | 14 | 50 | 12 post-#70 — the 2 true, the five #68 pointers as FileNotFound, the 3 #69 artifact broken and the 2 #70 typos (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of the #69/#70 artifact pointers; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves). **27 pre-#70** (the 12 + the 15 valid-as-broken) |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`, trait-wiring.rs:106 → `#configure_runtime`, :109 → `#LedgerPlugin`) | 14 | 50 | 0 post-#70 (pre-#70: 15 — the valid-as-broken class) |
 
-The 5 broken are the pre-#67 pair PLUS the three deliberate issue-#69
-records — every issue-#67 pointer (both bug classes), every issue-#68
-pointer and the three VALID issue-#69 pointers resolve post-#69.
-Pre-#69 the census counts 26 pointers and 2 broken: the six artifact
+The 7 broken (post-#70) are the pre-#67 pair PLUS the three deliberate
+issue-#69 records PLUS the two issue-#70 typos — every issue-#67 pointer
+(both bug classes), every issue-#68 pointer, the three VALID issue-#69
+pointers and the fifteen VALID issue-#70 pointers resolve post-#70.
+Pre-#69 the census counted 26 pointers and 2 broken: the six artifact
 targets never parsed as pointers at all (the silent-skip half of the
-issue). Broken-pointer wire records (exact 7-key shape,
+issue). Pre-#70 (0.18.0, the issue #70 report at fixture scale): 50
+pointers, 22 broken + 1 warning — the 15 valid #70 anchors all false
+AnchorNotFound errors (the class-A/class-B repro) and the empty-metrics
+pointer the one warning. Broken-pointer wire records (exact 7-key shape,
 deterministic order — file asc, line asc):
 
 ```json
@@ -333,16 +415,29 @@ deterministic order — file asc, line asc):
     "raw": "see: cans/artifacts/code/plugin-trait.rs#PluginError",
     "targetFile": "cans/artifacts/code/plugin-trait.rs",
     "targetSlug": "PluginError", "reason": "FileNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/plugins/trait-wiring.rs", "line": 106,
+    "raw": "see: cans/artifacts/code/container-service.rs#configure_runtim",
+    "targetFile": "cans/artifacts/code/container-service.rs",
+    "targetSlug": "configure_runtim", "reason": "AnchorNotFound" },
+  { "type": "CodebaseBrokenReference", "file": "src/plugins/trait-wiring.rs", "line": 109,
+    "raw": "see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn",
+    "targetFile": "cans/artifacts/examples/swarm-agent.rs",
+    "targetSlug": "LedgerPlugn", "reason": "AnchorNotFound" },
   { "type": "CodebaseBrokenReference", "file": "src/storage/quota.py", "line": 7,
     "raw": "see: 09-observability.md", "targetFile": "09-observability.md",
     "targetSlug": null, "reason": "FileNotFound" }
 ]
 ```
 
-`severity: error` → all five findings are errors → `cans check --codebase`
+`severity: error` → all seven findings are errors → `cans check --codebase`
 exits **2** (the repo error-band convention; the RFC's example text shows 1
 — that one-number difference is the integration suite's one deliberate
-deviation, documented in its header).
+deviation, documented in its header). Issue #70 adds the warnings-only
+band pin (issue class C, the #41 exit ladder — engine-independent): a
+warnings-ONLY run — errors 0, warnings ≥ 1 — reports `ok: true` but exits
+**1** (0 clean / 1 warnings / 2 errors); the empty-metrics pointer above
+is the fixture's warnings-class probe, and the #70 contract suite builds
+a minimal warnings-only workspace in-test to pin the whole ladder.
 
 Reverse traceability (`cans refs <node> --codebase`, exit 0 either way).
 The #68 plugin-tier files are OUTSIDE the v1 query corpus: `cans refs`
@@ -391,6 +486,19 @@ bare stem, an empty slug or trailing garbage all refuse with the
 | `09-plugins.md#Invariants-and-policy` (truncated spelling — no fuzzy healing) | none |
 | `cans/artifacts/examples/multi-vm-swarm.rs#federate` (artifact, anchored) | `src/plugins/artifact-wiring.rs:14` — the `#federateNope` spelling does NOT answer (the anchor comparison is never fuzzy) |
 | `cans/artifacts/examples/multi-vm-swarm.rs#federateNope` (artifact, the broken spelling) | `src/plugins/artifact-wiring.rs:36` — the reverse path answers for broken pointers too (a query, not a verdict) |
-| `cans/artifacts/examples/multi-vm-swarm.rs` (artifact, file-level) | `src/plugins/artifact-wiring.rs:14`, `src/plugins/artifact-wiring.rs:36` |
-| `cans/artifacts/diagrams/host-runtime.txt` (artifact, file-level) | `src/plugins/artifact-wiring.rs:21`, `src/plugins/artifact-wiring.rs:40` |
+| `cans/artifacts/examples/multi-vm-swarm.rs` (artifact, file-level) | `src/plugins/artifact-wiring.rs:14`, `src/plugins/artifact-wiring.rs:36` and — since #70 — `src/plugins/trait-wiring.rs:75`, `src/plugins/trait-wiring.rs:80` (the `#MeshPlugin` / `#SupplyChainPlugin` pointers) |
+| `cans/artifacts/diagrams/host-runtime.txt` (artifact, file-level) | `src/plugins/artifact-wiring.rs:21`, `src/plugins/artifact-wiring.rs:40` and — since #70 — `src/plugins/trait-wiring.rs:98` (the `#driver-rustvmm` pointer) |
 | `cans/_rules.yaml#codebase.enabled` (artifact, schematic dot-path anchor) | `src/plugins/artifact-wiring.rs:28` |
+| `cans/artifacts/code/container-service.rs#configure_runtime` (artifact, the trait-method anchor) | `src/plugins/trait-wiring.rs:15` |
+| `cans/artifacts/code/container-service.rs#mount_scratch` (artifact, trait method) | `src/plugins/trait-wiring.rs:22` |
+| `cans/artifacts/code/container-service.rs#ingest_image` (artifact, trait method) | `src/plugins/trait-wiring.rs:27` |
+| `cans/artifacts/code/container-service.rs#configure_runtim` (artifact, the TYPO spelling) | `src/plugins/trait-wiring.rs:106` — the reverse path answers for broken pointers too (a query, not a verdict; the #69 `#federateNope` precedent) |
+| `cans/artifacts/code/container-service.rs` (artifact, file-level) | all four into it: `src/plugins/trait-wiring.rs:15`, `:22`, `:27`, `:106` (the three valid trait methods + the typo — anchors are irrelevant at the file level) |
+| `cans/artifacts/examples/swarm-agent.rs#UserOracle` / `#LedgerPlugin` / `#binary_blake3` / `#FinalizeRequest` / `#FinalReceipt` (artifact, the grammar-v2 + leaf anchors) | `src/plugins/trait-wiring.rs:34` / `:41` / `:46` / `:51` / `:56` — each its own line, the anchor comparison never fuzzy |
+| `cans/artifacts/examples/swarm-agent.rs#LedgerPlugn` (artifact, the TYPO spelling) | `src/plugins/trait-wiring.rs:109` |
+| `cans/artifacts/examples/swarm-agent.rs#LedgerCtx` (a name that EXISTS in the target — the use-tree — but no source points at) | none — zero matches is an answer: the reverse path traces WRITERS, not resolvability |
+| `cans/artifacts/examples/db-runtime.py#PgWireRewrite` / `#DbProxyConfig` (artifact, leaf anchors) | `src/plugins/trait-wiring.rs:63` / `:68` |
+| `cans/artifacts/config/project-structure.txt#kelir-shim` (artifact, the tree-entry token) | `src/plugins/trait-wiring.rs:88` |
+| `cans/artifacts/diagrams/four-ring-bus.txt#virtio-shm` (artifact, the box-entry token) | `src/plugins/trait-wiring.rs:93` |
+| `cans/artifacts/diagrams/host-runtime.txt#driver-rustvmm` (artifact, the box-tree token) | `src/plugins/trait-wiring.rs:98` |
+| `cans/artifacts/diagrams/empty-metrics.txt#anything` (artifact, the empty-target advisory pointer) | `src/plugins/trait-wiring.rs:115` — the reverse path answers it like any other writer line (the no-target verdict is the CHECK's, not the query's) |

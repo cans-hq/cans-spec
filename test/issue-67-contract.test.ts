@@ -39,12 +39,14 @@
  * copy exactly like test/issue66-integration.test.ts):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             12 scanned / 26 pointers / EXACTLY the 2 pre-#67 broken —
- *             zero broken refs for every new kelir-shaped anchor, both
- *             bug classes (a2 repeats it under the pure-default include
- *             list: 10 files / 24 pointers / same 2 broken — the yaml
- *             pointer invisible; the #68 extension keeps the plugin tier
- *             on in the variant so its five pointers stay in scope)
+ *             14 scanned / 50 pointers / EXACTLY the 7 broken — the 2
+ *             pre-#67 true records plus, since #69, the 3 deliberate
+ *             artifact ones and, since #70, the 2 typos — zero broken
+ *             refs for every new kelir-shaped anchor, both bug classes
+ *             (a2 repeats it under the pure-default include list: 12
+ *             files / 48 pointers / 8 broken — the yaml pointer
+ *             invisible; the #68 extension keeps the plugin tier on in
+ *             the variant so its five pointers stay in scope)
  *   b ....... Bug 1 on the REVERSE path: `cans refs <node> --codebase`
  *             finds every punctuation-bearing anchor, including the
  *             glued-closer spellings (pre-fix these queries refuse as
@@ -71,6 +73,18 @@
  * turns green against the merged engine that implements the frozen
  * spec above; the two pre-#67 broken records are pinned byte-exactly so
  * the merge can never silently heal (or duplicate) them.
+ *
+ * THE #70 SHIFT (this branch — test/issue-70-contract.test.ts owns the
+ * extension): the fixture grew again (the trait-wiring .rs source, +18
+ * pointers, +2 typos, +1 warning), so the census pins moved once more —
+ * a1 13→14 scanned / 32→50 pointers / 5→7 broken, a2 11→12 files /
+ * 30→48 pointers / 6→8 broken, c1 5→7, d3 34→52 pointers / 7→9 broken.
+ * On THIS branch alone (before the fix/issue-70-engine merge) the
+ * engine-dependent pins are red again (a1/a2/c1/d3 read the fifteen
+ * VALID #70 pointers as false AnchorNotFound too: config-on 22 broken,
+ * defaults 23 — verified by running). The engine-independent pins (b1–b5
+ * reverse queries, c2–c5, d1/d2/d4/d5, e1–e3 extraction wire shape)
+ * stay green throughout.
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
@@ -172,7 +186,10 @@ const BROKEN_ARTIFACT_HEADING = {
 };
 
 /** artifact-wiring.rs:46 — the broken artifact FILE, the issue's exact
- *  missing-artifact spelling (#69). */
+ *  missing-artifact spelling (#69). Since the #70 extension the
+ *  `cans/artifacts/code/` directory exists (it holds the REAL
+ *  container-service.rs), but `plugin-trait.rs` still does not — the
+ *  verdict is byte-unchanged. */
 const BROKEN_ARTIFACT_FILE = {
   type: 'CodebaseBrokenReference',
   file: 'src/plugins/artifact-wiring.rs',
@@ -183,15 +200,44 @@ const BROKEN_ARTIFACT_FILE = {
   reason: 'FileNotFound',
 };
 
-/** The five issues, in the contract's deterministic order (file asc, line
- *  asc): EVERY issue-#67 pointer — both bug classes — is VALID, so the
- *  broken set is the pre-#67 pair plus (since the #69 extension) the three
- *  deliberate artifact records. */
+/** trait-wiring.rs:106 — the issue #70 trait-method typo (a one-letter
+ *  miss of the grammar-v2 `configure_runtime` token; kept broken on
+ *  purpose, pinned by test/issue-70-contract.test.ts). */
+const BROKEN_70_TYPO_METHOD = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/trait-wiring.rs',
+  line: 106,
+  raw: 'see: cans/artifacts/code/container-service.rs#configure_runtim',
+  targetFile: 'cans/artifacts/code/container-service.rs',
+  targetSlug: 'configure_runtim',
+  reason: 'AnchorNotFound',
+};
+
+/** trait-wiring.rs:109 — the issue #70 import-name typo (a one-letter
+ *  miss of the leaf-tier `LedgerPlugin` token). */
+const BROKEN_70_TYPO_NAME = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/trait-wiring.rs',
+  line: 109,
+  raw: 'see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn',
+  targetFile: 'cans/artifacts/examples/swarm-agent.rs',
+  targetSlug: 'LedgerPlugn',
+  reason: 'AnchorNotFound',
+};
+
+/** The broken records, in the contract's deterministic order (file asc,
+ *  line asc): EVERY issue-#67 pointer — both bug classes — is VALID, so
+ *  the broken set is the pre-#67 pair plus (since the #69 extension) the
+ *  three deliberate artifact records and (since #70) the two #70 typos
+ *  (trait-wiring.rs sorts after artifact-wiring.rs, so they slot in
+ *  exactly here). */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
   BROKEN_ARTIFACT_SYMBOL,
   BROKEN_ARTIFACT_HEADING,
   BROKEN_ARTIFACT_FILE,
+  BROKEN_70_TYPO_METHOD,
+  BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
 ];
 
@@ -217,6 +263,8 @@ const DEFAULTS_ORACLE_ISSUES = [
   BROKEN_ARTIFACT_SYMBOL,
   BROKEN_ARTIFACT_HEADING,
   BROKEN_ARTIFACT_FILE,
+  BROKEN_70_TYPO_METHOD,
+  BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
 ];
 
@@ -267,47 +315,49 @@ const RULES_NO_CODEBASE = [
 // ── a: the check scan — zero broken refs for every new anchor ──────────────
 
 describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
-  test('a1: config-on — 13 scanned / 32 pointers / EXACTLY the 5 broken (both #67 bug classes clean)', () => {
+  test('a1: config-on — 14 scanned / 50 pointers / EXACTLY the 7 broken (both #67 bug classes clean)', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (5 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (7 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(13); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69)
-    expect(j.codebase.pointers).toBe(32); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69)
-    expect(j.codebase.broken).toBe(5);
-    // THE pin: the broken set is byte-exactly the five records above — none
+    expect(j.codebase.scanned).toBe(14); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
+    expect(j.codebase.pointers).toBe(50); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers
+    expect(j.codebase.broken).toBe(7);
+    // THE pin: the broken set is byte-exactly the seven records above — none
     // of the 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
     // checkpoint.go incl. both glued-closer cases, 3 Bug-2 suffix targets in
     // ingress.py, 1 yaml comma anchor) is reported broken; the issue #68
     // extension's five colon-anchor pointers (db-proxy.rs, profile.rs,
     // wire-ingress.rs) are in the census too and resolve post-#68. The three
-    // #69 records are DELIBERATE breaks (issue #69's own repro — the
-    // artifact-wiring.rs source), not regressions, hence the re-scoped
+    // #69 records and the two #70 typos are DELIBERATE breaks (issues #69
+    // and #70's own repro — the artifact-wiring.rs and trait-wiring.rs
+    // sources), not regressions, hence the re-scoped
     // file guard below (the old `src/plugins/` prefix guard no longer holds).
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).every((i) => !S67_SOURCE_FILES.includes(i.file))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 11 files / 30 pointers / 6 broken (the 5 + the rules-key pointer), yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 12 files / 48 pointers / 8 broken (the 7 + the rules-key pointer), yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
-    // src/plugins/mounts.yaml stay out — 11 files, 30 pointers. SIX broken,
-    // one more than the config-on run: this variant's rules rewrite drops
-    // the codebase block, and the #69 schematic pointer
+    // src/plugins/mounts.yaml stay out — 12 files, 48 pointers. EIGHT
+    // broken, one more than the config-on run: this variant's rules
+    // rewrite drops the codebase block, and the #69 schematic pointer
     // `cans/_rules.yaml#codebase.enabled` validates against the rules
     // file's CURRENT content — the rewrite deleted the key it names, so
     // the pointer honestly breaks (every non-yaml #67 pointer still
     // resolves; the #68 plugin tier stays on in the variant, so the kelir
-    // five are in scope and resolve post-#68; the six #69 artifact pointers
-    // live in the .rs source, covered by the default *.rs include).
-    expect(j.codebase.scanned).toBe(11);
-    expect(j.codebase.pointers).toBe(30);
-    expect(j.codebase.broken).toBe(6);
+    // five are in scope and resolve post-#68; the six #69 artifact
+    // pointers and the eighteen #70 pointers live in .rs sources, covered
+    // by the default *.rs include).
+    expect(j.codebase.scanned).toBe(12);
+    expect(j.codebase.pointers).toBe(48);
+    expect(j.codebase.broken).toBe(8);
     expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
@@ -323,7 +373,7 @@ describe('issue #67 b — refs <node> --codebase finds the punctuation anchors',
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(true);
     expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
-    expect(j.scanned).toBe(13); // 12 pre-#69 + the artifact-wiring .rs source (#69)
+    expect(j.scanned).toBe(14); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
     // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
     // anchor, so both pointers answer. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -395,7 +445,7 @@ describe('issue #67 c — the : see:-suffixed spec nodes resolve by their bare t
   test('c1: none of the three suffix-targeting pointers is reported broken (the a1 pin, made explicit)', () => {
     const p = ws('c1');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
-    expect(j.codebase.broken).toBe(5); // the 2 true + the 3 deliberate #69 artifact records
+    expect(j.codebase.broken).toBe(7); // the 2 true + the 3 deliberate #69 artifact records + the 2 #70 typos
     const suffixRaws = [
       'see: cans/09-plugins.md#Connection-parking-on-suspend',
       'see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit',
@@ -492,8 +542,8 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(34); // 32 + the two appended
-    expect(j.codebase.broken).toBe(7); // the 5 fixture broken + the 2 near misses
+    expect(j.codebase.pointers).toBe(52); // 50 + the two appended
+    expect(j.codebase.broken).toBe(9); // the 7 fixture broken + the 2 near misses
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
     expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
       [11, 'Invariants-and-policy-(transakshun)', 'AnchorNotFound'],

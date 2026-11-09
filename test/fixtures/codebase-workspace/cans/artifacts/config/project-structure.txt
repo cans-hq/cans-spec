@@ -1,0 +1,26 @@
+kelir/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                     # Unified fast CI (Lint, Typecheck, Cross-Shim, Parity, Audit-slop, KVM test)
+│       └── plugin-ci-reusable.yml     # workflow_call: audit, vectors, matrix, attest
+│
+├── Cargo.toml                         # Root Cargo workspace manifest (Rust 2024 / MSRV 1.85+)
+├── fixtures.toml                      # Pinned cryptographic hashes (BLAKE3/SHA-256) for external test oracles
+│
+├── cans/                              # ── SPECIFICATION (CANS corpus) ──
+│   ├── _rules.yaml                    # Checker rules: node length, refs, aliasing, forbidden targets
+│   └── artifacts/                     # Terminal artifacts: code, diagrams, examples, config
+│       ├── code/                      # SSOT code signatures (wire protocol, traits, services)
+│       ├── diagrams/                  # ASCII architecture diagrams
+│       └── examples/                  # Demonstrating examples (Rust/TS/Python)
+│
+├── crates/                            # ── RUST SYSTEMS LAYER ──
+│   ├── kelir-shim/                    # Guest Paravirtual Micro-Init (<50KB musl PID 1)
+│   │   ├── Cargo.toml                 # Dependencies: blake3, ciborium, kelir-interface, libc; release lto = "fat"
+│   │   └── src/
+│   │       └── main.rs                # Guest PID 1 reaper & loop
+│   # No tests/ dir: zero Rust test files in this crate
+│
+└── README.md                          # Quickstart, Invariants & Architecture Summary
+# No tests/ dir at repo root: zero Rust test files, zero test_hw_* files,
+# zero *.test.ts, zero test_*.py anywhere in the tree.
