@@ -79,12 +79,19 @@
  * 8×, every refs query scans 16. The pre-#70 red-pattern numbers in the
  * honesty note below are the 0.18.0 history and stay as written.
  *
+ * ISSUE #72 CENSUS SHIFT (test/issue-72-contract.test.ts owns the
+ * extension): the fixture adds the net-refs.rs carrier (+1 scanned, +2
+ * VALID pointers — no new broken record) and widens wire-plane.txt line 5
+ * into a three-group row — 17 scanned (16 + 1), 56 pointers (54 + 2), the
+ * SAME eight broken records, every refs query scans 17. No verdict
+ * moved.
+ *
  * WHAT EACH BLOCK PINS (all blackbox via the real CLI, the issue-66/67/68/
  * 69 integration harness pattern; the fixture is driven from a fresh tmp
  * copy):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             16 scanned / 54 pointers / EXACTLY the EIGHT broken records
+ *             17 scanned / 56 pointers / EXACTLY the EIGHT broken records
  *             byte-pinned in the deterministic order (the 5 pre-existing
  *             byte-pinned ones from #69 + the 2 new typos + the #71 phrase
  *             typo, since #71) and EXACTLY
@@ -351,7 +358,7 @@ const TW = {
 // ── a: the check scan — the v2/leaf vocabularies validate, never mint ─────
 
 describe('issue #70 a — check --codebase: the eighteen pointers join the census, fifteen resolve, two break, one warns', () => {
-  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken records, zero findings for the valid fifteen', () => {
+  test('a1: config-on — 17 scanned / 56 pointers / EXACTLY the 8 broken records, zero findings for the valid fifteen', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
@@ -359,12 +366,13 @@ describe('issue #70 a — check --codebase: the eighteen pointers join the censu
     expect(j.codebase).toBeDefined();
     // 13 pre-#70 sources + the .rs sources of #70/#71 (the artifact targets
     // live under cans/ — workspace files are never scanned). Issue #71:
-    // the trap/transport carriers extend the census 14 → 16.
-    expect(j.codebase.scanned).toBe(16);
+    // the trap/transport carriers extend the census 14 → 16; issue #72: the
+    // net-refs.rs carrier extends it 16 → 17.
+    expect(j.codebase.scanned).toBe(17);
     // 32 pre-#70 pointers + the eighteen #70 pointers (15 valid + 2 typos
     // + the empty-metrics advisory one) + the four #71 pointers (2 repro
-    // phrases + 1 phrase typo + 1 control): 50 → 54.
-    expect(j.codebase.pointers).toBe(54);
+    // phrases + 1 phrase typo + 1 control) + the two #72 pointers: 54 → 56.
+    expect(j.codebase.pointers).toBe(56);
     expect(j.codebase.broken).toBe(8);
     // THE pin: the broken set is byte-exactly the eight records above, in
     // the deterministic order (file asc, line asc) — the two new records
@@ -522,7 +530,7 @@ describe('issue #70 c — refs <artifact> --codebase: the v2/leaf anchors answer
       expect(j.ok).toBe(true);
       expect(j.command).toBe('refs');
       expect(j.node).toBe(q); // the query AS WRITTEN
-      expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
+      expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
       expect(j.matches).toEqual([{ file: 'src/plugins/trait-wiring.rs', line, text }]);
     }
   });
@@ -616,7 +624,7 @@ describe('issue #70 c — refs <artifact> --codebase: the v2/leaf anchors answer
     // artifact pointer leaks into a corpus query (the non-crossing pin).
     const j = parseJsonOut(runCli(['refs', '01-auth.md#Sessions', '--codebase', '--json'], p).out);
     expect(j.exitCode).toBe(0);
-    expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
+    expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',

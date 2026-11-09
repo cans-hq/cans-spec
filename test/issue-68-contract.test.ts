@@ -134,6 +134,16 @@
  * c1/c2 wiring, d1/d2 byte-exact true records, d4 corpus-clean, e1–e3
  * extraction wire shape) stay green throughout.
  *
+ * THE #71+#72 SHIFTS (test/issue-71-contract.test.ts and
+ * test/issue-72-contract.test.ts own the extensions): the fixture grew the
+ * trap/transport phrase carriers (+2 scanned, +4 pointers, +1 phrase typo)
+ * and then the net-refs.rs carrier (+1 scanned, +2 VALID pointers, no new
+ * broken record), so the census pins moved once more — a1 16→17 scanned /
+ * 54→56 pointers, a2 14→15 files / 52→54 pointers, b4/d3 55→57 pointers,
+ * c3 16→17 scanned / 54→56 pointers. No verdict moved: the same eight
+ * (config-on) / nine (pure defaults) / thirteen (tier-drop) broken records
+ * in the same order.
+ *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
  * so the walk-up resolution lands on the intended workspace).
@@ -378,14 +388,14 @@ const RULES_PLAIN_HOPS2 = RULES_NO_CODEBASE.replace(
 // ── a: the check scan — zero broken refs for the kelir five ─────────────────
 
 describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
-  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken, zero findings from the new sources', () => {
+  test('a1: config-on — 17 scanned / 56 pointers / EXACTLY the 8 broken, zero findings from the new sources', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(16); // 9 pre-#68 + the three new .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the two #71 carriers (trap.rs, transport.rs)
-    expect(j.codebase.pointers).toBe(54); // 21 pre-#68 + the kelir five + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers
+    expect(j.codebase.scanned).toBe(17); // 9 pre-#68 + the three new .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the two #71 carriers (trap.rs, transport.rs) + the net-refs.rs carrier (#72)
+    expect(j.codebase.pointers).toBe(56); // 21 pre-#68 + the kelir five + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers + the two #72 pointers
     expect(j.codebase.broken).toBe(8);
     // THE pin: the broken set is byte-exactly the eight records — the 2
     // true pre-existing, the 3 DELIBERATE #69 artifact ones, the 2 #70
@@ -403,7 +413,7 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     }
   });
 
-  test('a2: pure defaults (no codebase block, tier kept on) — 14 files / 52 pointers / 9 broken (the 8 + the rules-key pointer)', () => {
+  test('a2: pure defaults (no codebase block, tier kept on) — 15 files / 54 pointers / 9 broken (the 8 + the rules-key pointer)', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -412,16 +422,16 @@ describe('issue #68 a — check --codebase: the kelir five all resolve', () => {
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
     // src/plugins/mounts.yaml stay out — but the three new sources are .rs
     // (covered by the default *.rs include, and so are the #69/#70
-    // wiring sources and the two #71 carriers) and the plugin tier is
-    // corpus-side wiring, so the five kelir pointers still resolve: 14
-    // files, 52 pointers. NINE broken, one MORE than the config-on run:
-    // this variant's rules
+    // wiring sources, the two #71 carriers and the #72 net-refs carrier)
+    // and the plugin tier is corpus-side wiring, so the five kelir
+    // pointers still resolve: 15 files, 54 pointers. NINE broken, one
+    // MORE than the config-on run: this variant's rules
     // rewrite drops the codebase block, and the #69 schematic pointer
     // `cans/_rules.yaml#codebase.enabled` validates against the rules
     // file's CURRENT content — the rewrite deleted the key it names, so
     // the pointer honestly breaks (the tier is never a rubber stamp).
-    expect(j.codebase.scanned).toBe(14);
-    expect(j.codebase.pointers).toBe(52);
+    expect(j.codebase.scanned).toBe(15);
+    expect(j.codebase.pointers).toBe(54);
     expect(j.codebase.broken).toBe(9);
     expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
@@ -525,8 +535,8 @@ describe('issue #68 b — reverse queries: the plugin-tier boundary and the both
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // still the 8 fixture findings
     const j = parseJsonOut(r.out);
-    expect(j.codebase.scanned).toBe(16);
-    expect(j.codebase.pointers).toBe(55); // 54 + the appended colon-less spelling
+    expect(j.codebase.scanned).toBe(17);
+    expect(j.codebase.pointers).toBe(57); // 56 + the appended colon-less spelling
     expect(j.codebase.broken).toBe(8);
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
   });
@@ -583,9 +593,9 @@ describe('issue #68 c — the three plugin specs join the corpus (clean, wired, 
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.scanned).toBe(16);
-    expect(j.codebase.pointers).toBe(54);
-    expect(j.codebase.broken).toBe(13); // the 2 true + the five FileNotFound + the 3 #69 artifact broken + the 2 #70 typos + the 1 #71 phrase typo (the #70/#71 artifact targets resolve against the workspace filesystem, not the corpus, so the tier drop moves none of them)
+    expect(j.codebase.scanned).toBe(17);
+    expect(j.codebase.pointers).toBe(56);
+    expect(j.codebase.broken).toBe(13); // the 2 true + the five FileNotFound + the 3 #69 artifact broken + the 2 #70 typos + the 1 #71 phrase typo (the #70/#71/#72 artifact targets resolve against the workspace filesystem, not the corpus, so the tier drop moves none of them)
     expect((j.codebase.issues as any[]).map((i) => [i.file, i.line, i.reason])).toEqual([
       ['src/api/routes.ts', 3, 'AnchorNotFound'],
       ['src/plugins/artifact-wiring.rs', 36, 'AnchorNotFound'],
@@ -642,7 +652,7 @@ describe('issue #68 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(55); // 54 + the misspell
+    expect(j.codebase.pointers).toBe(57); // 56 + the misspell
     expect(j.codebase.broken).toBe(9); // the 8 fixture broken + the misspell, no more
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/db-proxy.rs');
     expect(near.length).toBe(1);

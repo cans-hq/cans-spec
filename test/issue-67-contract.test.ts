@@ -93,6 +93,14 @@
  * 14→16 scanned / 50→54 pointers / 7→8 broken, a2 12→14 files / 48→52
  * pointers / 8→9 broken, c1 7→8, d3 52→56 pointers / 9→10 broken.
  *
+ * THE #72 SHIFT (test/issue-72-contract.test.ts owns the extension): the
+ * fixture grew the net-refs.rs carrier (+1 scanned, +2 pointers — both
+ * VALID, no new broken record) and widened wire-plane.txt line 5 into a
+ * three-group row, so the census pins moved once more — a1 16→17 scanned
+ * / 54→56 pointers, a2 14→15 files / 52→54 pointers, b1 17 scanned, d3
+ * 56→58 pointers. No verdict moved: the same eight (config-on) / nine
+ * (pure defaults) broken records in the same order.
+ *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
  * so the walk-up resolution lands on the intended workspace).
@@ -340,14 +348,14 @@ const RULES_NO_CODEBASE = [
 // ── a: the check scan — zero broken refs for every new anchor ──────────────
 
 describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
-  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken (both #67 bug classes clean)', () => {
+  test('a1: config-on — 17 scanned / 56 pointers / EXACTLY the 8 broken (both #67 bug classes clean)', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(16); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport carriers (#71)
-    expect(j.codebase.pointers).toBe(54); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers
+    expect(j.codebase.scanned).toBe(17); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport carriers (#71) + the net-refs carrier (#72)
+    expect(j.codebase.pointers).toBe(56); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers + the two #72 pointers
     expect(j.codebase.broken).toBe(8);
     // THE pin: the broken set is byte-exactly the seven records above — none
     // of the 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
@@ -363,25 +371,26 @@ describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve
     expect((j.codebase.issues as any[]).every((i) => !S67_SOURCE_FILES.includes(i.file))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 14 files / 52 pointers / 9 broken (the 8 + the rules-key pointer), yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 15 files / 54 pointers / 9 broken (the 8 + the rules-key pointer), yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
     // The RFC §3 default include list has no *.yaml: src/net.yaml AND
-    // src/plugins/mounts.yaml stay out — 12 files, 48 pointers. EIGHT
-    // broken, one more than the config-on run: this variant's rules
-    // rewrite drops the codebase block, and the #69 schematic pointer
+    // src/plugins/mounts.yaml stay out — the .rs/.ts/.py/.go sources plus
+    // the net-refs.rs carrier (#72) are in. NINE broken, one more than
+    // the config-on run: this variant's rules rewrite drops the codebase
+    // block, and the #69 schematic pointer
     // `cans/_rules.yaml#codebase.enabled` validates against the rules
     // file's CURRENT content — the rewrite deleted the key it names, so
     // the pointer honestly breaks (every non-yaml #67 pointer still
     // resolves; the #68 plugin tier stays on in the variant, so the kelir
     // five are in scope and resolve post-#68; the six #69 artifact
-    // pointers and the eighteen #70 pointers live in .rs sources, covered
-    // by the default *.rs include).
-    expect(j.codebase.scanned).toBe(14);
-    expect(j.codebase.pointers).toBe(52);
+    // pointers, the eighteen #70 pointers and the two #72 pointers live
+    // in .rs sources, covered by the default *.rs include).
+    expect(j.codebase.scanned).toBe(15);
+    expect(j.codebase.pointers).toBe(54);
     expect(j.codebase.broken).toBe(9);
     expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
@@ -398,7 +407,7 @@ describe('issue #67 b — refs <node> --codebase finds the punctuation anchors',
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(true);
     expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
-    expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
+    expect(j.scanned).toBe(17); // 16 post-#71 + the #72 net-refs.rs carrier
     // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
     // anchor, so both pointers answer. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -567,7 +576,7 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(56); // 54 + the two appended
+    expect(j.codebase.pointers).toBe(58); // 56 + the two appended
     expect(j.codebase.broken).toBe(10); // the 8 fixture broken + the 2 near misses
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
     expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
