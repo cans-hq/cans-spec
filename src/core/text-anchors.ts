@@ -2,7 +2,9 @@
  *  vocabulary of .txt/.text artifact targets; issue #70 adds the
  *  extractTextLeafTokens diagram/tree-line tier beside it and issue #71
  *  the extractTextEntries whole-line entry tier between the two (headings
- *  and tokens behavior byte-unchanged).
+ *  and tokens behavior byte-unchanged); issue #72 refines that tier's
+ *  bracket rule — a line of SEVERAL bracketed groups mints each group as
+ *  its own entry beside the verbatim whole-line entry.
  *
  *  WHY THIS MODULE EXISTS. Issues #49/#58 taught checkRefs to resolve
  *  `#anchors` against the natural addressable units of schematic artifacts
@@ -237,25 +239,55 @@ export function extractTextLeafTokens(source: string): string[] {
  *  and underline rows out of the vocabulary, not this strip. */
 const ENTRY_LEAD_DECOR_RE = /^[\s\u2500-\u257F]+/u;
 
-/** Issue #71: the whole-line ENTRY vocabulary of a plain-text artifact
- *  target — a .txt/.text line that names a thing IS that thing's address,
- *  the #70 convention quote taken to its phrase form: “a pointer into a
- *  diagram means ‘this entry of the diagram’”, where the entry is the
- *  WHOLE LINE. WHY: #70's extractTextLeafTokens minted single-word tokens
- *  only, so a hyphenated PHRASE anchor naming a whole diagram entry — the
- *  issue's two repros, `see: cans/artifacts/diagrams/trap-flow.txt#
- *  Kernel-seccomp-unotify-triggers` over the literal line `Kernel
- *  seccomp-unotify triggers` (trap-flow.txt line 8) and `…wire-plane.txt#
- *  USERSPACE-SMOLTCP-INGRESS-RING` over `[USERSPACE SMOLTCP INGRESS
- *  RING]` (wire-plane.txt line 5) — had no phrase-level vocabulary to
- *  resolve against and fell as `broken anchor: … — no node matches`
- *  errors even though the entry sat in the target verbatim (the §12
- *  normalizeForAnchor folding already equates `Kernel-seccomp-unotify-
- *  triggers` with `Kernel seccomp-unotify triggers`; only the vocabulary
- *  was missing). Single-token anchors (`#kelir-shim`, `#virtio-shm`,
- *  `#driver-avf`) already resolve through the #70 token tier — this tier
- *  adds the entry-shaped unit BETWEEN the #60 headings and the #70 tokens
- *  (the entry is the convention's named unit, so it outranks the tokens).
+/** A maximal FLAT bracketed group — an ASCII `[` … `]` span with NO
+ *  bracket inside (issue #72). Global + matchAll: scanned left-to-right
+ *  over the cleaned line, never mutating a shared lastIndex (matchAll
+ *  clones its receiver). Nested brackets are skipped over, not entered:
+ *  on `[[FOO BAR]]` the outer `[` has a `[` right behind it, so the FIRST
+ *  match is the inner `[FOO BAR]` — one flat group, exactly the entry a
+ *  human reads off the diagram. */
+const ENTRY_FLAT_GROUP_RE = /\[([^\[\]]*)\]/g;
+
+/** Issues #71/#72: the whole-line ENTRY vocabulary of a plain-text
+ *  artifact target — a .txt/.text line that names a thing IS that thing's
+ *  address, the #70 convention quote taken to its phrase form: “a pointer
+ *  into a diagram means ‘this entry of the diagram’”, where the entry is
+ *  the WHOLE LINE. WHY (#71): #70's extractTextLeafTokens minted
+ *  single-word tokens only, so a hyphenated PHRASE anchor naming a whole
+ *  diagram entry — the issue's two repros, `see: cans/artifacts/diagrams/
+ *  trap-flow.txt#Kernel-seccomp-unotify-triggers` over the literal line
+ *  `Kernel seccomp-unotify triggers` (trap-flow.txt line 8) and
+ *  `…wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` over
+ *  `[USERSPACE SMOLTCP INGRESS RING]` (wire-plane.txt line 5) — had no
+ *  phrase-level vocabulary to resolve against and fell as `broken
+ *  anchor: … — no node matches` errors even though the entry sat in the
+ *  target verbatim (the §12 normalizeForAnchor folding already equates
+ *  `Kernel-seccomp-unotify-triggers` with `Kernel seccomp-unotify
+ *  triggers`; only the vocabulary was missing). Single-token anchors
+ *  (`#kelir-shim`, `#virtio-shm`, `#driver-avf`) already resolve through
+ *  the #70 token tier — this tier adds the entry-shaped unit BETWEEN the
+ *  #60 headings and the #70 tokens (the entry is the convention's named
+ *  unit, so it outranks the tokens).
+ *
+ *  WHY (#72): the #71 bracket strip applied only to a line whose cleaned
+ *  text is ONE bracketed span, so a bracketed entry SHARING its line with
+ *  other bracketed entries minted nothing but the whole multi-group row:
+ *  the issue's repro, wire-plane.txt line 5 — `[USERSPACE SMOLTCP INGRESS
+ *  RING] [on_net_outbound] [on_net_inbound]` — left `#USERSPACE-SMOLTCP-
+ *  INGRESS-RING` a `broken anchor: … — no node matches` error although
+ *  the entry sat in the target verbatim (the `#FOO-BAR-BAZ` minimal
+ *  repro: `[FOO BAR BAZ] [other one]` fails while `[SOLO ENTRY HERE]`
+ *  resolves — the only difference is the second bracketed group). DECIDED
+ *  (#72, reversing #71's “a partial strip would mint a name the line
+ *  never had” note): each maximal FLAT bracketed group on a line is its
+ *  OWN entry BESIDE the whole-line entry — the brackets DELIMIT the
+ *  entry, exactly as they do in the single-pair case, so `[USERSPACE
+ *  SMOLTCP INGRESS RING] [on_net_outbound]` mints the verbatim row AND
+ *  `USERSPACE SMOLTCP INGRESS RING` AND `on_net_outbound`. The whole-line
+ *  entry KEEPS minting verbatim, so the widening never narrows: a pointer
+ *  that spells the whole row still resolves, and nothing strips inside a
+ *  group except whitespace-trim (interior decoration is part of the
+ *  group's name — the brackets are the box, not the name's interior).
  *
  *  CLEANING (one pass over physical lines, the `\r?\n` house split —
  *  CRLF-identical by construction):
@@ -264,44 +296,71 @@ const ENTRY_LEAD_DECOR_RE = /^[\s\u2500-\u257F]+/u;
  *      NOTHING is stripped from the right except whitespace, so a tree
  *      entry's trailing `/` (`kelir-shim/`) and a boxed row's closing `│`
  *      stay truthful (their interior tokens remain #70 leaf-addressable);
- *    · strip ONE outermost ASCII box-bracket pair ONLY when the cleaned
- *      text starts with `[`, ends with `]`, and contains exactly one of
- *      each — `[USERSPACE SMOLTCP INGRESS RING]` → `USERSPACE SMOLTCP
- *      INGRESS RING`, while `[a] [b]` (two pairs) stays verbatim: its
- *      entry is the whole bracketed row, and a partial strip would mint
- *      a name the line never had;
- *    · skip when the cleaned text is shorter than 2 chars or carries no
- *      letter (`/\p{L}/u`) — `----`, `====`, `5432`, `80`, `[]` and pure
- *      glyph rows never mint. Trailing `/`, `)`, `:` stay verbatim: the
- *      token tier already covers token-shaped anchors, and an entry is
- *      the whole line, truthful.
- *  Underline and heading lines mint their text too — harmless duplicates
- *  of the other tiers: resolution is a `some()` probe and suggestions
- *  dedupe by slug, so a repeated text can neither mask a miss nor mint a
- *  false ambiguity. Over-extraction stays the fail-safe direction (a
- *  spurious entry can only turn a would-be error into a hit, never mask a
- *  real one). Dedupe keeps the first occurrence, document order; empty or
- *  whitespace-only source → []. extractTextHeadings and
- *  extractTextLeafTokens above are byte-unchanged — an ADDITIVE tier. */
+ *    · brackets, two cases:
+ *        - SINGLE PAIR (#71, unchanged): the cleaned text starts with
+ *          `[`, ends with `]`, and contains exactly one of each — the
+ *          brackets are the box, and the entry is the interior, trimmed:
+ *          `[USERSPACE SMOLTCP INGRESS RING]` → `USERSPACE SMOLTCP
+ *          INGRESS RING` (only the interior mints; the bracketed
+ *          spelling itself never does);
+ *        - EVERY OTHER SHAPE (0 or ≥2 bracket pairs, or brackets not
+ *          embracing the whole text — #72): the whole cleaned line mints
+ *          VERBATIM, and ADDITIONALLY each maximal flat `[…]` group on
+ *          the line (the regex above, left-to-right) mints its trimmed
+ *          interior as its OWN entry: `[[FOO BAR]]` (two of each — not
+ *          the single-pair case) mints the verbatim line plus its flat
+ *          group's interior `FOO BAR`; `[FOO BAR` (no closer) mints only
+ *          the verbatim line; `[a] [b]` mints the verbatim line alone
+ *          (its interiors fail the guard below);
+ *    · skip when the candidate — whole line or group interior alike — is
+ *      shorter than 2 chars or carries no letter (`/\p{L}/u`) — `----`,
+ *      `====`, `5432`, `80`, `[]` and pure glyph rows never mint, and
+ *      neither do the interiors of `[]`, `[5]`, `[x]`, `[----]`.
+ *      Trailing `/`, `)`, `:` stay verbatim: the token tier already
+ *      covers token-shaped anchors, and an entry is the whole line,
+ *      truthful.
+ *  EMISSION ORDER per line: the whole-line candidate first, then the
+ *  group interiors left-to-right. Underline and heading lines mint their
+ *  text too — harmless duplicates of the other tiers: resolution is a
+ *  `some()` probe and suggestions dedupe by slug, so a repeated text can
+ *  neither mask a miss nor mint a false ambiguity. Over-extraction stays
+ *  the fail-safe direction (a spurious entry can only turn a would-be
+ *  error into a hit, never mask a real one). Dedupe keeps the first
+ *  occurrence, document order; empty or whitespace-only source → [].
+ *  extractTextHeadings and extractTextLeafTokens above are
+ *  byte-unchanged — #72, like #71 before it, is purely additive inside
+ *  this tier (the widening never narrows). */
 export function extractTextEntries(source: string): string[] {
   const entries: string[] = [];
   const seen = new Set<string>();
-  for (const line of source.split(/\r?\n/)) {
-    let t = line.trim();
-    if (t === '') continue; // blank — never an entry
-    t = t.replace(ENTRY_LEAD_DECOR_RE, '').trim();
-    // Exactly one `[` and one `]` (split length 2), embracing the whole
-    // text: the line is a single bracketed span, so the brackets are the
-    // box, not the name. `[a] [b]` and `[x] ──> [y]` keep their brackets.
-    if (t.startsWith('[') && t.endsWith(']')
-        && t.split('[').length === 2 && t.split(']').length === 2) {
-      t = t.slice(1, -1).trim();
-    }
-    if (t.length < 2) continue;        // `x`, `[]` → `` — never address anything
-    if (!HAS_LETTER_RE.test(t)) continue; // `----`, `====`, `5432` — decoration/data
+  const mint = (t: string): void => {
+    if (t.length < 2) return;          // `x`, `[]` → `` — never address anything
+    if (!HAS_LETTER_RE.test(t)) return; // `----`, `====`, `5432` — decoration/data
     if (!seen.has(t)) {
       seen.add(t); // first occurrence wins; document order kept
       entries.push(t);
+    }
+  };
+  for (const line of source.split(/\r?\n/)) {
+    const t = line.trim().replace(ENTRY_LEAD_DECOR_RE, '').trim();
+    if (t === '') continue; // blank — or decoration-only row — never an entry
+    // Single-pair case (#71, unchanged): exactly one `[` and one `]`
+    // (split length 2), embracing the whole text — the line is a single
+    // bracketed span, so the brackets are the box, not the name.
+    // `[SOLO ENTRY HERE]` → `SOLO ENTRY HERE`.
+    if (t.startsWith('[') && t.endsWith(']')
+        && t.split('[').length === 2 && t.split(']').length === 2) {
+      mint(t.slice(1, -1).trim());
+      continue;
+    }
+    // Every other shape (#72): the whole cleaned line mints verbatim,
+    // then each maximal flat bracketed group — left-to-right — mints its
+    // trimmed interior as its own entry. `[a] [b]` and `[x] ──> [y]`
+    // keep their whole-line entry (never narrowed), and their groups now
+    // mint beside it; interiors failing the mint guards never do.
+    mint(t);
+    for (const m of t.matchAll(ENTRY_FLAT_GROUP_RE)) {
+      mint(m[1]!.trim());
     }
   }
   return entries;

@@ -29,7 +29,14 @@
  *       stripped from the right except whitespace, and lines shorter than
  *       2 chars or without a letter never minting (`----`, `====`, `5432`
  *       are decoration/data, never entries). Dedupe first-occurrence,
- *       document order; CRLF-identical.
+ *       document order; CRLF-identical. Since issue #72 a line carrying
+ *       SEVERAL bracketed groups mints each maximal flat group's trimmed
+ *       interior as its OWN entry BESIDE the verbatim whole-line entry
+ *       (the brackets delimit the entry — `[USERSPACE SMOLTCP INGRESS
+ *       RING] [on_net_outbound]` mints the row AND both interiors), so a
+ *       bracketed entry sharing its line with others is still
+ *       addressable; the whole-line entry keeps minting, so the widening
+ *       never narrows.
  *    2. refs.ts artifactEntryVocabulary: .txt/.text → extractTextEntries;
  *       schematic → [] (parseSchematic is their only resolution);
  *       code → [] (a code LINE is not an "entry").
@@ -52,18 +59,35 @@
  *   layer (declaration-tier only, the #70 precedent), and the schematic
  *   parser (the YAML multi-line-quoted-scalar note is out of scope).
  *
+ *   RE-PINNED FOR #72 (the bracketed-entry-shares-its-line defect): the
+ *   WIRE_PLANE_TXT fixture's line 5 takes the real repo's 0.20.0 shape
+ *   verbatim — `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound]
+ *   [on_net_inbound]`, the three-group row that motivated issue #72 — so
+ *   en10's wire-plane entry list mints the verbatim row plus its three
+ *   group interiors, en3's multi-pair assertions gain their group
+ *   entries (the whole-line entry still mints verbatim), h2's token list
+ *   gains the two on_net_* tokens of the new line, and r2's repro anchor
+ *   now resolves through the #72 PER-GROUP entry (its old single-pair
+ *   strip no longer applies to a three-group line). Every other pin is
+ *   byte-identical to the #71 suite.
+ *
  * WHAT EACH BLOCK PINS
  *   en1-en10 .. extractTextEntries (pure): the two repro lines (plain
  *               phrase; bracket strip); leading tree-glyph strip (│├└─
- *               shapes); the `[a] [b]` guard; underline/`----`/no-letter/
- *               pure-number skips; dedupe + document order; CRLF; empty
- *               source; single-word lines mint too; right side verbatim;
- *               the repro fixtures' exact entry lists
+ *               shapes); the `[a] [b]` guard (whole multi-pair rows stay
+ *               verbatim while their group interiors mint beside — #72);
+ *               underline/`----`/no-letter/pure-number skips; dedupe +
+ *               document order; CRLF; empty source; single-word lines mint
+ *               too; right side verbatim; the repro fixtures' exact entry
+ *               lists (wire-plane's line 5 in its three-group #72 shape)
  *   h1-h2 ..... regression pins: extractTextHeadings and
  *               extractTextLeafTokens byte-unchanged on the repro
- *               fixtures (the entry tier is purely additive)
+ *               fixtures (the entry tier is purely additive; h2's token
+ *               list carries the two on_net_* tokens of the #72 fixture
+ *               line — the fixture grew, the tier did not)
  *   r1-r9 ..... checkArtifactAnchor through the seam: both repro anchors
- *               resolve (zero issues); single-token anchors still
+ *               resolve (zero issues — r2 through the #72 per-group
+ *               entry); single-token anchors still
  *               resolve; a miss into a contentful .txt = the exact
  *               refs.broken.anchor message; a miss into an EMPTY .txt =
  *               the advisory with the exact SEVEN-vocabulary message
@@ -155,18 +179,23 @@ const TRAP_FLOW_TXT = [
 ].join('\n');
 
 /** Shaped from the REAL cans/artifacts/diagrams/wire-plane.txt — the
- *  issue's repro 2. Target line 5 is the literal `[USERSPACE SMOLTCP
- *  INGRESS RING]` box entry: the outer brackets blocked every pre-#71
- *  tier (no heading, no token match — the §12 seam never strips them),
- *  and line 4 above it is non-blank so the ALL-CAPS heading guard stays
- *  out too. The bracketed `→` row at line 8 carries THREE bracket pairs,
- *  pinning the exactly-one-pair strip guard on a real diagram shape. */
+ *  issue's repro 2, in its real 0.20.0 shape (issue #72): target line 5
+ *  is the literal `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound]
+ *  [on_net_inbound]` row — a bracketed box entry SHARING its line with
+ *  two more bracketed groups. #71's exactly-one-pair strip therefore
+ *  never applied (three of each), so pre-#72 only the whole three-group
+ *  row minted and `#USERSPACE-SMOLTCP-INGRESS-RING` was a truthful-
+ *  looking broken-anchor FALSE POSITIVE; #72 mints each flat group
+ *  beside the verbatim row. Line 4 above it is non-blank so the ALL-CAPS
+ *  heading guard stays out, and the bracketed `→` row at line 8 carries
+ *  three more bracket pairs — the same per-group rule on a real diagram
+ *  shape. */
 const WIRE_PLANE_TXT = [
   'THE WIRE PLANE',
   '===============',
   '',
   'one hop per ring, guest to host:',
-  '[USERSPACE SMOLTCP INGRESS RING]',
+  '[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]',
   '        │',
   '        ▼',
   ' [virtio-net TX] ──> [vsock stream] ──> [host tap]',
@@ -210,16 +239,25 @@ describe('issue #71 engine — extractTextEntries (whole lines as entries)', () 
     ]);
   });
 
-  test('en3: the `[a] [b]` guard — multiple bracket pairs stay verbatim, on toy and real shapes', () => {
-    // Two pairs: the entry is the whole bracketed row, and a partial strip
-    // would mint a name the line never had.
+  test('en3: the `[a] [b]` guard — the whole multi-pair row stays verbatim while #72 mints each group beside it', () => {
+    // Two pairs: the whole-line entry is the verbatim bracketed row (a
+    // partial strip would mint a name the line never had) and, since #72,
+    // each flat group mints its own interior — here both interiors are
+    // 1-char, so the row mints alone (the guard stays).
     expect(extractTextEntries('[a] [b]\n')).toEqual(['[a] [b]']);
-    // The real wire-plane row: three pairs plus ──> arrows — verbatim.
+    // The real wire-plane row: three pairs plus ──> arrows — the verbatim
+    // row FIRST, then the three group interiors left-to-right (#72).
     expect(extractTextEntries(' [virtio-net TX] ──> [vsock stream] ──> [host tap]\n')).toEqual([
       '[virtio-net TX] ──> [vsock stream] ──> [host tap]',
+      'virtio-net TX',
+      'vsock stream',
+      'host tap',
     ]);
-    // A trailing run that does not END in `]` never strips either.
-    expect(extractTextEntries('[USERSPACE RING] extra\n')).toEqual(['[USERSPACE RING] extra']);
+    // A leading bracket that does not END in `]` never strips the single
+    // pair either — the whole line verbatim plus the one group it holds.
+    expect(extractTextEntries('[USERSPACE RING] extra\n')).toEqual([
+      '[USERSPACE RING] extra', 'USERSPACE RING',
+    ]);
   });
 
   test('en4: decoration and data rows never mint — dashes, equals, numbers, single chars, empty brackets', () => {
@@ -301,8 +339,14 @@ describe('issue #71 engine — extractTextEntries (whole lines as entries)', () 
     expect(extractTextEntries(WIRE_PLANE_TXT)).toEqual([
       'THE WIRE PLANE',
       'one hop per ring, guest to host:',
+      '[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]',
       'USERSPACE SMOLTCP INGRESS RING',
+      'on_net_outbound',
+      'on_net_inbound',
       '[virtio-net TX] ──> [vsock stream] ──> [host tap]',
+      'virtio-net TX',
+      'vsock stream',
+      'host tap',
       'KERNEL EGRESS RING',
     ]);
   });
@@ -341,8 +385,9 @@ describe('issue #71 engine — the existing tiers stay byte-unchanged', () => {
     ]);
     expect(extractTextLeafTokens(WIRE_PLANE_TXT)).toEqual([
       'THE', 'WIRE', 'PLANE', 'one', 'hop', 'per', 'ring', 'guest', 'to',
-      'host', 'USERSPACE', 'SMOLTCP', 'INGRESS', 'RING', 'virtio-net',
-      'TX', 'vsock', 'stream', 'tap', 'KERNEL', 'EGRESS',
+      'host', 'USERSPACE', 'SMOLTCP', 'INGRESS', 'RING', 'on_net_outbound',
+      'on_net_inbound', 'virtio-net', 'TX', 'vsock', 'stream', 'tap',
+      'KERNEL', 'EGRESS',
     ]);
   });
 });
@@ -362,7 +407,11 @@ describe('issue #71 engine — resolution through checkArtifactAnchor', () => {
     )).toEqual([]);
   });
 
-  test('r2: repro 2 resolves — #USERSPACE-SMOLTCP-INGRESS-RING over the bracket-stripped entry', () => {
+  test('r2: repro 2 resolves — #USERSPACE-SMOLTCP-INGRESS-RING over the #72 per-group entry', () => {
+    // Line 5's real 0.20.0 shape carries THREE bracketed groups, so #71's
+    // single-pair strip never applied; the #72 per-group rule mints
+    // `USERSPACE SMOLTCP INGRESS RING` beside the verbatim row, and the
+    // §12 folding resolves the hyphenated phrase against it.
     const nodes = flattenNodes(parseOutline(WIRE_PLANE_TXT, 'cans/artifacts/diagrams/wire-plane.txt'));
     expect(checkArtifactAnchor(
       'crates/kelir-transport/src/lib.rs', 3, 'cans/artifacts/diagrams/wire-plane.txt',
