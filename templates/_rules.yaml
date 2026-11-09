@@ -324,6 +324,18 @@ output:
 #     (a file-level artifact pointer verifies existence and nothing
 #     more) — artifact files are resolution inputs, never scan
 #     inputs.
+#   - issue #70 widens those vocabularies with a LEAF tier, through the
+#     same shared verdict path: every identifier a code target references
+#     (declaration, import, use, call site, comment text alike) and every
+#     word token of a `.txt`/`.text` tree/box/diagram entry is addressable
+#     — a pointer to an example means "this file demonstrates the symbol",
+#     a pointer into a diagram means "this entry of the diagram" — and
+#     the Rust grammar mints column-0 declarations regardless of `pub`
+#     plus trait-block methods (impl methods and `pub(crate)`/`pub(super)`
+#     still never mint). Over-extraction is fail-safe: an extra name can
+#     only turn a would-be error into a hit, never mask a real miss. The
+#     no-target advisory fires only for a target with nothing addressable
+#     at all (an empty .txt).
 #   - #<slug> resolves with the SAME tolerant anchor matching the corpus
 #     refs engine uses (case- and separator-insensitive; the `slug:`
 #     algorithm at the top of this file is the canonical spelling — and
@@ -368,7 +380,10 @@ output:
 # CI usage: the scanner is deterministic (same tree → same findings, in
 # the same order), so `severity: error` turns silent pointer rot into a
 # non-zero exit — wire `cans check --codebase` into CI and a renamed spec
-# node fails the build until the pointers follow it.
+# node fails the build until the pointers follow it. The exit ladder is
+# the #41 contract, confirmed intended by #70: 0 clean · 1 warnings-only
+# (`ok` stays true — `--strict` flips `ok`, never the exit code) ·
+# 2 errors.
 #
 # codebase:
 #   enabled: true

@@ -318,7 +318,9 @@ interface CommandResult { ok: boolean; command: string; exitCode: number; }
 - If anchor on a `.txt`/`.text` or code-file target (`.ts`, `.js`, `.rs`,
   `.py`, `.go`, …) → the target's natural addressable units: section
   headings for text artifacts, top-level symbols for code files (issue #60),
-  resolved by the same §12 normalization and first-match rule as bullets.
+  and since issue #70 their LEAF tier (referenced names and word tokens,
+  below), resolved by the same §12 normalization and first-match rule as
+  bullets.
 - No fuzzy anchor matching. Not found = broken ref error — the `refs.broken` JSON counter counts these broken-anchor errors too (round 6).
 
 ### Schematic anchors — JSON / YAML / TOML (issue #58)
@@ -426,6 +428,11 @@ artifacts/registry.rs#parse_header                .rs / .py / .go likewise
   consts, modules — are the vocabulary, extracted line-based without
   parsing (the zero-dependency law holds; over-extraction can only add
   addressable names, never silence a miss).
+- **The leaf tier (issue #70)**: the declarations above are not the whole
+  surface a pointer can legitimately name — every identifier a code target
+  references and every word token of a `.txt`/`.text` tree/box/diagram
+  entry resolves too, through the same shared verdict seam (the full
+  contract: the codebase section's #70 block).
 - **Resolution is the bullet model**: exact-after-normalization, first
   match in document order, no new ambiguity error class — a name that
   appears twice in a text file addresses the first, like a duplicated
@@ -1032,6 +1039,57 @@ runs, and the scan itself still never enters the workspace (step 1's
 skip is untouched; artifact files are resolution inputs, never scan
 inputs).
 
+**The leaf tier — referenced names and text tokens (issue #70):** the
+vocabularies above answer DECLARATIONS — a bullet, a key path, a heading,
+a top-level symbol — but 0.18.0's first `--codebase` run over a real
+corpus (kelir, 1523 pointers) reported 16 errors + 19 warnings on a clean
+tree, and two whole pointer classes sat outside them. Referenced names:
+a pointer names what a code target USES, not only what it declares
+(`#LedgerPlugin`, `#binary_blake3`, `#PgWireRewrite` — imports, uses,
+call sites). Diagram and tree entries: `#kelir-shim` aimed at a
+`│   ├── kelir-shim/` tree entry, `#virtio-shm` at a `[virtio-shm]` box
+entry, `#driver-avf` at tree entries — and the repo's established
+convention (the reporter's local RFC #66 checker) reads them exactly so:
+a pointer to an example means "this file demonstrates the symbol", and a
+pointer into a diagram means "this entry of the diagram" — so those
+leaves ARE addressable. #70 adds the leaf tier as the THIRD vocabulary
+layer, through the shared `checkArtifactAnchor` seam so the corpus refs
+engine's artifact refs widen with the codebase phase: every identifier
+token of a code target (declarations, imports, uses, call sites, comment
+text alike) and every word token (`[A-Za-z0-9][A-Za-z0-9_\-]*`, ≥ 2
+chars, ≥ 1 letter) of a `.txt`/`.text` target resolves an anchor.
+`.md` corpus targets and schematic `.json`/`.yaml`/`.toml` targets are
+untouched. The fail-safe direction is the one #60 already argued,
+sharpened: over-extraction can only turn a would-be error into a hit,
+never mask a real one — a name the file merely mentions resolving a
+pointer IS the convention's reading, and a genuine miss (the name
+appears nowhere in the target) still fails. The suggestion pool for a
+miss ranks the UNION — declarations + leaves (`nearSlugMatches` over the
+merged vocabulary) — so a typo of a referenced name earns the same
+`did you mean` quality a typo of a heading always had. And the no-target
+advisory narrows to its truthful core: `refs.anchor.no-target` /
+`codebase.anchor.no-target` now fire only for a target with NO
+addressable content at all (an empty `.txt`; a `.csv` was never in the
+table) — the message enumerates the full vocabulary (bullets, schematic
+key paths, text headings, code symbols, referenced names, text tokens).
+
+**Rust symbol grammar v2 (issue #70):** the #60 Rust rules minted `pub`
+items only — the "exported" call — and the kelir run paid for it in the
+other 7 errors: trait methods (`async fn configure_runtime(&mut self)`
+inside `pub trait ContainerService`) and non-pub unit structs (`struct
+UserOracle;`) were invisible to the vocabulary, so pointers at them read
+broken. The v2 grammar mints column-0 declarations REGARDLESS of `pub` —
+the exported-only call is revised: example/demo artifact files have no
+API surface to protect (the `cans/artifacts/` layout is why code targets
+exist at all), and over-extraction is fail-safe (above). Trait methods
+mint via a trait-block tracker: `pub trait X {` opens the block, and an
+indented `async fn m(…)` inside it mints `m` — a trait's methods are its
+contract, exactly what an example file demonstrates. What still NEVER
+mints: `pub(crate)`/`pub(super)` items (crate-restricted visibility is
+not a demonstrated name) and impl-block methods (an impl is a
+realization, not a declaration surface — the #60 reasoning kept). The
+TS/JS, Python and Go grammars are unchanged.
+
 **Pipeline (select → extract → resolve → report):**
 
 1. **Select** — `collectSourceFiles(root, cfg)` walks `cfg.roots` (each
@@ -1099,7 +1157,10 @@ the codebase phase runs AFTER the corpus engines over the SAME loaded
 workspace (it consumes the corpus key set the check already built) and
 its findings join the report with the rest (§17 step 8) — a `severity:
 error` finding counts in `errorCount` and drives `ok`/`exitCode` like
-every band (exit 2; `warning` is the exit-1 band).
+every band (exit 2; `warning` is the exit-1 band), and a warnings-only
+run is exit 1 with `ok` still true — `--strict` flips `ok` to false and
+never the exit code — the #41 ladder #70 confirmed as intended for this
+phase on the kelir corpus.
 
 **Wire shape** (additive — present ONLY when the phase ran, so
 plain-check JSON stays byte-identical to the pre-#66 format and the §35
@@ -1804,7 +1865,9 @@ spelling of `severity: error`. `--structure` is the one flag that takes an
 `--structure` together with `--refs-only` (opposite gates) or with `--fix`
 (a gate run never mutates files). The exit contract is unchanged:
 `0` clean · `1` warnings · `2` errors, and plain `cans check` orchestration
-is untouched.
+is untouched — a warnings-only run keeps `ok: true` at exit 1, `--strict`
+flips `ok` and never the code, the band #70 confirmed for the codebase
+phase too.
 
 ### Command contract
 - Each command is a single exported async function returning a `CommandResult` subtype.
@@ -1890,6 +1953,10 @@ counts in `errorCount` and drives exit 2, `warning` the exit-1 band) and
 the additive top-level `codebase` JSON block carries
 `{ scanned, pointers, broken, issues[] }` — present only when the phase
 ran, so plain-check JSON stays byte-identical to the pre-#66 wire format.
+Issue #70 confirmed the band contract on the kelir corpus: a warnings-only
+run reports `ok: true` and exits 1 — the #41 ladder (`0` clean · `1`
+warnings · `2` errors), where `--strict` flips `ok` only and never the
+exit code.
 The reverse query is §23c.
 
 **`--fix` scope (strictly limited):** Add/remove/rewrite `<!-- ref-by: ... -->` comments. Nothing else. No text changes, no node moves, no style fixes, no splits. (The one exception, gated behind `--fix --yes`: pure anchor-segment rewrites inside `see:` tokens — see the anchor-repair contract below. Node text is never touched.)
@@ -2143,10 +2210,14 @@ target-extension table (`CODEBASE_TARGET_EXTS`, §12) — `cans refs
 "cans/artifacts/diagrams/host-runtime.txt#driver-avf" --codebase` is a
 legal query — and the pointer and query grammars build from the same
 table through `codebaseTargetExtAlt()`, so a query can name everything a
-pointer can name and the two can never drift. An artifact query resolves
-its file against the workspace (containment, issue #10) and matches
-pointers by resolved-path equality with the same anchor-insensitive
-comparison as a corpus query. In both tiers `core/codebase.ts` runs
+pointer can name and the two can never drift. Issue #70 changed no
+grammar here (the query side already names everything the pointer
+grammar names through the shared extension table); queries resolve over
+the same widened target space — the #70 leaf tier and Rust grammar v2
+included. An artifact query resolves its file against the workspace
+(containment, issue #10) and matches pointers by resolved-path equality
+with the same anchor-insensitive comparison as a corpus query. In both
+tiers `core/codebase.ts` runs
 the SAME select → extract
 → resolve pipeline as the check phase (§12) under the `codebase` config
 (`roots`/`include`/`exclude`; the workspace always skipped), then keeps the
