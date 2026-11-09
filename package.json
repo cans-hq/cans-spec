@@ -1,6 +1,6 @@
 {
   "name": "cans-spec",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Canonical Agent-Native Spec \u2014 the outline is the spec, the state, and the task board",
   "bin": {
     "cans": "./bin/cans.js"
