@@ -1,4 +1,4 @@
-# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68, #69, #70 and #71)
+# codebase-workspace — the issue #66 e2e oracle (extended for issues #67, #68, #69, #70, #71 and #72)
 
 A realistic mini project: the CANS workspace `cans/` sits next to a source
 tree `src/` — exactly the layout the codebase inbound-references scanner
@@ -11,8 +11,8 @@ pure default set covers only `*.rs *.ts *.js *.py *.go *.c *.cpp`),
 
 This file is the human-readable oracle for `test/issue66-integration.test.ts`,
 `test/issue-67-contract.test.ts`, `test/issue-68-contract.test.ts`,
-`test/issue-69-contract.test.ts`, `test/issue-70-contract.test.ts` and
-`test/issue-71-contract.test.ts`: every
+`test/issue-69-contract.test.ts`, `test/issue-70-contract.test.ts`,
+`test/issue-71-contract.test.ts` and `test/issue-72-contract.test.ts`: every
 embedded pointer, its line, and the outcome the real CLI must produce. Line
 numbers below are byte-authoritative for the files as committed.
 
@@ -104,18 +104,48 @@ bracketed box entry `[USERSPACE SMOLTCP INGRESS RING]`) matches neither
 vocabulary — `no node matches`, the issue's two errors. The extension
 adds the two diagrams — `cans/artifacts/diagrams/trap-flow.txt` (its
 line 8 is the issue's target line verbatim) and `cans/artifacts/diagrams/
-wire-plane.txt` (its line 5 verbatim) — plus the scanned sources
-`src/trap.rs` and `src/transport.rs` carrying four pointers: the two repro
-phrase pointers (VALID post-#71 through the new ENTRY tier — per physical
-line: trim, strip the leading box-drawing run, strip one outermost `[…]`
-pair, every lettered line is an entry; normalizeForAnchor folds `-`↔space
-so the phrase and its line are one), one near-miss phrase typo kept broken
-on purpose, and one single-token control the #70 leaf tier already
-resolves (the widening never narrows). Every pre-#71 file and its verdict
-is unchanged below; the extension only ADDS content, and it adds NO new
-corpus files: both diagrams are WORKSPACE artifacts under `cans/` — never
-scanned, never spec — and the two new sources are `src/`, exactly the
-#69/#70 pattern.
+wire-plane.txt` (its line 5 verbatim, a lone bracketed group at #71 time)
+— plus the scanned sources `src/trap.rs` and `src/transport.rs` carrying
+four pointers: the two repro phrase pointers (VALID post-#71 through the
+new ENTRY tier — per physical line: trim, strip the leading box-drawing
+run, strip one outermost `[…]` pair, every lettered line is an entry;
+normalizeForAnchor folds `-`↔space so the phrase and its line are one),
+one near-miss phrase typo kept broken on purpose, and one single-token
+control the #70 leaf tier already resolves (the widening never narrows).
+Every pre-#71 file and its verdict is unchanged below; the extension only
+ADDS content, and it adds NO new corpus files: both diagrams are
+WORKSPACE artifacts under `cans/` — never scanned, never spec — and the
+two new sources are `src/`, exactly the #69/#70 pattern.
+
+**The issue #72 extension** (the kelir-shaped repro, round five — the
+bracketed group that SHARES its line): 0.20.0 on kelir reports one
+remaining error of the #71 class. The #71 entry tier strips one
+outermost `[…]` pair ONLY when it is the only one, so a bracketed entry
+sharing its line with other bracketed groups never strips — the entry is
+the WHOLE multi-group row and a phrase anchor naming the FIRST group
+matches no single node: `wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING`
+over the real line 5 `[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound]
+[on_net_inbound]`, and the issue's minimal repro `t.txt#FOO-BAR-BAZ` over
+`  [FOO BAR BAZ] [other one]` (while `#SOLO-ENTRY-HERE` over the lone
+`  [SOLO ENTRY HERE]` resolves — the #71 single-pair control). The
+extension grows `wire-plane.txt` line 5 into the issue's three-group row
+VERBATIM (every other byte of the file intact, so the #71 control
+`[KERNEL VIRTIO NETQUEUE PAIR]` and the #70 leaf tokens keep their
+world), adds `cans/artifacts/diagrams/t.txt` — the issue's minimal repro
+verbatim, two lines, two leading spaces each — and adds the scanned
+carrier `src/net-refs.rs` carrying the two pointers: the repro
+`// see: cans/artifacts/diagrams/t.txt#FOO-BAR-BAZ` (line 3, VALID
+post-#72 through the per-group entry `FOO BAR BAZ`) and the single-pair
+CONTROL `// see: cans/artifacts/diagrams/t.txt#SOLO-ENTRY-HERE` (line 8,
+VALID on BOTH sides of the merge — the #71 strip, unchanged; the
+per-group widening never narrows). Post-#72 each maximal flat bracket
+group of a line mints its trimmed interior as its OWN entry (whole-line
+verbatim first, then groups left-to-right) beside the unchanged
+single-pair rule. Every pre-#72 file and its verdict is unchanged below;
+the extension only ADDS content (the one grown line aside, byte-identical
+files), and it adds NO new corpus files: t.txt is a WORKSPACE artifact
+under `cans/` — never scanned, never spec — and the one new source is
+`src/`, exactly the #69/#70/#71 pattern.
 
 ## The corpus (`cans/`)
 
@@ -424,36 +454,65 @@ error and line 7's suggestion pool is empty (headings and tokens only —
 nothing within Levenshtein of the phrase), so both findings ride the
 error class, 2 of the 3 pre-#71 false/true errors of the #71 extension.
 
-### `src/transport.rs` — Rust line comments; the box-entry phrase + the control (issue #71)
+### `src/transport.rs` — Rust line comments; the box-entry phrase + the control (issues #71 and #72)
 
 The issue's second repro site (`crates/kelir-transport/src/lib.rs`) at
-fixture scale, plus the control: the bracketed ALL-CAPS box entry
-`[USERSPACE SMOLTCP INGRESS RING]` (wire-plane.txt line 5, verbatim) is
-addressed as a whole phrase — post-#71 the ENTRY tier strips the ONE
-outermost `[…]` pair and the anchor resolves. Pre-#71 the line is NOT an
-ALL-CAPS heading (its physically-above line is non-blank box drawing —
-the standalone-paragraph guard fails by design, the bracketed entry sits
-mid-diagram) and no single token equals the phrase. The CONTROL pointer
-rides the #70 leaf tier: `SMOLTCP` is a word token of the same box line,
-addressable on BOTH sides of the #71 merge — the entry tier widens the
-vocabulary, never narrows it.
+fixture scale, plus the control — now in its #72 shape: since the #72
+extension wire-plane.txt line 5 is the issue's verbatim THREE-GROUP row
+`[USERSPACE SMOLTCP INGRESS RING] [on_net_outbound] [on_net_inbound]`
+(a lone bracketed group at #71 time, grown for #72). Post-#72 the
+per-group widening mints `USERSPACE SMOLTCP INGRESS RING` as its OWN
+entry and the anchor resolves through it; pre-#72 (0.20.0) the #71
+single-pair-only strip never fires over a three-group row, so the whole
+row is the entry and the phrase anchor naming the first group matches
+no single node — the issue's remaining false error. Pre-#71 the line is
+NOT an ALL-CAPS heading either way (its physically-above line is
+non-blank box drawing — the standalone-paragraph guard fails by design,
+the bracketed entry sits mid-diagram) and no single token equals the
+phrase. The CONTROL pointer rides the #70 leaf tier: `SMOLTCP` is a word
+token of the same box line, addressable on BOTH sides of the #71 AND
+#72 merges — the entry tier widens the vocabulary, never narrows it.
 
 | line | written span | verdict |
 |---|---|---|
-| 3 | `see: cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` | VALID (post-#71) — the BRACKETED PHRASE-ENTRY anchor: the whole box line `[USERSPACE SMOLTCP INGRESS RING]` minus its one outermost bracket pair (wire-plane.txt line 5, the issue's target line verbatim) |
-| 7 | `see: cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` | VALID — the single-token CONTROL: a word token of the same box line, resolved by the #70 leaf tier pre- AND post-#71 (the widening never narrows) |
+| 3 | `see: cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` | VALID (post-#72) — the BRACKETED GROUP-ENTRY anchor: the first flat bracket group of the three-group row, `USERSPACE SMOLTCP INGRESS RING` (wire-plane.txt line 5, the issue's target line verbatim); resolved post-#71 only while the row was a lone bracketed span (the single-pair strip), and the issue's false error again on 0.20.0 (**one of the 2 pre-#72 false errors**)
+| 7 | `see: cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` | VALID — the single-token CONTROL: a word token of the same box line, resolved by the #70 leaf tier pre- AND post-#71/#72 (the widening never narrows) |
 
-2 pointers, 0 broken. Pre-#71 line 3 is the issue's second false error;
+2 pointers, 0 broken. Pre-#72 line 3 is the issue's false error (again);
 line 7 resolves in every world.
+
+### `src/net-refs.rs` — Rust line comments; the minimal-repro group pointer + the single-pair control (issue #72)
+
+The issue's own minimal repro, carried at fixture scale: `t.txt` line 1
+`  [FOO BAR BAZ] [other one]` is a bracketed entry SHARING its line with
+another bracketed group — the #71 entry tier mints the whole two-group
+row verbatim (its one-pair strip never fires), so `#FOO-BAR-BAZ` had no
+matching entry on 0.20.0, the issue's report. Post-#72 each maximal flat
+bracket group mints its trimmed interior as its OWN entry, so the group
+entry `FOO BAR BAZ` answers the anchor. The CONTROL rides line 2 of the
+diagram — a LONE bracketed span, so the #71 single-pair strip resolves
+`#SOLO-ENTRY-HERE` on BOTH sides of the merge: the per-group widening
+never narrows the single-pair rule. The target carries leaf-token
+vocabulary (FOO, BAR, BAZ, other, one, SOLO, ENTRY, HERE — the #70 tier),
+so the pre-fix miss is an ERROR, the issue's report, never a no-target
+warning.
+
+| line | written span | verdict |
+|---|---|---|
+| 3 | `see: cans/artifacts/diagrams/t.txt#FOO-BAR-BAZ` | VALID (post-#72) — the GROUP-ENTRY anchor: the first flat bracket group of `  [FOO BAR BAZ] [other one]`, the entry `FOO BAR BAZ` (**one of the 2 pre-#72 false errors** — the whole two-group row was the only entry on 0.20.0) |
+| 8 | `see: cans/artifacts/diagrams/t.txt#SOLO-ENTRY-HERE` | VALID — the single-pair CONTROL: `  [SOLO ENTRY HERE]` is a lone bracketed span, resolved by the #71 one-outermost-pair strip pre- AND post-#72 (the widening never narrows) |
+
+2 pointers, 0 broken (post-#72). Pre-#72 line 3 is the issue's false
+error; line 8 resolves in every world.
 
 ## Expected scanner outcomes (the numbers the suites pin)
 
 | scenario | scanned | pointers | broken |
 |---|---|---|---|
-| config block on (this `_rules.yaml`) | 16 (the 14 post-#70 files plus `src/trap.rs` + `src/transport.rs`, issue #71) | 54 (50 + the four #71 pointers) | 8 post-#71 — the 7 post-#70 plus the #71 phrase typo (trap.rs:7); the two repro PHRASE pointers (trap.rs:3, transport.rs:3) resolve post-#71 and are the issue's 2 false errors on 0.19.0 (**10 pre-#71**); **22 pre-#70** (0.18.0). Warnings: exactly 1 in every world — the empty-metrics no-target advisory |
-| flag on, no config block (pure defaults, plugin tier kept on) | 14 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the two #71 sources are `.rs`, covered by the default `**/*.rs`) | 52 | 9 post-#71 — the 8 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence. **11 pre-#71** (the 9 + the 2 false phrase errors). **23 pre-#70**. Warnings: 1 |
-| aliasing include dropped (tier off, config block kept) | 16 | 54 | 13 post-#71 — the 2 true, the five #68 pointers as FileNotFound, the 3 #69 artifact broken, the 2 #70 typos and the #71 phrase typo (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of the #69/#70/#71 artifact pointers; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves). **15 pre-#71** (the 13 + the 2 false phrase errors). **27 pre-#70** |
-| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`, trait-wiring.rs:106 → `#configure_runtime`, :109 → `#LedgerPlugin`, trap.rs:7 → `#Kernel-seccomp-unotify-triggers`) | 16 | 54 | 0 post-#71 (pre-#71: 3 — the two false phrase errors and the healed-typo-as-written error; pre-#70: 15 — the valid-as-broken class) |
+| config block on (this `_rules.yaml`) | 17 (the 14 post-#70 files plus `src/trap.rs` + `src/transport.rs`, issue #71, and `src/net-refs.rs`, issue #72) | 56 (50 + the four #71 pointers + the two #72 pointers) | 8 post-#72 — the SAME eight as post-#71 (the 7 post-#70 plus the #71 phrase typo at trap.rs:7; net-refs.rs adds NO broken record); the two #72 repro pointers (net-refs.rs:3, transport.rs:3) resolve post-#72 and are the issue's 2 false errors on 0.20.0 (**10 pre-#72**); 8 post-#71 (**10 pre-#71**); **22 pre-#70** (0.18.0). Warnings: exactly 1 in every world — the empty-metrics no-target advisory |
+| flag on, no config block (pure defaults, plugin tier kept on) | 15 (same minus `src/net.yaml` and `src/plugins/mounts.yaml` — the #71/#72 sources are `.rs`, covered by the default `**/*.rs`) | 54 | 9 post-#72 — the 8 plus the `cans/_rules.yaml#codebase.enabled` pointer, which breaks HERE because the variant's own rules rewrite drops the codebase block the anchor names: the artifact tier validates the rules file's CURRENT content, so a rewrite that deletes the key a pointer names is a reported diff, not silence. **11 pre-#72** (the 9 + the 2 false group errors). 9 post-#71 (**11 pre-#71**). **23 pre-#70**. Warnings: 1 |
+| aliasing include dropped (tier off, config block kept) | 17 | 56 | 13 post-#72 — the 2 true, the five #68 pointers as FileNotFound, the 3 #69 artifact broken, the 2 #70 typos and the #71 phrase typo (the artifact tier resolves against the workspace filesystem, not the corpus, so dropping the aliasing tier moves none of the #69/#70/#71/#72 artifact pointers; the `codebase:` block survives this variant's rewrite, so the rules-key pointer still resolves). **15 pre-#72** (the 13 + the 2 false group errors). 13 post-#71 (**15 pre-#71**). **27 pre-#70** |
+| pointers fixed (routes.ts:3 → `#Quotas`, quota.py:7 → `see: 07-network.md`, artifact-wiring.rs:36 → `#federate`, :40 → `#driver-avf`, :46 → `see: cans/artifacts/examples/multi-vm-swarm.rs#federate`, trait-wiring.rs:106 → `#configure_runtime`, :109 → `#LedgerPlugin`, trap.rs:7 → `#Kernel-seccomp-unotify-triggers`) | 17 | 56 | 0 post-#72 (the #71 heal set is UNCHANGED — no typo pointer was added for #72, so there is nothing new to heal; pre-#72: 2 — the two false group errors the issue reports, the healed tree's only remaining findings on 0.20.0, verified by running; pre-#71: 3; pre-#70: 15 — the valid-as-broken class) |
 
 The 7 broken (post-#70) are the pre-#67 pair PLUS the three deliberate
 issue-#69 records PLUS the two issue-#70 typos — every issue-#67 pointer
@@ -463,12 +522,19 @@ Issue #71 adds the phrase typo as an EIGHTH record (trap.rs sorts after
 quota.py, so it slots in last) and the two repro PHRASE pointers join the
 valid set — 8 broken post-#71, 10 on 0.19.0 (the two false phrase errors
 the issue reports).
+Issue #72 adds NO record: net-refs.rs carries only VALID pointers and the
+grown wire-plane row keeps its #71 pointer resolving (through the group
+entry now) — 8 broken post-#72, and on 0.20.0 the two FALSE records slot
+in file order (`src/net-refs.rs:3` second, between routes.ts:3 and the
+plugins; `src/transport.rs:3` ninth, after quota.py:7 and before
+trap.rs:7 — `transport` < `trap` at the fourth char) for 10 broken, the
+issue's report at fixture scale.
 Pre-#69 the census counted 26 pointers and 2 broken: the six artifact
 targets never parsed as pointers at all (the silent-skip half of the
 issue). Pre-#70 (0.18.0, the issue #70 report at fixture scale): 50
 pointers, 22 broken + 1 warning — the 15 valid #70 anchors all false
 AnchorNotFound errors (the class-A/class-B repro) and the empty-metrics
-pointer the one warning. Broken-pointer wire records post-#71 (exact
+pointer the one warning. Broken-pointer wire records post-#72 (exact
 7-key shape, deterministic order — file asc, line asc):
 
 ```json
@@ -582,6 +648,11 @@ bare stem, an empty slug or trailing garbage all refuse with the
 | `cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-triggers` (artifact, the #71 phrase-entry anchor) | `src/trap.rs:3` |
 | `cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger` (artifact, the #71 TYPO spelling) | `src/trap.rs:7` — the reverse path answers for broken pointers too (a query, not a verdict; the #69 `#federateNope` precedent) |
 | `cans/artifacts/diagrams/trap-flow.txt` (artifact, file-level) | both into it: `src/trap.rs:3`, `:7` |
-| `cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` (artifact, the #71 bracketed phrase-entry anchor) | `src/transport.rs:3` |
+| `cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` (artifact, the #71/#72 bracketed phrase/group-entry anchor) | `src/transport.rs:3` |
 | `cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` (artifact, the #71 single-token CONTROL) | `src/transport.rs:7` |
 | `cans/artifacts/diagrams/wire-plane.txt` (artifact, file-level) | both into it: `src/transport.rs:3`, `:7` |
+| `cans/artifacts/diagrams/t.txt#FOO-BAR-BAZ` (artifact, the #72 group-entry anchor — the issue's minimal repro) | `src/net-refs.rs:3` |
+| `cans/artifacts/diagrams/t.txt#SOLO-ENTRY-HERE` (artifact, the #72 single-pair CONTROL) | `src/net-refs.rs:8` |
+| `cans/artifacts/diagrams/t.txt#FOO-BAR-BAZZ` (a near-miss group spelling no source writes — no fuzzy healing) | none |
+| `cans/artifacts/diagrams/t.txt#other-one` (a name that EXISTS in the target — the second bracket group's entry, post-#72 — but no source points at) | none — zero matches is an answer: the reverse path traces WRITERS, not resolvability |
+| `cans/artifacts/diagrams/t.txt` (artifact, file-level) | both into it: `src/net-refs.rs:3`, `:8` |
