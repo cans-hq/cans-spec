@@ -336,6 +336,23 @@ output:
 #     only turn a would-be error into a hit, never mask a real miss. The
 #     no-target advisory fires only for a target with nothing addressable
 #     at all (an empty .txt).
+#   - issue #71 widens the `.txt`/`.text` vocabularies with an ENTRY tier,
+#     between the heading tier and the #70 leaf tier and through the same
+#     shared verdict path: every physical line of a `.txt`/`.text` target
+#     mints as a whole-line entry — leading Unicode box-drawing/tree
+#     decoration stripped, one outermost `[`…`]` bracket pair stripped
+#     when it is the only one, lines with <2 chars or no letters never
+#     mint — so a multi-word hyphenated PHRASE anchor resolves where it
+#     used to read `no node matches` (`#Kernel-seccomp-unotify-triggers`
+#     at the line `Kernel seccomp-unotify triggers`,
+#     `#USERSPACE-SMOLTCP-INGRESS-RING` at `[USERSPACE SMOLTCP INGRESS
+#     RING]`): a pointer into a diagram means "this entry of the
+#     diagram", the entry being the whole line, and #70's single-token
+#     anchors keep working. The no-target advisory's message enumeration
+#     gains the seventh vocabulary — the verbatim list is (bullets,
+#     schematic key paths, text headings, text entries, code symbols,
+#     referenced names, text tokens). Everything else (broken-anchor
+#     messages, suggestions, exit ladder, wire shape) is unchanged.
 #   - #<slug> resolves with the SAME tolerant anchor matching the corpus
 #     refs engine uses (case- and separator-insensitive; the `slug:`
 #     algorithm at the top of this file is the canonical spelling — and
