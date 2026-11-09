@@ -1,7 +1,8 @@
 /** Plain-text heading anchors — issue #60: the addressable section-heading
  *  vocabulary of .txt/.text artifact targets; issue #70 adds the
- *  extractTextLeafTokens diagram/tree-line tier beside it (headings
- *  behavior byte-unchanged).
+ *  extractTextLeafTokens diagram/tree-line tier beside it and issue #71
+ *  the extractTextEntries whole-line entry tier between the two (headings
+ *  and tokens behavior byte-unchanged).
  *
  *  WHY THIS MODULE EXISTS. Issues #49/#58 taught checkRefs to resolve
  *  `#anchors` against the natural addressable units of schematic artifacts
@@ -222,4 +223,86 @@ export function extractTextLeafTokens(source: string): string[] {
     }
   }
   return tokens;
+}
+
+// ── Issue #71: the whole-line entry tier ──
+
+/** Leading tree/box decoration: a run of Unicode Box Drawing block chars
+ *  (U+2500–U+257F — │ ├ └ ─ ┌ ┐ ┘ ┴ ┬ ┼ ═ ║ …) mixed with whitespace.
+ *  These glyphs INDENT an entry inside a drawn tree or box (`│   ├──
+ *  kelir-shim/`, `│   └── driver-avf: …`) and are never part of the entry's
+ *  name. ASCII `-`/`=` are deliberately NOT in the set: they are content
+ *  characters of phrases (`seccomp-unotify`, `DATA-FLOW`) and border runs
+ *  (`----`, `====`) — the no-letter guard below is what keeps pure border
+ *  and underline rows out of the vocabulary, not this strip. */
+const ENTRY_LEAD_DECOR_RE = /^[\s\u2500-\u257F]+/u;
+
+/** Issue #71: the whole-line ENTRY vocabulary of a plain-text artifact
+ *  target — a .txt/.text line that names a thing IS that thing's address,
+ *  the #70 convention quote taken to its phrase form: “a pointer into a
+ *  diagram means ‘this entry of the diagram’”, where the entry is the
+ *  WHOLE LINE. WHY: #70's extractTextLeafTokens minted single-word tokens
+ *  only, so a hyphenated PHRASE anchor naming a whole diagram entry — the
+ *  issue's two repros, `see: cans/artifacts/diagrams/trap-flow.txt#
+ *  Kernel-seccomp-unotify-triggers` over the literal line `Kernel
+ *  seccomp-unotify triggers` (trap-flow.txt line 8) and `…wire-plane.txt#
+ *  USERSPACE-SMOLTCP-INGRESS-RING` over `[USERSPACE SMOLTCP INGRESS
+ *  RING]` (wire-plane.txt line 5) — had no phrase-level vocabulary to
+ *  resolve against and fell as `broken anchor: … — no node matches`
+ *  errors even though the entry sat in the target verbatim (the §12
+ *  normalizeForAnchor folding already equates `Kernel-seccomp-unotify-
+ *  triggers` with `Kernel seccomp-unotify triggers`; only the vocabulary
+ *  was missing). Single-token anchors (`#kelir-shim`, `#virtio-shm`,
+ *  `#driver-avf`) already resolve through the #70 token tier — this tier
+ *  adds the entry-shaped unit BETWEEN the #60 headings and the #70 tokens
+ *  (the entry is the convention's named unit, so it outranks the tokens).
+ *
+ *  CLEANING (one pass over physical lines, the `\r?\n` house split —
+ *  CRLF-identical by construction):
+ *    · trim; skip empty;
+ *    · strip LEADING tree/box decoration (the regex above), then trim —
+ *      NOTHING is stripped from the right except whitespace, so a tree
+ *      entry's trailing `/` (`kelir-shim/`) and a boxed row's closing `│`
+ *      stay truthful (their interior tokens remain #70 leaf-addressable);
+ *    · strip ONE outermost ASCII box-bracket pair ONLY when the cleaned
+ *      text starts with `[`, ends with `]`, and contains exactly one of
+ *      each — `[USERSPACE SMOLTCP INGRESS RING]` → `USERSPACE SMOLTCP
+ *      INGRESS RING`, while `[a] [b]` (two pairs) stays verbatim: its
+ *      entry is the whole bracketed row, and a partial strip would mint
+ *      a name the line never had;
+ *    · skip when the cleaned text is shorter than 2 chars or carries no
+ *      letter (`/\p{L}/u`) — `----`, `====`, `5432`, `80`, `[]` and pure
+ *      glyph rows never mint. Trailing `/`, `)`, `:` stay verbatim: the
+ *      token tier already covers token-shaped anchors, and an entry is
+ *      the whole line, truthful.
+ *  Underline and heading lines mint their text too — harmless duplicates
+ *  of the other tiers: resolution is a `some()` probe and suggestions
+ *  dedupe by slug, so a repeated text can neither mask a miss nor mint a
+ *  false ambiguity. Over-extraction stays the fail-safe direction (a
+ *  spurious entry can only turn a would-be error into a hit, never mask a
+ *  real one). Dedupe keeps the first occurrence, document order; empty or
+ *  whitespace-only source → []. extractTextHeadings and
+ *  extractTextLeafTokens above are byte-unchanged — an ADDITIVE tier. */
+export function extractTextEntries(source: string): string[] {
+  const entries: string[] = [];
+  const seen = new Set<string>();
+  for (const line of source.split(/\r?\n/)) {
+    let t = line.trim();
+    if (t === '') continue; // blank — never an entry
+    t = t.replace(ENTRY_LEAD_DECOR_RE, '').trim();
+    // Exactly one `[` and one `]` (split length 2), embracing the whole
+    // text: the line is a single bracketed span, so the brackets are the
+    // box, not the name. `[a] [b]` and `[x] ──> [y]` keep their brackets.
+    if (t.startsWith('[') && t.endsWith(']')
+        && t.split('[').length === 2 && t.split(']').length === 2) {
+      t = t.slice(1, -1).trim();
+    }
+    if (t.length < 2) continue;        // `x`, `[]` → `` — never address anything
+    if (!HAS_LETTER_RE.test(t)) continue; // `----`, `====`, `5432` — decoration/data
+    if (!seen.has(t)) {
+      seen.add(t); // first occurrence wins; document order kept
+      entries.push(t);
+    }
+  }
+  return entries;
 }

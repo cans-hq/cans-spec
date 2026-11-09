@@ -559,7 +559,9 @@ export async function checkCodebaseRefs(
               line: p.line,
               level: 'warning',
               category: 'refs',
-              message: `anchor on artifact target: ${p.targetFile}#${p.targetSlug} — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref`,
+              // Issue #71: the parenthetical gained `text entries, ` beside
+              // the headings — lockstep with refs.ts's emission, byte for byte.
+              message: `anchor on artifact target: ${p.targetFile}#${p.targetSlug} — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref`,
               rule: 'codebase.anchor.no-target',
               suggestion: `drop the #${p.targetSlug} anchor (file-level refs are valid on any target), or add the anchor as a node/key in ${p.targetFile}`,
             });

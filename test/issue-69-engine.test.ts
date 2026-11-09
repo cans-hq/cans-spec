@@ -549,7 +549,9 @@ describe('issue #69 engine — resolution (the artifact tier, end to end)', () =
     expect(w.message).toBe(
       // issue #70: the parenthetical vocabulary list widened with the leaf
       // tier (referenced names, text tokens) — bytes re-pinned to the emission.
-      'anchor on artifact target: cans/artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, code symbols, referenced names, text tokens); use a file-level ref',
+      // issue #71: the entry tier (text entries) joined the list — bytes
+      // re-pinned again, seven vocabularies.
+      'anchor on artifact target: cans/artifacts/empty.txt#anything — target has no addressable nodes (bullets, schematic key paths, text headings, text entries, code symbols, referenced names, text tokens); use a file-level ref',
     );
     expect(w.suggestion).toBe(
       'drop the #anything anchor (file-level refs are valid on any target), or add the anchor as a node/key in cans/artifacts/empty.txt',
