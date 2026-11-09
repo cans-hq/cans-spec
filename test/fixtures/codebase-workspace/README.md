@@ -441,10 +441,10 @@ vocabulary, never narrows it.
 | line | written span | verdict |
 |---|---|---|
 | 3 | `see: cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` | VALID (post-#71) — the BRACKETED PHRASE-ENTRY anchor: the whole box line `[USERSPACE SMOLTCP INGRESS RING]` minus its one outermost bracket pair (wire-plane.txt line 5, the issue's target line verbatim) |
-| 8 | `see: cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` | VALID — the single-token CONTROL: a word token of the same box line, resolved by the #70 leaf tier pre- AND post-#71 (the widening never narrows) |
+| 7 | `see: cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` | VALID — the single-token CONTROL: a word token of the same box line, resolved by the #70 leaf tier pre- AND post-#71 (the widening never narrows) |
 
 2 pointers, 0 broken. Pre-#71 line 3 is the issue's second false error;
-line 8 resolves in every world.
+line 7 resolves in every world.
 
 ## Expected scanner outcomes (the numbers the suites pin)
 
@@ -583,5 +583,5 @@ bare stem, an empty slug or trailing garbage all refuse with the
 | `cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger` (artifact, the #71 TYPO spelling) | `src/trap.rs:7` — the reverse path answers for broken pointers too (a query, not a verdict; the #69 `#federateNope` precedent) |
 | `cans/artifacts/diagrams/trap-flow.txt` (artifact, file-level) | both into it: `src/trap.rs:3`, `:7` |
 | `cans/artifacts/diagrams/wire-plane.txt#USERSPACE-SMOLTCP-INGRESS-RING` (artifact, the #71 bracketed phrase-entry anchor) | `src/transport.rs:3` |
-| `cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` (artifact, the #71 single-token CONTROL) | `src/transport.rs:8` |
-| `cans/artifacts/diagrams/wire-plane.txt` (artifact, file-level) | both into it: `src/transport.rs:3`, `:8` |
+| `cans/artifacts/diagrams/wire-plane.txt#SMOLTCP` (artifact, the #71 single-token CONTROL) | `src/transport.rs:7` |
+| `cans/artifacts/diagrams/wire-plane.txt` (artifact, file-level) | both into it: `src/transport.rs:3`, `:7` |

@@ -39,12 +39,13 @@
  * copy exactly like test/issue66-integration.test.ts):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             14 scanned / 50 pointers / EXACTLY the 7 broken — the 2
+ *             16 scanned / 54 pointers / EXACTLY the 8 broken — the 2
  *             pre-#67 true records plus, since #69, the 3 deliberate
- *             artifact ones and, since #70, the 2 typos — zero broken
+ *             artifact ones, since #70, the 2 typos and, since #71, the
+ *             phrase typo — zero broken
  *             refs for every new kelir-shaped anchor, both bug classes
- *             (a2 repeats it under the pure-default include list: 12
- *             files / 48 pointers / 8 broken — the yaml pointer
+ *             (a2 repeats it under the pure-default include list: 14
+ *             files / 52 pointers / 9 broken — the yaml pointer
  *             invisible; the #68 extension keeps the plugin tier on in
  *             the variant so its five pointers stay in scope)
  *   b ....... Bug 1 on the REVERSE path: `cans refs <node> --codebase`
@@ -85,6 +86,12 @@
  * defaults 23 — verified by running). The engine-independent pins (b1–b5
  * reverse queries, c2–c5, d1/d2/d4/d5, e1–e3 extraction wire shape)
  * stay green throughout.
+ *
+ * THE #71 SHIFT (test/issue-71-contract.test.ts owns the extension): the
+ * fixture grew the trap/transport phrase carriers (+2 scanned, +4
+ * pointers, +1 phrase typo), so the census pins moved once more — a1
+ * 14→16 scanned / 50→54 pointers / 7→8 broken, a2 12→14 files / 48→52
+ * pointers / 8→9 broken, c1 7→8, d3 52→56 pointers / 9→10 broken.
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
@@ -225,12 +232,28 @@ const BROKEN_70_TYPO_NAME = {
   reason: 'AnchorNotFound',
 };
 
+/** trap.rs:7 — the issue #71 PHRASE typo (the SINGULAR near miss of the
+ *  trap-flow diagram's line-8 entry `Kernel seccomp-unotify triggers`),
+ *  kept broken on purpose, pinned by test/issue-71-contract.test.ts —
+ *  the #71 extension of the fixture added it; it slots in LAST (trap.rs
+ *  sorts after quota.py). */
+const BROKEN_71_TYPO_PHRASE = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/trap.rs',
+  line: 7,
+  raw: 'see: cans/artifacts/diagrams/trap-flow.txt#Kernel-seccomp-unotify-trigger',
+  targetFile: 'cans/artifacts/diagrams/trap-flow.txt',
+  targetSlug: 'Kernel-seccomp-unotify-trigger',
+  reason: 'AnchorNotFound',
+};
+
 /** The broken records, in the contract's deterministic order (file asc,
  *  line asc): EVERY issue-#67 pointer — both bug classes — is VALID, so
  *  the broken set is the pre-#67 pair plus (since the #69 extension) the
- *  three deliberate artifact records and (since #70) the two #70 typos
- *  (trait-wiring.rs sorts after artifact-wiring.rs, so they slot in
- *  exactly here). */
+ *  three deliberate artifact records, (since #70) the two #70 typos and
+ *  (since #71) the phrase typo LAST (trait-wiring.rs sorts after
+ *  artifact-wiring.rs, so they slot in exactly here; trap.rs sorts after
+ *  quota.py). */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
   BROKEN_ARTIFACT_SYMBOL,
@@ -239,6 +262,7 @@ const ORACLE_ISSUES = [
   BROKEN_70_TYPO_METHOD,
   BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
+  BROKEN_71_TYPO_PHRASE,
 ];
 
 /** artifact-wiring.rs:28 — the #69 schematic pointer into the workspace's
@@ -266,6 +290,7 @@ const DEFAULTS_ORACLE_ISSUES = [
   BROKEN_70_TYPO_METHOD,
   BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
+  BROKEN_71_TYPO_PHRASE,
 ];
 
 /** The four source files carrying the #67 pointers — none may appear in
@@ -315,15 +340,15 @@ const RULES_NO_CODEBASE = [
 // ── a: the check scan — zero broken refs for every new anchor ──────────────
 
 describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve', () => {
-  test('a1: config-on — 14 scanned / 50 pointers / EXACTLY the 7 broken (both #67 bug classes clean)', () => {
+  test('a1: config-on — 16 scanned / 54 pointers / EXACTLY the 8 broken (both #67 bug classes clean)', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (7 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (8 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    expect(j.codebase.scanned).toBe(14); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
-    expect(j.codebase.pointers).toBe(50); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers
-    expect(j.codebase.broken).toBe(7);
+    expect(j.codebase.scanned).toBe(16); // 9 pre-#68 + the three #68 .rs sources + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70) + the trap/transport carriers (#71)
+    expect(j.codebase.pointers).toBe(54); // 21 pre-#68 + the kelir five (#68) + the six artifact pointers (#69) + the eighteen #70 pointers + the four #71 pointers
+    expect(j.codebase.broken).toBe(8);
     // THE pin: the broken set is byte-exactly the seven records above — none
     // of the 11 new kelir-shaped pointers (4 Bug-1 spellings in transaction.rs, 3 in
     // checkpoint.go incl. both glued-closer cases, 3 Bug-2 suffix targets in
@@ -338,7 +363,7 @@ describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve
     expect((j.codebase.issues as any[]).every((i) => !S67_SOURCE_FILES.includes(i.file))).toBe(true);
   });
 
-  test('a2: pure defaults (no config block) — 12 files / 48 pointers / 8 broken (the 7 + the rules-key pointer), yaml pointer invisible', () => {
+  test('a2: pure defaults (no config block) — 14 files / 52 pointers / 9 broken (the 8 + the rules-key pointer), yaml pointer invisible', () => {
     const p = ws('a2');
     writeFileSync(join(p, 'cans', '_rules.yaml'), RULES_NO_CODEBASE, 'utf8');
     const r = runCli(['check', '--codebase', '--json'], p);
@@ -355,9 +380,9 @@ describe('issue #67 a — check --codebase: the kelir-shaped anchors all resolve
     // five are in scope and resolve post-#68; the six #69 artifact
     // pointers and the eighteen #70 pointers live in .rs sources, covered
     // by the default *.rs include).
-    expect(j.codebase.scanned).toBe(12);
-    expect(j.codebase.pointers).toBe(48);
-    expect(j.codebase.broken).toBe(8);
+    expect(j.codebase.scanned).toBe(14);
+    expect(j.codebase.pointers).toBe(52);
+    expect(j.codebase.broken).toBe(9);
     expect(j.codebase.issues).toEqual(DEFAULTS_ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).some((i) => i.file === 'src/plugins/mounts.yaml')).toBe(false);
   });
@@ -373,7 +398,7 @@ describe('issue #67 b — refs <node> --codebase finds the punctuation anchors',
     const j = parseJsonOut(r.out);
     expect(j.ok).toBe(true);
     expect(j.node).toBe('09-plugins.md#Invariants-and-policy-(transaction)'); // AS WRITTEN
-    expect(j.scanned).toBe(14); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
+    expect(j.scanned).toBe(16); // 14 post-#70 + the two #71 carriers
     // The glued `))` spelling (checkpoint.go:11) cleans/restores to the same
     // anchor, so both pointers answer. Order: file asc, line asc.
     expect(j.matches).toEqual([
@@ -445,7 +470,7 @@ describe('issue #67 c — the : see:-suffixed spec nodes resolve by their bare t
   test('c1: none of the three suffix-targeting pointers is reported broken (the a1 pin, made explicit)', () => {
     const p = ws('c1');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
-    expect(j.codebase.broken).toBe(7); // the 2 true + the 3 deliberate #69 artifact records + the 2 #70 typos
+    expect(j.codebase.broken).toBe(8); // the 2 true + the 3 deliberate #69 artifact records + the 2 #70 typos + the #71 phrase typo
     const suffixRaws = [
       'see: cans/09-plugins.md#Connection-parking-on-suspend',
       'see: cans/09-plugins.md#L7-pgwire-rewrite-and-2PC-commit',
@@ -542,8 +567,8 @@ describe('issue #67 d — genuinely broken anchors are still reported', () => {
     const r = runCli(['check', '--codebase', '--json'], p);
     expect(r.exit).toBe(2);
     const j = parseJsonOut(r.out);
-    expect(j.codebase.pointers).toBe(52); // 50 + the two appended
-    expect(j.codebase.broken).toBe(9); // the 7 fixture broken + the 2 near misses
+    expect(j.codebase.pointers).toBe(56); // 54 + the two appended
+    expect(j.codebase.broken).toBe(10); // the 8 fixture broken + the 2 near misses
     const near = (j.codebase.issues as any[]).filter((i) => i.file === 'src/plugins/transaction.rs');
     expect(near.map((i) => [i.line, i.targetSlug, i.reason])).toEqual([
       [11, 'Invariants-and-policy-(transakshun)', 'AnchorNotFound'],
