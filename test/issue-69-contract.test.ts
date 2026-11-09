@@ -59,12 +59,17 @@
  * integration harness pattern; the fixture is driven from a fresh tmp copy):
  *
  *   a ....... the check scan over the extended fixture: config-on
- *             13 scanned (12 pre-#69 + the new .rs source) / 32 pointers
- *             (26 + the six artifact pointers — pre-#69 the census did not
- *             even SEE them) / EXACTLY the FIVE broken records byte-pinned
- *             in the deterministic order (the 2 pre-existing true records
- *             + the 3 new deliberate ones), and ZERO findings for the
- *             three VALID artifact pointers — the heart of the issue
+ *             14 scanned (12 pre-#69 + the artifact-wiring .rs source
+ *             (#69) + the trait-wiring .rs source (#70)) / 50 pointers
+ *             (26 + the six artifact pointers (#69) + the eighteen #70
+ *             pointers — pre-#69 the census did not even SEE the artifact
+ *             class) / EXACTLY the SEVEN broken records byte-pinned in
+ *             the deterministic order (the 2 pre-existing true records +
+ *             the 3 deliberate #69 ones + the 2 #70 typos, which slot in
+ *             file order — trait-wiring.rs sorts after artifact-
+ *             wiring.rs), EXACTLY ONE warning (the #70 empty-metrics
+ *             no-target advisory), and ZERO findings for the three VALID
+ *             artifact pointers — the heart of the issue
  *   b ....... the --json wire: the artifact findings carry targetFile and
  *             targetSlug VERBATIM (the `cans/` prefix kept, the anchor as
  *             captured) with reasons AnchorNotFound / FileNotFound; and
@@ -74,35 +79,38 @@
  *             answers its exact pointer (the anchor comparison is never
  *             fuzzy — `#federate` and `#federateNope` answer separately);
  *             the file-level query answers EVERY pointer into the file
- *             regardless of anchor (the valid + the broken); the
- *             schematic dot-path query answers; a `.md` regression query
- *             still answers its pre-existing matches (and ONLY those — the
- *             tiers never cross-match); an unknown artifact file refuses
- *             naming the spec-or-artifact boundary; malformed queries
- *             (bare stem, `.csv`, empty slug, trailing garbage) refuse
- *             with the `malformed node` family intact, and the `.md`
- *             unknown-file refusal keeps its own message (the artifact
- *             tier loosened nothing on the corpus side)
+ *             regardless of anchor (the valid + the broken — and, since
+ *             #70, the trait-wiring.rs leaf-tier pointers into the same
+ *             files); the schematic dot-path query answers; a `.md`
+ *             regression query still answers its pre-existing matches
+ *             (and ONLY those — the tiers never cross-match); an unknown
+ *             artifact file refuses naming the spec-or-artifact boundary;
+ *             malformed queries (bare stem, `.csv`, empty slug, trailing
+ *             garbage) refuse with the `malformed node` family intact,
+ *             and the `.md` unknown-file refusal keeps its own message
+ *             (the artifact tier loosened nothing on the corpus side)
  *   d ....... the corpus band is untouched: the plain check (no flag)
  *             stays clean with NO codebase key, refs.total 11 / files 9 —
- *             the extension added workspace ARTIFACT files and one scanned
- *   source, never a corpus file
+ *             the extension added workspace ARTIFACT files and scanned
+ *             sources, never a corpus file
  *
- * HONESTY NOTE (RED by design, the issue #68 contract model): on the
- * contract branch ALONE — before the fix/issue-69-engine merge — 9 of the
- * 14 pins are red, all of them the widened-extraction half: a1/a2 (the
- * census counts 13 scanned / 26 pointers / 2 broken — the six artifact
- * pointers are invisible to the .md-only extractor, the silent-skip half
- * of the issue, so the five-record oracle and the sections.refs rides
- * cannot match), b1/b2 (no artifact findings exist to pin, hence no
- * did-you-mean in the human report), c1–c5 (artifact queries answer zero
- * matches: the extractor still captures `.md` only). The 5 green pins are
- * the contract half that landed on THIS branch and must STAY green across
- * the merge: c6 (the `.md` regression query over the extended fixture),
- * c7/c8/c9 (the artifact-query refusals and the malformed family — the
- * refs-side tier), d1 (the corpus band untouched). Merge order: engine
- * first, then this branch — the full suite goes green only against the
- * merged engine (verified at the merge commit).
+ * HONESTY NOTE (RED by design, the issue #68 contract model). The #69
+ * engine is merged, so against MAIN this suite is 14/14 green. The #70
+ * fixture extension (this branch, test/issue-70-contract.test.ts is its
+ * owner) shifts the census AGAIN, the same established pattern: 13→14
+ * scanned, 32→50 pointers, the five-record oracle → seven-record, +1
+ * warning — and on THIS branch ALONE (before the fix/issue-70-engine
+ * merge) 3 of the 14 pins are red, the widened-vocabulary half: a1/a2
+ * (the census reads 22 broken — the fifteen VALID #70 pointers are the
+ * issue #70 false positives, verified by running — so the seven-record
+ * oracle and the seven sections.refs rides cannot match) and b2 (the
+ * fold reads 22×, not 7×). The 11 green pins are the half that must STAY
+ * green across the #70 engine merge: b1 (the wire shape), c1–c9 (the
+ * reverse path answers WRITERS, never verdicts — the #70 extension adds
+ * matches to c3/c4 and moves the scanned counter in c1/c6, all
+ * extraction-driven), d1 (the corpus band untouched). Merge order:
+ * engine first, then this branch — the full suite goes green only
+ * against the merged engine (verified at the merge commit).
  *
  * Runtime-neutral: imports the test facade, never 'bun:test' directly;
  * CLI runs are blackbox spawns via ./runtime.ts (CANS_ROOT pinned empty
@@ -193,8 +201,10 @@ const BROKEN_ARTIFACT_HEADING = {
 };
 
 /** artifact-wiring.rs:46 — the broken artifact FILE (the issue's EXACT
- *  spelling): no `cans/artifacts/code/` directory exists on the fixture,
- *  so the artifact target is missing from the cans workspace. */
+ *  spelling): at #69 time no `cans/artifacts/code/` directory existed on
+ *  the fixture; since the #70 extension the directory exists (it holds the
+ *  REAL container-service.rs) but `plugin-trait.rs` still does not — the
+ *  verdict is byte-unchanged. */
 const BROKEN_ARTIFACT_FILE = {
   type: 'CodebaseBrokenReference',
   file: 'src/plugins/artifact-wiring.rs',
@@ -203,6 +213,31 @@ const BROKEN_ARTIFACT_FILE = {
   targetFile: 'cans/artifacts/code/plugin-trait.rs',
   targetSlug: 'PluginError',
   reason: 'FileNotFound',
+};
+
+/** trait-wiring.rs:106 — the issue #70 trait-method typo (a one-letter
+ *  miss of the grammar-v2 `configure_runtime` token; kept broken on
+ *  purpose, pinned by test/issue-70-contract.test.ts). */
+const BROKEN_70_TYPO_METHOD = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/trait-wiring.rs',
+  line: 106,
+  raw: 'see: cans/artifacts/code/container-service.rs#configure_runtim',
+  targetFile: 'cans/artifacts/code/container-service.rs',
+  targetSlug: 'configure_runtim',
+  reason: 'AnchorNotFound',
+};
+
+/** trait-wiring.rs:109 — the issue #70 import-name typo (a one-letter
+ *  miss of the leaf-tier `LedgerPlugin` token). */
+const BROKEN_70_TYPO_NAME = {
+  type: 'CodebaseBrokenReference',
+  file: 'src/plugins/trait-wiring.rs',
+  line: 109,
+  raw: 'see: cans/artifacts/examples/swarm-agent.rs#LedgerPlugn',
+  targetFile: 'cans/artifacts/examples/swarm-agent.rs',
+  targetSlug: 'LedgerPlugn',
+  reason: 'AnchorNotFound',
 };
 
 /** quota.py:7 — the pre-existing broken file, UNCHANGED by the #69 fix. */
@@ -216,15 +251,19 @@ const BROKEN_FILE = {
   reason: 'FileNotFound',
 };
 
-/** The FIVE broken records, in the contract's deterministic order
+/** The broken records, in the contract's deterministic order
  *  (file asc, line asc): the two pre-existing true ones plus the three
- *  deliberate issue-#69 ones — every VALID artifact pointer (and every
- *  #67/#68 pointer) is missing from this set. */
+ *  deliberate issue-#69 ones PLUS — since the #70 extension — the two
+ *  issue-#70 typos (trait-wiring.rs sorts after artifact-wiring.rs and
+ *  before quota.py, so they slot in exactly here) — every VALID artifact
+ *  pointer (and every #67/#68/#70 pointer) is missing from this set. */
 const ORACLE_ISSUES = [
   BROKEN_ANCHOR,
   BROKEN_ARTIFACT_SYMBOL,
   BROKEN_ARTIFACT_HEADING,
   BROKEN_ARTIFACT_FILE,
+  BROKEN_70_TYPO_METHOD,
+  BROKEN_70_TYPO_NAME,
   BROKEN_FILE,
 ];
 
@@ -249,30 +288,45 @@ const AW = {
 
 // ── a: the check scan — the artifact tier validates, neither skips nor mints ─
 
-describe('issue #69 a — check --codebase: the six artifact pointers join the census, three resolve, three break', () => {
-  test('a1: config-on — 13 scanned / 32 pointers / EXACTLY the 5 broken records, zero findings for the valid three', () => {
+describe('issue #69 a — check --codebase: the artifact pointers join the census, three resolve, three break', () => {
+  test('a1: config-on — 14 scanned / 50 pointers / EXACTLY the 7 broken records, zero findings for the valid three', () => {
     const p = ws('a1');
     const r = runCli(['check', '--codebase', '--json'], p);
-    expect(r.exit).toBe(2); // severity: error → the error band (5 true findings)
+    expect(r.exit).toBe(2); // severity: error → the error band (7 true findings)
     const j = parseJsonOut(r.out);
     expect(j.codebase).toBeDefined();
-    // 12 pre-#69 sources + the new .rs source (the .txt artifact lives under
-    // cans/ — workspace files are never scanned).
-    expect(j.codebase.scanned).toBe(13);
-    // 26 pre-#69 pointers + the six artifact pointers: pre-#69 the census
-    // did not even SEE this class (the silent-skip half of the issue).
-    expect(j.codebase.pointers).toBe(32);
-    expect(j.codebase.broken).toBe(5);
-    // THE pin: the broken set is byte-exactly the five records above, in
-    // the deterministic order (file asc, line asc).
+    // 12 pre-#69 sources + the artifact-wiring .rs source (#69) + the
+    // trait-wiring .rs source (#70) — the .txt artifacts live under
+    // cans/ — workspace files are never scanned.
+    expect(j.codebase.scanned).toBe(14);
+    // 26 pre-#69 pointers + the six artifact pointers (#69) + the eighteen
+    // #70 pointers: pre-#69 the census did not even SEE this class (the
+    // silent-skip half of the issue).
+    expect(j.codebase.pointers).toBe(50);
+    expect(j.codebase.broken).toBe(7);
+    // THE pin: the broken set is byte-exactly the seven records above, in
+    // the deterministic order (file asc, line asc) — since #70 the two
+    // #70 typos slot in between the artifact-wiring.rs ones and quota.py.
     expect(j.codebase.issues).toEqual(ORACLE_ISSUES);
     expect((j.codebase.issues as any[]).map((i) => `${i.file}:${i.line}`)).toEqual([
       'src/api/routes.ts:3',
       'src/plugins/artifact-wiring.rs:36',
       'src/plugins/artifact-wiring.rs:40',
       'src/plugins/artifact-wiring.rs:46',
+      'src/plugins/trait-wiring.rs:106',
+      'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
     ]);
+    // Since #70: exactly ONE warning rides the run — the empty-metrics
+    // no-target advisory (an EMPTY target has nothing addressable by any
+    // vocabulary; the #70 suite pins the class, this census pin keeps the
+    // scan's warning band honest).
+    expect(j.counts.warnings).toBe(1);
+    expect(
+      (j.sections.refs as any[]).filter(
+        (i) => i.rule === 'codebase.anchor.no-target' && i.level === 'warning',
+      ).length,
+    ).toBe(1);
     // And made explicit — the heart of the issue in the other direction:
     // ZERO findings for the three VALID artifact pointers (the code symbol,
     // the text heading, the schematic dot path all resolve).
@@ -298,21 +352,23 @@ describe('issue #69 a — check --codebase: the six artifact pointers join the c
     }
   });
 
-  test('a2: the five findings ride sections.refs as codebase.broken_reference errors', () => {
+  test('a2: the seven findings ride sections.refs as codebase.broken_reference errors', () => {
     const p = ws('a2');
     const j = parseJsonOut(runCli(['check', '--codebase', '--json'], p).out);
     const rides = (j.sections.refs as any[]).filter(
       (i) => i.rule === 'codebase.broken_reference' && i.level === 'error',
     );
-    expect(rides.length).toBe(5);
+    expect(rides.length).toBe(7);
     expect(rides.map((i) => `${i.file}:${i.line}`).sort()).toEqual([
       'src/api/routes.ts:3',
       'src/plugins/artifact-wiring.rs:36',
       'src/plugins/artifact-wiring.rs:40',
       'src/plugins/artifact-wiring.rs:46',
+      'src/plugins/trait-wiring.rs:106',
+      'src/plugins/trait-wiring.rs:109',
       'src/storage/quota.py:7',
     ]);
-    expect(j.counts.errors).toBeGreaterThanOrEqual(5);
+    expect(j.counts.errors).toBeGreaterThanOrEqual(7);
   });
 });
 
@@ -343,10 +399,11 @@ describe('issue #69 b — the artifact findings on the wire and in the human rep
     const p = ws('b2');
     // The folded view names the family with its count; --show refs unfolds
     // every member (the issue66-integration a4 pattern), so the artifact
-    // miss and its suggestion are visible without JSON.
+    // miss and its suggestion are visible without JSON. Since #70 the
+    // family reads 7× (the 5 + the two #70 typos).
     const folded = runCli(['check', '--codebase'], p);
     expect(folded.exit).toBe(2);
-    expect(folded.out + folded.err).toContain('5× broken codebase ref');
+    expect(folded.out + folded.err).toContain('7× broken codebase ref');
     const ex = runCli(['check', '--codebase', '--show', 'refs'], p);
     expect(ex.exit).toBe(2);
     expect(ex.out + ex.err).toContain('federateNope');
@@ -354,6 +411,21 @@ describe('issue #69 b — the artifact findings on the wire and in the human rep
     // The suggestion layer knows the answer: the near miss of `federate`
     // proposes the symbol that exists (advice only — resolution never
     // auto-heals; the wire record stays AnchorNotFound).
+    //
+    // #70 RE-VERIFY (red-by-design-if-changed, per the #70 extension
+    // spec): the engine's leaf tier adds every identifier token of
+    // multi-vm-swarm.rs to the suggestion pool, but `federateNope` gains
+    // NO near candidate from it — the nearest token is `federate` itself
+    // at similarity 1 − 4/12 ≈ 0.67 < the 0.8 floor, and no other token
+    // (MeshPlugin, SupplyChainPlugin, LedgerPlugin, swarm_builder, …) is
+    // within Levenshtein 2 of `federatenope`. So the `did you mean` text
+    // this pin sees keeps riding the OTHER findings' suggestions (the
+    // #Qutas typo's, plus — post-#70 — the two #70 typos'), and `#federate`
+    // keeps appearing as the verbatim prefix of the `#federateNope` member
+    // line. The pin holds unchanged pre- and post-#70-merge; if the
+    // engine's suggestion ranking ever DOES mint a candidate for
+    // `federateNope`, this pin turns red and the change must be justified
+    // against the engine spec's similarity floor.
     expect(ex.out + ex.err).toContain('did you mean');
     expect(ex.out + ex.err).toContain('#federate');
   });
@@ -370,7 +442,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     expect(j.ok).toBe(true);
     expect(j.command).toBe('refs');
     expect(j.node).toBe('cans/artifacts/examples/multi-vm-swarm.rs#federate'); // AS WRITTEN
-    expect(j.scanned).toBe(13);
+    expect(j.scanned).toBe(14); // 12 pre-#69 + the artifact-wiring .rs source (#69) + the trait-wiring .rs source (#70)
     // ONLY the valid pointer answers: the `#federateNope` spelling at line
     // 36 does NOT (normalizeForAnchor('federateNope') !== 'federate' — no
     // fuzzy healing, the #67 d4 precedent on the artifact tier).
@@ -395,8 +467,11 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
   test('c3: the file-level artifact query answers EVERY pointer into the file, regardless of anchor', () => {
     const p = ws('c3');
     // File-level (no #slug): the valid #federate pointer AND the broken
-    // #federateNope one both answer — the file is the same; anchors are
-    // irrelevant at this query shape (the #66 c2 contract, artifact side).
+    // #federateNope one both answer — and since #70 so do the two #70
+    // leaf-tier pointers into the same file (#MeshPlugin :75,
+    // #SupplyChainPlugin :80 of trait-wiring.rs) — the file is the same;
+    // anchors are irrelevant at this query shape (the #66 c2 contract,
+    // artifact side).
     const j = parseJsonOut(
       runCli(['refs', 'cans/artifacts/examples/multi-vm-swarm.rs', '--codebase', '--json'], p).out,
     );
@@ -404,22 +479,39 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     expect(j.matches).toEqual([
       { file: 'src/plugins/artifact-wiring.rs', line: 14, text: AW.l14 },
       { file: 'src/plugins/artifact-wiring.rs', line: 36, text: AW.l36 },
+      {
+        file: 'src/plugins/trait-wiring.rs',
+        line: 75,
+        text: '// see: cans/artifacts/examples/multi-vm-swarm.rs#MeshPlugin',
+      },
+      {
+        file: 'src/plugins/trait-wiring.rs',
+        line: 80,
+        text: '// see: cans/artifacts/examples/multi-vm-swarm.rs#SupplyChainPlugin',
+      },
     ]);
   });
 
-  test('c4: the file-level .txt query answers both txt pointers — and no .md pointers (tiers never cross)', () => {
+  test('c4: the file-level .txt query answers all its txt pointers — and no .md pointers (tiers never cross)', () => {
     const p = ws('c4');
     const j = parseJsonOut(
       runCli(['refs', 'cans/artifacts/diagrams/host-runtime.txt', '--codebase', '--json'], p).out,
     );
     expect(j.exitCode).toBe(0);
-    // EXACTLY the two txt pointers: line 21 (valid) + line 40 (broken). If
-    // a .md pointer could ever match an artifact query, this set would be
-    // larger — resolveSpecFile of an .md target is an .md path and can
-    // never equal the .txt query path (the non-crossing pin).
+    // EXACTLY the host-runtime.txt pointers: lines 21 + 40 (valid + broken,
+    // pre-#70) and — since #70 — the box-tree one at trait-wiring.rs:98
+    // (`#driver-rustvmm`, the leaf-token tier). If a .md pointer could
+    // ever match an artifact query, this set would be larger —
+    // resolveSpecFile of an .md target is an .md path and can never equal
+    // the .txt query path (the non-crossing pin).
     expect(j.matches).toEqual([
       { file: 'src/plugins/artifact-wiring.rs', line: 21, text: AW.l21 },
       { file: 'src/plugins/artifact-wiring.rs', line: 40, text: AW.l40 },
+      {
+        file: 'src/plugins/trait-wiring.rs',
+        line: 98,
+        text: '// see: cans/artifacts/diagrams/host-runtime.txt#driver-rustvmm',
+      },
     ]);
   });
 
@@ -445,7 +537,7 @@ describe('issue #69 c — refs <artifact> --codebase: anchored, file-level, sche
     // direction: an artifact target is never a corpus key).
     const j = parseJsonOut(runCli(['refs', '01-auth.md#Sessions', '--codebase', '--json'], p).out);
     expect(j.exitCode).toBe(0);
-    expect(j.scanned).toBe(13);
+    expect(j.scanned).toBe(14);
     expect(j.matches.map((m: any) => `${m.file}:${m.line}`)).toEqual([
       'src/api/routes.ts:2',
       'src/api/routes.ts:6',
