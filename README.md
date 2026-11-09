@@ -325,15 +325,23 @@ Every file kind answers anchors with its natural addressable units (issue
 #60): `.md` bullet nodes; `.json`/`.yaml`/`.yml`/`.toml` key paths as above;
 `.txt`/`.text` section headings (`CREATION FLOW` → `#creation-flow`); and
 top-level symbols in code files (`.ts`/`.js`/`.rs`/`.py`/`.go` — exported
-functions, types, consts, modules). A `see:` ref to a non-spec artifact
-file is TERMINAL for deep-hop purposes — 0 hops, it can never form an
-A→B→C spec chain — so an anchored pointer into one is verified against that
-vocabulary alone, with the same tolerant normalization everywhere; a
-case-insensitive first match resolves. An anchor that matches nothing is
-the `refs.broken.anchor` error and the ONLY failure reported — never
-stacked under a spurious deep-hop error. A target with nothing addressable
-(a `.csv`, an empty `.txt`) keeps the advisory `refs.anchor.no-target`
-downgrade suggesting a file-level ref.
+functions, types, consts, modules). Since issue #70 the non-schematic
+vocabularies also answer their LEAVES: every identifier a code target
+references (declaration, import, use, call site, comment text alike) and
+every word token of a `.txt`/`.text` tree/box/diagram entry — `#kelir-shim`
+resolves at a `├── kelir-shim/` tree line, `#virtio-shm` at a `[virtio-shm]`
+box — and the Rust symbol grammar mints column-0 declarations regardless
+of `pub` plus trait-block methods; over-extraction is fail-safe (an extra
+name can only turn a would-be error into a hit, never mask a real miss —
+the full #70 story lives in the codebase section). A `see:` ref to a
+non-spec artifact file is TERMINAL for deep-hop purposes — 0 hops, it can
+never form an A→B→C spec chain — so an anchored pointer into one is verified
+against that vocabulary alone, with the same tolerant normalization
+everywhere; a case-insensitive first match resolves. An anchor that matches
+nothing is the `refs.broken.anchor` error and the ONLY failure reported —
+never stacked under a spurious deep-hop error. A target with nothing
+addressable (a `.csv`, an empty `.txt`) keeps the advisory
+`refs.anchor.no-target` downgrade suggesting a file-level ref.
 
 ### Inter-repo pointers (`external_roots`)
 
@@ -655,6 +663,43 @@ How resolution works:
   read and parsed only when its pointer carries an anchor into it (a
   file-level artifact pointer verifies existence and nothing more) —
   artifact files are resolution inputs, never scan inputs.
+
+**The #70 widenings — vocabulary v2 and the leaf tier.** The first
+`--codebase` run over a real corpus (kelir, 1523 pointers) reported 16
+errors + 19 warnings on a clean tree, in two classes. Missed declarations
+(7 of the errors): trait methods (`async fn configure_runtime(&mut self)`
+inside `pub trait ContainerService`) and non-pub unit structs (`struct
+UserOracle;`) were not in the code-symbol vocabulary, so pointers at them
+read broken. Unaddressable leaves (the other 9 errors + all 19 warnings):
+referenced names (`#LedgerPlugin`, `#binary_blake3`, `#PgWireRewrite` —
+imports, uses, call sites) and diagram/tree entries (`#kelir-shim` at a
+`│   ├── kelir-shim/` tree entry, `#virtio-shm` at a `[virtio-shm]` box
+entry, `#driver-avf` at tree entries) matched no vocabulary at all. The
+repo's established convention reads them exactly so: a pointer to an
+example means "this file demonstrates the symbol", and a pointer into a
+diagram means "this entry of the diagram" — those leaves ARE addressable.
+Issue #70 ships both fixes through the shared artifact-anchor seam, so the
+References engine's artifact refs widen with the codebase phase: the Rust
+symbol grammar v2 mints column-0 declarations regardless of `pub` (the
+exported-only call is revised — example/demo artifact files have no API
+surface to protect) and trait-block methods via a trait-block tracker
+(`pub trait X {` … an indented `async fn m(…)` mints `m`), while
+`pub(crate)`/`pub(super)` items and impl-block methods still mint nothing;
+and a new LEAF tier resolves every identifier token of a code target and
+every word token (`[A-Za-z0-9][A-Za-z0-9_\-]*`, ≥ 2 chars, ≥ 1 letter) of
+a `.txt`/`.text` target — `.md` corpus targets and schematic
+`.json`/`.yaml`/`.toml` targets are untouched. Miss suggestions rank the
+union (declarations + leaves), so a typo of a referenced name gets the same
+`did you mean` quality a typo of a heading always had, and the
+`refs.anchor.no-target` / `codebase.anchor.no-target` advisories narrow to
+their truthful core: they fire only for a target with no addressable
+content at all (an empty `.txt`), and the message enumerates the full
+vocabulary (bullets, schematic key paths, text headings, code symbols,
+referenced names, text tokens).
+
+Exit codes are the #41 ladder, confirmed intended by #70: `cans check
+--codebase` exits 0 clean · 1 warnings-only (`ok` stays true — `--strict`
+turns warnings into `ok: false` but never changes the code) · 2 errors.
 
 ### Node length & wrapped prose (`structure.node_length` / `structure.multiline`)
 
